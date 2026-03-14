@@ -267,7 +267,7 @@ pane_recent_capture() {
 codex_wait_or_run() {
   local capture="$1"
 
-  if printf '%s\n' "$capture" | "${RG_BIN}" -qi '^[[:space:]]*(Enter to confirm|Esc to cancel)$'; then
+  if printf '%s\n' "$capture" | "${RG_BIN}" -qi 'Enter to confirm|Esc to cancel|approval required|waiting on approval'; then
     printf 'WAIT'
   elif printf '%s\n' "$capture" | "${RG_BIN}" -qi 'Working \([0-9]+[smhd]|esc to interrupt|background terminal[s]? running'; then
     printf 'RUN'
