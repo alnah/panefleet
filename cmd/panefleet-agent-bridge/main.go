@@ -36,10 +36,12 @@ func main() {
 		err = runClaudeHook(ctx, os.Args[2:])
 	case "codex-app-server":
 		err = runCodexAppServer(ctx, os.Args[2:])
+	case "codex-notify":
+		err = runCodexNotify(ctx, os.Args[2:])
 	case "opencode-event":
 		err = runOpenCodeEvent(ctx, os.Args[2:])
 	default:
-		fatalf("unknown subcommand: %s", os.Args[1])
+		fatalf("usage: %s <claude-hook|codex-app-server|codex-notify|opencode-event> [flags]", filepath.Base(os.Args[0]))
 	}
 
 	if err != nil {
@@ -66,6 +68,7 @@ func runClaudeHook(ctx context.Context, args []string) error {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil
 	}
+	logPayload("claude-hook", *pane, raw)
 
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -92,6 +95,37 @@ func runClaudeHook(ctx context.Context, args []string) error {
 	}
 }
 
+func runCodexNotify(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("codex-notify", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	pane := fs.String("pane", defaultPane(), "tmux pane id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *pane == "" {
+		return nil
+	}
+
+	raw, err := notificationPayload(fs.Args())
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil
+	}
+	logPayload("codex-notify", *pane, raw)
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil
+	}
+
+	if stringValue(payload["type"]) == "agent-turn-complete" {
+		return setState(ctx, *pane, statusDone, "codex", "codex-notify")
+	}
+	return nil
+}
+
 func runCodexAppServer(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("codex-app-server", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -114,6 +148,7 @@ func runCodexAppServer(ctx context.Context, args []string) error {
 		if err := json.Unmarshal([]byte(line), &payload); err != nil {
 			continue
 		}
+		logPayload("codex-app-server", *pane, []byte(line))
 		if stringValue(payload["method"]) != "thread/status/changed" {
 			continue
 		}
@@ -151,6 +186,7 @@ func runOpenCodeEvent(ctx context.Context, args []string) error {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil
 	}
+	logPayload("opencode-event", *pane, raw)
 
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
@@ -163,6 +199,13 @@ func runOpenCodeEvent(ctx context.Context, args []string) error {
 	}
 
 	return setState(ctx, *pane, state, "opencode", "opencode-plugin")
+}
+
+func notificationPayload(args []string) ([]byte, error) {
+	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
+		return []byte(args[0]), nil
+	}
+	return readAll(os.Stdin)
 }
 
 func mapCodexStatus(payload map[string]any) string {
@@ -330,6 +373,44 @@ func panefleetBin() string {
 		return "panefleet"
 	}
 	return filepath.Join(home, ".tmux", "plugins", "panefleet", "bin", "panefleet")
+}
+
+func logPayload(source, pane string, raw []byte) {
+	logDir := os.Getenv("PANEFLEET_EVENT_LOG_DIR")
+	if logDir == "" {
+		return
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return
+	}
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return
+	}
+
+	record := struct {
+		Timestamp string          `json:"ts"`
+		Source    string          `json:"source"`
+		Pane      string          `json:"pane,omitempty"`
+		Payload   json.RawMessage `json:"payload"`
+	}{
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Source:    source,
+		Pane:      pane,
+		Payload:   json.RawMessage(bytes.TrimSpace(raw)),
+	}
+
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return
+	}
+
+	path := filepath.Join(logDir, source+".jsonl")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	_, _ = file.Write(append(encoded, '\n'))
 }
 
 func stringValue(v any) string {

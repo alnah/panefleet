@@ -11,4 +11,4 @@ if [[ ! -x "$BRIDGE_BIN" ]]; then
   "$SCRIPT_DIR/build-agent-bridge.sh" >/dev/null
 fi
 
-exec "$BRIDGE_BIN" opencode-event "$@"
+exec "$BRIDGE_BIN" codex-notify "$@"
