@@ -172,13 +172,21 @@ Manual overrides exist only as a temporary fallback. The intended end state is f
 
 Current fallback behavior when no adapter state exists:
 
-- known agent tools (`Codex`, `Claude Code`, `OpenCode`) -> `IDLE`
+- Codex:
+  - recent approval prompt -> `WAIT`
+  - recent working footer/activity hint -> `RUN`
+  - otherwise -> `IDLE`
 - shell panes -> `IDLE`
+- other known agent tools (`Claude Code`, `OpenCode`) -> `IDLE`
 - non-agent live processes -> `RUN`
 - dead pane + zero exit -> `DONE`
 - dead pane + non-zero exit -> `ERROR`
 
-This is intentionally conservative. `panefleet` no longer scrapes agent UI text to infer `RUN`, `WAIT`, or `DONE`.
+Limitation:
+
+- Codex fallback `RUN/WAIT` is heuristic and based on recent pane text because the interactive CLI does not expose an equally strong official signal for those states.
+- Codex fallback never infers `DONE` from pane text. Authoritative `DONE` still comes from adapter events like `notify`.
+- `Claude Code` and `OpenCode` no longer use pane-text fallback for `RUN/WAIT/DONE`.
 
 State aging:
 
@@ -193,7 +201,7 @@ Default timing:
 
 ## Adapter roadmap
 
-The preferred model is agent-aware adapters. Fallback remains conservative and liveness-based only.
+The preferred model is agent-aware adapters. Codex keeps a narrow heuristic fallback for `RUN/WAIT`; everything else remains conservative.
 
 ### Claude Code
 
