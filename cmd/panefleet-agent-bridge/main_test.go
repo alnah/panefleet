@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -255,4 +256,56 @@ func TestPanefleetBin(t *testing.T) {
 			t.Fatalf("panefleetBin() = %q, want %q (old HOME %q)", got, want, oldHome)
 		}
 	})
+}
+
+func TestDecodeLoggedJSONPayloadWritesCorrelatedLogs(t *testing.T) {
+	logDir := t.TempDir()
+	t.Setenv("PANEFLEET_EVENT_LOG_DIR", logDir)
+
+	payload, eventID, ok := decodeLoggedJSONPayload("claude-hook", "%42", []byte(`{"hook_event_name":"Stop"}`))
+	if !ok {
+		t.Fatalf("decodeLoggedJSONPayload() = not ok, want ok")
+	}
+	if eventID == "" {
+		t.Fatalf("decodeLoggedJSONPayload() returned empty eventID")
+	}
+	if stringValue(payload["hook_event_name"]) != "Stop" {
+		t.Fatalf("decoded hook_event_name = %q, want Stop", stringValue(payload["hook_event_name"]))
+	}
+
+	logDecision("claude-hook", "%42", eventID, "state_set", statusDone, "hook completion event", "")
+
+	data, err := os.ReadFile(filepath.Join(logDir, "claude-hook.jsonl"))
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+	text := string(data)
+	if !containsAny(text, `"kind":"payload"`, `"event_id":"`+eventID+`"`) {
+		t.Fatalf("payload log missing correlated event record: %s", text)
+	}
+	if !containsAny(text, `"kind":"decision"`, `"decision":"state_set"`, `"status":"DONE"`) {
+		t.Fatalf("decision log missing state_set record: %s", text)
+	}
+}
+
+func TestDecodeLoggedJSONPayloadLogsDecodeErrors(t *testing.T) {
+	logDir := t.TempDir()
+	t.Setenv("PANEFLEET_EVENT_LOG_DIR", logDir)
+
+	_, eventID, ok := decodeLoggedJSONPayload("opencode-event", "%7", []byte(`{`))
+	if ok {
+		t.Fatalf("decodeLoggedJSONPayload() = ok, want false")
+	}
+	if eventID == "" {
+		t.Fatalf("decodeLoggedJSONPayload() returned empty eventID")
+	}
+
+	data, err := os.ReadFile(filepath.Join(logDir, "opencode-event.jsonl"))
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+	text := string(data)
+	if !containsAny(text, `"kind":"decision"`, `"decision":"decode_error"`, `"event_id":"`+eventID+`"`) {
+		t.Fatalf("decode error log missing correlated record: %s", text)
+	}
 }

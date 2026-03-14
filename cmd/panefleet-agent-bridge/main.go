@@ -52,28 +52,19 @@ func main() {
 }
 
 func runClaudeHook(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("claude-hook", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	pane := fs.String("pane", defaultPane(), "tmux pane id")
-	if err := fs.Parse(args); err != nil {
+	pane, _, err := parsePaneArgs("claude-hook", args)
+	if err != nil {
 		return err
 	}
-
-	if *pane == "" {
+	if pane == "" {
 		return nil
 	}
 
-	raw, err := readAll(os.Stdin)
+	payload, raw, eventID, ok, err := readLoggedStdinJSONPayload("claude-hook", pane)
 	if err != nil {
-		return nil
+		return err
 	}
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return nil
-	}
-	logPayload("claude-hook", *pane, raw)
-
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	if !ok {
 		return nil
 	}
 
@@ -85,57 +76,50 @@ func runClaudeHook(ctx context.Context, args []string) error {
 
 	switch {
 	case containsString([]string{"PreToolUse", "PostToolUse", "UserPromptSubmit", "SessionStart"}, event):
-		return setState(ctx, *pane, statusRun, "claude", "claude-hook")
+		return applyMappedState(ctx, pane, "claude", "claude-hook", eventID, statusRun, "hook lifecycle event")
 	case containsString([]string{"Stop", "SubagentStop", "SessionEnd", "PreCompact"}, event):
-		return setState(ctx, *pane, statusDone, "claude", "claude-hook")
+		return applyMappedState(ctx, pane, "claude", "claude-hook", eventID, statusDone, "hook completion event")
 	case event == "Notification":
-		return setState(ctx, *pane, statusWait, "claude", "claude-hook")
+		return applyMappedState(ctx, pane, "claude", "claude-hook", eventID, statusWait, "notification event")
 	case containsAny(lowerBlob, "error", "failed"):
-		return setState(ctx, *pane, statusError, "claude", "claude-hook")
+		return applyMappedState(ctx, pane, "claude", "claude-hook", eventID, statusError, "payload contains failure marker")
 	default:
+		logDecision("claude-hook", pane, eventID, "ignored", "", "unmapped hook event", "")
 		return nil
 	}
 }
 
 func runCodexNotify(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("codex-notify", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	pane := fs.String("pane", defaultPane(), "tmux pane id")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *pane == "" {
-		return nil
-	}
-
-	raw, err := notificationPayload(fs.Args())
+	pane, rest, err := parsePaneArgs("codex-notify", args)
 	if err != nil {
 		return err
 	}
-	if len(bytes.TrimSpace(raw)) == 0 {
+	if pane == "" {
 		return nil
 	}
-	logPayload("codex-notify", *pane, raw)
 
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	raw, err := notificationPayload(rest)
+	if err != nil {
+		return err
+	}
+	payload, eventID, ok := decodeLoggedJSONPayload("codex-notify", pane, raw)
+	if !ok {
 		return nil
 	}
 
 	if stringValue(payload["type"]) == "agent-turn-complete" {
-		return setState(ctx, *pane, statusDone, "codex", "codex-notify")
+		return applyMappedState(ctx, pane, "codex", "codex-notify", eventID, statusDone, "notify agent-turn-complete")
 	}
+	logDecision("codex-notify", pane, eventID, "ignored", "", "notify payload type not mapped", "")
 	return nil
 }
 
 func runCodexAppServer(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("codex-app-server", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	pane := fs.String("pane", defaultPane(), "tmux pane id")
-	if err := fs.Parse(args); err != nil {
+	pane, _, err := parsePaneArgs("codex-app-server", args)
+	if err != nil {
 		return err
 	}
-	if *pane == "" {
+	if pane == "" {
 		return nil
 	}
 
@@ -146,20 +130,21 @@ func runCodexAppServer(ctx context.Context, args []string) error {
 			continue
 		}
 
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(line), &payload); err != nil {
+		payload, eventID, ok := decodeLoggedJSONPayload("codex-app-server", pane, []byte(line))
+		if !ok {
 			continue
 		}
-		logPayload("codex-app-server", *pane, []byte(line))
 		if stringValue(payload["method"]) != "thread/status/changed" {
+			logDecision("codex-app-server", pane, eventID, "ignored", "", "non-status app-server method", "")
 			continue
 		}
 
 		state := mapCodexStatus(payload)
 		if state == "" {
+			logDecision("codex-app-server", pane, eventID, "ignored", "", "status payload unmapped", "")
 			continue
 		}
-		if err := setState(ctx, *pane, state, "codex", "codex-app-server"); err != nil {
+		if err := applyMappedState(ctx, pane, "codex", "codex-app-server", eventID, state, "thread/status/changed"); err != nil {
 			return err
 		}
 	}
@@ -171,36 +156,29 @@ func runCodexAppServer(ctx context.Context, args []string) error {
 }
 
 func runOpenCodeEvent(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("opencode-event", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	pane := fs.String("pane", defaultPane(), "tmux pane id")
-	if err := fs.Parse(args); err != nil {
+	pane, _, err := parsePaneArgs("opencode-event", args)
+	if err != nil {
 		return err
 	}
-	if *pane == "" {
+	if pane == "" {
 		return nil
 	}
 
-	raw, err := readAll(os.Stdin)
+	payload, raw, eventID, ok, err := readLoggedStdinJSONPayload("opencode-event", pane)
 	if err != nil {
-		return nil
+		return err
 	}
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return nil
-	}
-	logPayload("opencode-event", *pane, raw)
-
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
+	if !ok {
 		return nil
 	}
 
 	state := mapOpenCodeEvent(payload, strings.ToLower(string(raw)))
 	if state == "" {
+		logDecision("opencode-event", pane, eventID, "ignored", "", "event payload unmapped", "")
 		return nil
 	}
 
-	return setState(ctx, *pane, state, "opencode", "opencode-plugin")
+	return applyMappedState(ctx, pane, "opencode", "opencode-plugin", eventID, state, "plugin event mapped")
 }
 
 func notificationPayload(args []string) ([]byte, error) {
@@ -208,6 +186,40 @@ func notificationPayload(args []string) ([]byte, error) {
 		return []byte(args[0]), nil
 	}
 	return readAll(os.Stdin)
+}
+
+func parsePaneArgs(command string, args []string) (string, []string, error) {
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	pane := fs.String("pane", defaultPane(), "tmux pane id")
+	if err := fs.Parse(args); err != nil {
+		return "", nil, err
+	}
+	return *pane, fs.Args(), nil
+}
+
+func readLoggedStdinJSONPayload(source, pane string) (map[string]any, []byte, string, bool, error) {
+	raw, err := readAll(os.Stdin)
+	if err != nil {
+		return nil, nil, "", false, err
+	}
+	payload, eventID, ok := decodeLoggedJSONPayload(source, pane, raw)
+	return payload, raw, eventID, ok, nil
+}
+
+func decodeLoggedJSONPayload(source, pane string, raw []byte) (map[string]any, string, bool) {
+	eventID := nextEventID()
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, eventID, false
+	}
+	logPayload(source, pane, eventID, raw)
+
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		logDecision(source, pane, eventID, "decode_error", "", "invalid json payload", err.Error())
+		return nil, eventID, false
+	}
+	return payload, eventID, true
 }
 
 func mapCodexStatus(payload map[string]any) string {
@@ -331,8 +343,17 @@ func setState(ctx context.Context, pane, status, tool, source string) error {
 	return runPanefleet(ctx, args...)
 }
 
-func clearState(ctx context.Context, pane string) error {
-	return runPanefleet(ctx, "state-clear", "--pane", pane)
+func applyMappedState(ctx context.Context, pane, tool, source, eventID, status, reason string) error {
+	if status == "" {
+		logDecision(source, pane, eventID, "ignored", "", reason, "")
+		return nil
+	}
+	if err := setState(ctx, pane, status, tool, source); err != nil {
+		logDecision(source, pane, eventID, "state_set_error", status, reason, err.Error())
+		return err
+	}
+	logDecision(source, pane, eventID, "state_set", status, reason, "")
+	return nil
 }
 
 func runPanefleet(ctx context.Context, args ...string) error {
@@ -396,7 +417,11 @@ func bridgeTimeout() time.Duration {
 	return time.Duration(millis) * time.Millisecond
 }
 
-func logPayload(source, pane string, raw []byte) {
+func nextEventID() string {
+	return strconv.FormatInt(time.Now().UTC().UnixNano(), 36)
+}
+
+func logPayload(source, pane, eventID string, raw []byte) {
 	logDir := os.Getenv("PANEFLEET_EVENT_LOG_DIR")
 	if logDir == "" {
 		return
@@ -413,14 +438,69 @@ func logPayload(source, pane string, raw []byte) {
 
 	record := struct {
 		Timestamp string          `json:"ts"`
+		Kind      string          `json:"kind"`
+		EventID   string          `json:"event_id"`
 		Source    string          `json:"source"`
 		Pane      string          `json:"pane,omitempty"`
 		Payload   json.RawMessage `json:"payload"`
 	}{
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Kind:      "payload",
+		EventID:   eventID,
 		Source:    source,
 		Pane:      pane,
 		Payload:   json.RawMessage(bytes.TrimSpace(raw)),
+	}
+
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return
+	}
+
+	path := filepath.Join(logDir, source+".jsonl")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	if err := file.Chmod(0o600); err != nil {
+		return
+	}
+	_, _ = file.Write(append(encoded, '\n'))
+}
+
+func logDecision(source, pane, eventID, decision, status, reason, errText string) {
+	logDir := os.Getenv("PANEFLEET_EVENT_LOG_DIR")
+	if logDir == "" {
+		return
+	}
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return
+	}
+	if err := os.Chmod(logDir, 0o700); err != nil {
+		return
+	}
+
+	record := struct {
+		Timestamp string `json:"ts"`
+		Kind      string `json:"kind"`
+		EventID   string `json:"event_id"`
+		Source    string `json:"source"`
+		Pane      string `json:"pane,omitempty"`
+		Decision  string `json:"decision"`
+		Status    string `json:"status,omitempty"`
+		Reason    string `json:"reason,omitempty"`
+		Error     string `json:"error,omitempty"`
+	}{
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Kind:      "decision",
+		EventID:   eventID,
+		Source:    source,
+		Pane:      pane,
+		Decision:  decision,
+		Status:    status,
+		Reason:    reason,
+		Error:     errText,
 	}
 
 	encoded, err := json.Marshal(record)
