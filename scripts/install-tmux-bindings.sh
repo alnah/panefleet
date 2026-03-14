@@ -16,6 +16,7 @@ set_default_option() {
 
 set_default_option @panefleet-done-recent-minutes "${PANEFLEET_DONE_RECENT_MINUTES:-10}"
 set_default_option @panefleet-stale-minutes "${PANEFLEET_STALE_MINUTES:-45}"
+set_default_option @panefleet-agent-status-max-age-seconds "${PANEFLEET_AGENT_STATUS_MAX_AGE_SECONDS:-600}"
 set_default_option @panefleet-theme "${PANEFLEET_THEME:-panefleet-dark}"
 
 ensure_hook() {
