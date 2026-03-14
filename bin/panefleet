@@ -57,6 +57,18 @@ contains_line() {
   printf '%s\n' "$haystack" | rg -qi -- "$pattern"
 }
 
+codex_is_working() {
+  local capture="$1"
+
+  contains_line "$capture" 'Working \([0-9]+[smhd]|esc to interrupt|background terminal[s]? running'
+}
+
+codex_is_waiting() {
+  local capture="$1"
+
+  printf '%s\n' "$capture" | rg -qi '^[[:space:]]*(Enter to confirm|Esc to cancel)$'
+}
+
 tool_kind() {
   local cmd="$1"
   local title="$2"
@@ -179,6 +191,11 @@ effective_status() {
           last_done="$now"
         fi
         set_pane_option "$pane_id" @panefleet_last_done "$last_done"
+      elif [[ -n "$fallback_activity" && "$fallback_activity" != "0" && "$fallback_activity" -lt "$last_done" ]]; then
+        # Normalize older panes that were first observed by a previous build
+        # after completion; use the earlier tmux activity timestamp as ground truth.
+        last_done="$fallback_activity"
+        set_pane_option "$pane_id" @panefleet_last_done "$last_done"
       fi
 
       age=$(( now - last_done ))
@@ -207,17 +224,22 @@ adapter_status() {
   local dead="$4"
   local dead_status="$5"
   local capture="$6"
+  local recent
 
   if [[ "$dead" == "1" ]]; then
     inferred_status "$cmd" "$dead" "$dead_status"
     return
   fi
 
+  recent="$(printf '%s\n' "$capture" | tail -n 20)"
+
   case "$tool" in
     codex)
-      if contains_line "$capture" 'Enter to confirm|Esc to cancel|approval|required|allow this|needs approval|confirm to continue'; then
+      if codex_is_waiting "$recent"; then
         printf 'WAIT'
-      elif printf '%s\n' "$capture" | tail -n 12 | rg -q '^[[:space:]]*› '; then
+      elif codex_is_working "$recent"; then
+        printf 'RUN'
+      elif printf '%s\n' "$recent" | tail -n 12 | rg -q '^[[:space:]]*› '; then
         printf 'DONE'
       else
         printf 'RUN'

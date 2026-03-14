@@ -82,6 +82,7 @@ Manual overrides exist only as a temporary fallback. The intended end state is f
 Current automatic behavior:
 
 - Codex:
+  - visible `Working (... • esc to interrupt)` footer -> `RUN`
   - visible input prompt -> `DONE`
   - approval/confirm prompt -> `WAIT`
   - otherwise -> `RUN`
