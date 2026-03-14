@@ -247,8 +247,3 @@ Desired model:
 - adapters emit authoritative lifecycle state
 - tmux only renders and navigates
 - manual overrides remain optional emergency controls, not primary workflow
-
-## Notes
-
-- Early planning docs live in `docs/`, but `docs/nocommit-*` files are intentionally ignored.
-- The current planning spec starts in `docs/nocommit-plugin-spec.md`.
