@@ -1612,6 +1612,9 @@ pretty_age_into() {
   fi
 
   diff=$(( now - epoch ))
+  if (( diff < 0 )); then
+    diff=0
+  fi
   if (( diff < 60 )); then
     printf -v "$outvar" '%ss' "$diff"
   elif (( diff < 3600 )); then
@@ -1831,7 +1834,7 @@ list_rows() {
 
 preview_row() {
   local pane_id="${1:?pane_id is required}"
-  local status cmd title path short_path session_name window_index pane_index window_name dead dead_status agent_status_value agent_tool_value agent_updated_at_value agent_status_max_age_seconds now
+  local status cmd title path short_path session_name window_index pane_index window_name dead dead_status agent_status_value agent_tool_value agent_updated_at_value agent_status_max_age_seconds now raw_status activity tool
 
   require_runtime_support
   resolve_theme
@@ -1839,36 +1842,27 @@ preview_row() {
   cmd="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_current_command}')"
   dead="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_dead}')"
   dead_status="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_dead_status}')"
-  capture="$(pane_recent_capture "$pane_id")"
   tool="$(tool_kind "$cmd" "$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_title}')")"
   agent_status_value="$(agent_status "$pane_id")"
   agent_tool_value="$(agent_tool "$pane_id")"
   agent_updated_at_value="$(agent_updated_at "$pane_id")"
   agent_status_max_age_seconds="$(tmux_global_option @panefleet-agent-status-max-age-seconds)"
   now="$(now_epoch)"
+  activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
   if [[ -z "$agent_status_max_age_seconds" ]]; then
     agent_status_max_age_seconds="600"
   fi
-  if [[ "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ]]; then
-    capture_tool="$(tool_from_capture "$capture")"
-    if [[ "$capture_tool" != "unknown" ]]; then
-      tool="$capture_tool"
-    fi
-  fi
   if [[ -z "$status" && "$dead" == "1" ]]; then
     raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
-    activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
     status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
   elif [[ -z "$status" ]] && agent_status_is_fresh "$agent_status_value" "$agent_updated_at_value" "$agent_status_max_age_seconds" "$now"; then
     raw_status="$agent_status_value"
     if [[ -n "$agent_tool_value" ]]; then
       tool="$agent_tool_value"
     fi
-    activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
     status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
   elif [[ -z "$status" ]]; then
-    raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
-    activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
+    raw_status="$(fallback_raw_status "" "$tool" "$cmd" "$dead" "$dead_status")"
     status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
   fi
 
