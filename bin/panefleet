@@ -399,6 +399,27 @@ clear_agent_state() {
   unset_pane_option "$pane_id" @panefleet_agent_updated_at 2>/dev/null || true
 }
 
+clear_cached_state() {
+  local pane_id="$1"
+
+  unset_pane_option "$pane_id" @panefleet_auto_signature 2>/dev/null || true
+  unset_pane_option "$pane_id" @panefleet_auto_raw_status 2>/dev/null || true
+  unset_pane_option "$pane_id" @panefleet_auto_tool 2>/dev/null || true
+}
+
+validate_epoch_value() {
+  local value="$1"
+
+  if [[ -z "$value" ]]; then
+    return 0
+  fi
+
+  if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+    printf 'invalid epoch value: %s\n' "$value" >&2
+    exit 1
+  fi
+}
+
 pane_recent_capture() {
   local pane_id="$1"
   "${TMUX_BIN}" capture-pane -p -t "$pane_id" -S -30
@@ -2217,6 +2238,7 @@ state_set_command() {
     exit 1
   fi
 
+  validate_epoch_value "$updated_at"
   pane_id="$(resolve_target_pane "$pane_id")"
   set_agent_state "$pane_id" "$status" "$tool" "$source" "$updated_at"
 }
@@ -2239,6 +2261,7 @@ state_clear_command() {
 
   pane_id="$(resolve_target_pane "$pane_id")"
   clear_agent_state "$pane_id"
+  clear_cached_state "$pane_id"
 }
 
 state_show_command() {

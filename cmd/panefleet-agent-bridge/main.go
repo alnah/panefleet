@@ -174,7 +174,7 @@ func mapCodexStatus(payload map[string]any) string {
 
 	switch statusType {
 	case "active":
-		if boolValue(status["waitingOnApproval"]) {
+		if boolValue(status["waitingOnApproval"]) || containsString(activeFlags(status), "waitingOnApproval") {
 			return statusWait
 		}
 		return statusRun
@@ -214,6 +214,26 @@ func mapOpenCodeEvent(payload map[string]any, lowerBlob string) string {
 	default:
 		return ""
 	}
+}
+
+func activeFlags(status map[string]any) []string {
+	rawFlags, ok := status["activeFlags"]
+	if !ok {
+		return nil
+	}
+
+	values, ok := rawFlags.([]any)
+	if !ok {
+		return nil
+	}
+
+	flags := make([]string, 0, len(values))
+	for _, value := range values {
+		if text, ok := value.(string); ok && text != "" {
+			flags = append(flags, text)
+		}
+	}
+	return flags
 }
 
 func setState(ctx context.Context, pane, status, tool, source string) error {
