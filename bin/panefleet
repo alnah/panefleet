@@ -69,6 +69,24 @@ codex_is_waiting() {
   printf '%s\n' "$capture" | rg -qi '^[[:space:]]*(Enter to confirm|Esc to cancel)$'
 }
 
+opencode_is_working() {
+  local capture="$1"
+
+  printf '%s\n' "$capture" | rg -qi '^[[:space:]]*▣[[:space:]]+Build|^[[:space:]]*⬝+.*esc interrupt'
+}
+
+opencode_is_waiting() {
+  local capture="$1"
+
+  printf '%s\n' "$capture" | rg -qi '^[[:space:]]*(Enter to confirm|Esc to cancel)$'
+}
+
+opencode_is_done() {
+  local capture="$1"
+
+  contains_line "$capture" 'Ask anything\.\.\.|ctrl\+p.*commands|tab.*agents'
+}
+
 tool_kind() {
   local cmd="$1"
   local title="$2"
@@ -255,9 +273,11 @@ adapter_status() {
       fi
       ;;
     opencode)
-      if contains_line "$capture" 'Enter to confirm|Esc to cancel|approval|required|allow|permission'; then
+      if opencode_is_waiting "$recent"; then
         printf 'WAIT'
-      elif contains_line "$capture" 'Ask anything\.\.\.|ctrl\+p.*commands|tab.*agents'; then
+      elif opencode_is_working "$recent"; then
+        printf 'RUN'
+      elif opencode_is_done "$recent"; then
         printf 'DONE'
       else
         printf 'RUN'

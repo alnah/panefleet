@@ -90,6 +90,7 @@ Current automatic behavior:
   - confirm/choice prompt -> `WAIT`
   - otherwise -> `RUN`
 - OpenCode:
+  - visible `Build` / `esc interrupt` footer -> `RUN`
   - visible composer/home prompt -> `DONE`
   - approval/permission prompt -> `WAIT`
   - otherwise -> `RUN`
