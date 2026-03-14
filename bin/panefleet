@@ -18,6 +18,17 @@ manual_status() {
   "${TMUX_BIN}" show-options -pt "$pane_id" -v @panefleet_status 2>/dev/null || true
 }
 
+pane_capture() {
+  local pane_id="$1"
+  "${TMUX_BIN}" capture-pane -p -t "$pane_id" -S -40
+}
+
+contains_line() {
+  local haystack="$1"
+  local pattern="$2"
+  printf '%s\n' "$haystack" | rg -qi -- "$pattern"
+}
+
 tool_kind() {
   local cmd="$1"
   local title="$2"
@@ -41,6 +52,20 @@ tool_kind() {
   esac
 }
 
+tool_from_capture() {
+  local capture="$1"
+
+  if contains_line "$capture" 'OpenAI Codex|/model to change|gpt-5\.[0-9].*left'; then
+    printf 'codex'
+  elif contains_line "$capture" 'ANTHROPIC_API_KEY|Claude Code|Do you want to use this API key'; then
+    printf 'claude'
+  elif contains_line "$capture" 'Ask anything\.\.\.|OpenCode|ctrl\+p.*commands|tab.*agents'; then
+    printf 'opencode'
+  else
+    printf 'unknown'
+  fi
+}
+
 inferred_status() {
   local cmd="$1"
   local dead="$2"
@@ -61,6 +86,53 @@ inferred_status() {
       ;;
     *)
       printf 'RUN'
+      ;;
+  esac
+}
+
+adapter_status() {
+  local pane_id="$1"
+  local tool="$2"
+  local cmd="$3"
+  local dead="$4"
+  local dead_status="$5"
+  local capture="$6"
+
+  if [[ "$dead" == "1" ]]; then
+    inferred_status "$cmd" "$dead" "$dead_status"
+    return
+  fi
+
+  case "$tool" in
+    codex)
+      if contains_line "$capture" 'Enter to confirm|Esc to cancel|approval|required|allow this|needs approval|confirm to continue'; then
+        printf 'WAIT'
+      elif printf '%s\n' "$capture" | tail -n 12 | rg -q '^[[:space:]]*› '; then
+        printf 'DONE'
+      else
+        printf 'RUN'
+      fi
+      ;;
+    claude)
+      if contains_line "$capture" 'Enter to confirm|Esc to cancel|Do you want to use this API key|approval|required|choose an option|select an option'; then
+        printf 'WAIT'
+      elif contains_line "$capture" 'All set|What would you like|Start typing|Send a message'; then
+        printf 'DONE'
+      else
+        printf 'RUN'
+      fi
+      ;;
+    opencode)
+      if contains_line "$capture" 'Enter to confirm|Esc to cancel|approval|required|allow|permission'; then
+        printf 'WAIT'
+      elif contains_line "$capture" 'Ask anything\.\.\.|ctrl\+p.*commands|tab.*agents'; then
+        printf 'DONE'
+      else
+        printf 'RUN'
+      fi
+      ;;
+    *)
+      inferred_status "$cmd" "$dead" "$dead_status"
       ;;
   esac
 }
@@ -135,14 +207,21 @@ list_rows() {
   "${TMUX_BIN}" list-panes -a -F '#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}' |
     while IFS=$'\t' read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity; do
       local_status="$(manual_status "$pane_id")"
+      capture="$(pane_capture "$pane_id")"
+      tool="$(tool_kind "$cmd" "$title")"
+      if [[ "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ]]; then
+        capture_tool="$(tool_from_capture "$capture")"
+        if [[ "$capture_tool" != "unknown" ]]; then
+          tool="$capture_tool"
+        fi
+      fi
       if [[ -n "$local_status" ]]; then
         status="$local_status"
       else
-        status="$(inferred_status "$cmd" "$dead" "$dead_status")"
+        status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
       fi
 
       repo="$(basename "$path" 2>/dev/null || printf '%s' "$path")"
-      tool="$(tool_kind "$cmd" "$title")"
       task="$(task_label "$cmd" "$title" "$window_name" "$repo")"
       target_window="${session_name}:${window_index}"
       target_pane="${target_window}.${pane_index}"
@@ -170,8 +249,16 @@ preview_row() {
   cmd="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_current_command}')"
   dead="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_dead}')"
   dead_status="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_dead_status}')"
+  capture="$(pane_capture "$pane_id")"
+  tool="$(tool_kind "$cmd" "$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_title}')")"
+  if [[ "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ]]; then
+    capture_tool="$(tool_from_capture "$capture")"
+    if [[ "$capture_tool" != "unknown" ]]; then
+      tool="$capture_tool"
+    fi
+  fi
   if [[ -z "$status" ]]; then
-    status="$(inferred_status "$cmd" "$dead" "$dead_status")"
+    status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
   fi
 
   session_name="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{session_name}')"
@@ -186,11 +273,11 @@ preview_row() {
   printf 'target  %s:%s.%s\n' "$session_name" "$window_index" "$pane_index"
   printf 'window  %s\n' "$window_name"
   printf 'cmd     %s\n' "$cmd"
-  printf 'tool    %s\n' "$(tool_kind "$cmd" "$title")"
+  printf 'tool    %s\n' "$tool"
   printf 'title   %s\n' "$title"
   printf 'path    %s\n' "$short_path"
   printf '\n'
-  "${TMUX_BIN}" capture-pane -p -t "$pane_id" -S -40
+  printf '%s\n' "$capture"
 }
 
 mark_status() {
@@ -231,14 +318,11 @@ open_board() {
     --height=100% \
     --border=none \
     --prompt='panefleet> ' \
-    --header=$'enter: jump | alt-r: RUN | alt-w: WAIT | alt-d: DONE | alt-c: clear' \
+    --header=$'enter: jump | ctrl-r: reload' \
     --preview "${SELF} preview {1}" \
     --preview-window='bottom,55%,border-top,wrap' \
     --bind "enter:execute-silent(${SELF} jump {1} {2})+abort" \
-    --bind "alt-r:execute-silent(${SELF} mark {1} RUN)+reload(${SELF} list)" \
-    --bind "alt-w:execute-silent(${SELF} mark {1} WAIT)+reload(${SELF} list)" \
-    --bind "alt-d:execute-silent(${SELF} mark {1} DONE)+reload(${SELF} list)" \
-    --bind "alt-c:execute-silent(${SELF} mark {1} CLEAR)+reload(${SELF} list)"
+    --bind "ctrl-r:reload(${SELF} list)"
 }
 
 main() {

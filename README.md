@@ -8,14 +8,14 @@ Experimental repo for a tmux-first agent orchestration/workboard plugin.
 - agent state adapters
 - Claude Code, Codex, and OpenCode integration
 
-## Current State
+## Current state
 
 Current implementation is tmux-only:
 
 - popup workboard driven by `fzf`
 - jump directly to a pane
-- manual pane states: `RUN`, `WAIT`, `DONE`
-- automatic fallback states: `RUN`, `IDLE`, `DONE`, `ERROR`
+- automatic pane states: `RUN`, `WAIT`, `DONE`, `ERROR`, `IDLE`
+- agent-aware heuristics for `Codex`, `Claude Code`, and `OpenCode`
 
 This first version does not yet integrate with Claude Code, Codex, or OpenCode events.
 
@@ -55,13 +55,11 @@ Useful commands:
 
 ```bash
 bin/panefleet list
-bin/panefleet mark-current RUN
-bin/panefleet mark-current WAIT
-bin/panefleet mark-current DONE
-bin/panefleet mark-current CLEAR
+bin/panefleet board
+bin/panefleet preview %1
 ```
 
-## Status Model
+## Status model
 
 - `RUN`: active work in progress
 - `WAIT`: blocked or intentionally waiting
@@ -72,7 +70,21 @@ bin/panefleet mark-current CLEAR
 Manual status overrides take precedence over inferred status.
 Manual overrides exist only as a temporary fallback. The intended end state is fully automatic state detection.
 
-## Adapter Roadmap
+Current automatic behavior:
+
+- Codex:
+  - visible input prompt -> `DONE`
+  - approval/confirm prompt -> `WAIT`
+  - otherwise -> `RUN`
+- Claude Code:
+  - confirm/choice prompt -> `WAIT`
+  - otherwise -> `RUN`
+- OpenCode:
+  - visible composer/home prompt -> `DONE`
+  - approval/permission prompt -> `WAIT`
+  - otherwise -> `RUN`
+
+## Adapter roadmap
 
 The current implementation is tmux-only. The next step is agent-aware adapters.
 
@@ -116,7 +128,7 @@ Planned integration:
 - map idle/waiting session states to `WAIT` or `DONE` depending on event semantics
 - remove manual marking once plugin events are wired in
 
-## Error Detection
+## Error detection
 
 `ERROR` should not be guessed from generic inactivity. It should be promoted only from a strong signal.
 
@@ -143,7 +155,7 @@ Future adapter behavior:
 - Codex app-server `systemError`-style states should map to `ERROR`
 - OpenCode tool/session failure events should map to `ERROR`
 
-## Target End State
+## Target end state
 
 The final product should not depend on manual `RUN`, `WAIT`, `DONE`, or `ERROR` shortcuts for normal operation.
 
