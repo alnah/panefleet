@@ -330,6 +330,40 @@ agent_updated_at() {
   pane_option "$pane_id" @panefleet_agent_updated_at
 }
 
+valid_epoch_seconds() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+agent_status_max_age_seconds() {
+  local max_age
+
+  max_age="$(tmux_global_option @panefleet-agent-status-max-age-seconds)"
+  if ! valid_epoch_seconds "$max_age"; then
+    max_age="600"
+  fi
+  printf '%s' "$max_age"
+}
+
+agent_status_is_fresh() {
+  local updated_at="$1"
+  local max_age="$2"
+  local now="$3"
+  local age
+
+  if ! valid_epoch_seconds "$updated_at"; then
+    return 1
+  fi
+  if ! valid_epoch_seconds "$max_age"; then
+    return 1
+  fi
+  if (( max_age <= 0 )); then
+    return 0
+  fi
+
+  age=$(( now - updated_at ))
+  (( age >= 0 && age <= max_age ))
+}
+
 resolve_target_pane() {
   local target="${1:-${TMUX_PANE:-}}"
 
@@ -1789,13 +1823,14 @@ list_header() {
 list_rows() {
   require_runtime_support
   resolve_theme
-  local done_recent_minutes stale_minutes now rows_file refresh_queue sync_refresh_count
+  local done_recent_minutes stale_minutes agent_status_max_age now rows_file refresh_queue sync_refresh_count
   local pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool
   local tool raw_status status repo task target_window target_pane short_path age tool_cell target_cell repo_cell colored_status display rank sep refresh_record=""
   local pane_format
 
   done_recent_minutes="$(tmux_global_option @panefleet-done-recent-minutes)"
   stale_minutes="$(tmux_global_option @panefleet-stale-minutes)"
+  agent_status_max_age="$(agent_status_max_age_seconds)"
   now="$(now_epoch)"
   pane_format='#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}	stable:#{history_size}:#{cursor_x}:#{cursor_y}:#{pane_current_command}:#{pane_title}:#{pane_dead}:#{pane_dead_status}	#{@panefleet_status}	#{@panefleet_agent_status}	#{@panefleet_agent_tool}	#{@panefleet_agent_source}	#{@panefleet_agent_updated_at}	#{@panefleet_last_touch}	#{@panefleet_last_done}	#{@panefleet_auto_signature}	#{@panefleet_auto_raw_status}	#{@panefleet_auto_tool}'
   if [[ -z "$done_recent_minutes" ]]; then
@@ -1823,7 +1858,7 @@ list_rows() {
     elif [[ "$dead" == "1" ]]; then
       raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
       status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
-    elif [[ -n "$agent_status_value" ]]; then
+    elif [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$agent_status_max_age" "$now"; then
       raw_status="$agent_status_value"
       if [[ -n "$agent_tool_value" ]]; then
         tool="$agent_tool_value"
@@ -1898,7 +1933,7 @@ list_rows() {
 
 preview_row() {
   local pane_id="${1:?pane_id is required}"
-  local status cmd title path short_path session_name window_index pane_index window_name dead dead_status agent_status_value agent_tool_value
+  local status cmd title path short_path session_name window_index pane_index window_name dead dead_status agent_status_value agent_tool_value agent_updated_at_value agent_status_max_age now
 
   require_runtime_support
   resolve_theme
@@ -1907,9 +1942,12 @@ preview_row() {
   dead="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_dead}')"
   dead_status="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_dead_status}')"
   capture="$(pane_recent_capture "$pane_id")"
+  now="$(now_epoch)"
+  agent_status_max_age="$(agent_status_max_age_seconds)"
   tool="$(tool_kind "$cmd" "$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_title}')")"
   agent_status_value="$(agent_status "$pane_id")"
   agent_tool_value="$(agent_tool "$pane_id")"
+  agent_updated_at_value="$(agent_updated_at "$pane_id")"
   if [[ "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ]]; then
     capture_tool="$(tool_from_capture "$capture")"
     if [[ "$capture_tool" != "unknown" ]]; then
@@ -1920,7 +1958,7 @@ preview_row() {
     raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
     activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
     status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
-  elif [[ -z "$status" && -n "$agent_status_value" ]]; then
+  elif [[ -z "$status" && -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$agent_status_max_age" "$now"; then
     raw_status="$agent_status_value"
     if [[ -n "$agent_tool_value" ]]; then
       tool="$agent_tool_value"
