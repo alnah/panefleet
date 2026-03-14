@@ -174,25 +174,31 @@ Current fallback behavior when no adapter state exists:
 
 - Codex:
   - recent approval prompt -> `WAIT`
+  - recent strong error text -> `ERROR`
   - recent working footer/activity hint -> `RUN`
+  - recent input prompt -> `DONE`
   - otherwise -> `IDLE`
+- Claude Code:
+  - recent approval or chooser prompt -> `WAIT`
+  - recent strong error text -> `ERROR`
+  - recent ready prompt / assistant-ready copy -> `DONE`
+  - otherwise -> `RUN`
 - OpenCode:
   - recent approval/permission prompt -> `WAIT`
+  - recent strong error text -> `ERROR`
   - recent build/footer chrome -> `RUN`
+  - recent ready/help prompt -> `DONE`
   - otherwise -> `IDLE`
 - shell panes -> `IDLE`
-- other known agent tools (`Claude Code`) -> `IDLE`
 - non-agent live processes -> `RUN`
 - dead pane + zero exit -> `DONE`
 - dead pane + non-zero exit -> `ERROR`
 
 Limitation:
 
-- Codex fallback `RUN/WAIT` is heuristic and based on recent pane text because the interactive CLI does not expose an equally strong official signal for those states.
-- OpenCode fallback `RUN/WAIT` is also heuristic when no fresh plugin event is present.
-- Codex fallback never infers `DONE` from pane text. Authoritative `DONE` still comes from adapter events like `notify`.
-- OpenCode fallback also never infers `DONE` from pane text.
-- `Claude Code` no longer uses pane-text fallback for `RUN/WAIT/DONE`.
+- All provider fallbacks are heuristic and based on recent pane text.
+- Adapter state still wins whenever a fresh provider event exists.
+- `DONE` and `ERROR` inferred from pane text are best effort only and can be wrong if the provider UI changes or if matching text appears in normal output.
 
 State aging:
 
@@ -207,7 +213,7 @@ Default timing:
 
 ## Adapter roadmap
 
-The preferred model is agent-aware adapters. Codex and OpenCode keep a narrow heuristic fallback for `RUN/WAIT`; everything else remains conservative.
+The preferred model is agent-aware adapters. Heuristic pane-text fallback exists as a backup for all providers.
 
 ### Claude Code
 

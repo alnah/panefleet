@@ -261,31 +261,95 @@ unset_pane_option() {
 
 pane_recent_capture() {
   local pane_id="$1"
-  "${TMUX_BIN}" capture-pane -p -t "$pane_id" -S -30
+  "${TMUX_BIN}" capture-pane -p -t "$pane_id" -S -40
 }
 
-codex_wait_or_run() {
+capture_contains_lower() {
+  local capture="$1"
+  local needle="$2"
+  local lowered_capture
+
+  lowered_capture="${capture,,}"
+  [[ "$lowered_capture" == *"$needle"* ]]
+}
+
+codex_heuristic_status() {
   local capture="$1"
 
-  if printf '%s\n' "$capture" | "${RG_BIN}" -qi 'Enter to confirm|Esc to cancel|approval required|waiting on approval'; then
+  if capture_contains_lower "$capture" "enter to confirm" || capture_contains_lower "$capture" "esc to cancel" || capture_contains_lower "$capture" "approval required" || capture_contains_lower "$capture" "waiting on approval"; then
     printf 'WAIT'
-  elif printf '%s\n' "$capture" | "${RG_BIN}" -qi 'Working \([0-9]+[smhd]|esc to interrupt|background terminal[s]? running'; then
+  elif capture_contains_lower "$capture" "system error" || capture_contains_lower "$capture" "request failed" || capture_contains_lower "$capture" "operation failed"; then
+    printf 'ERROR'
+  elif capture_contains_lower "$capture" "working (" || capture_contains_lower "$capture" "esc to interrupt" || capture_contains_lower "$capture" "background terminal" || capture_contains_lower "$capture" "background terminals running"; then
     printf 'RUN'
+  elif printf '%s\n' "$capture" | tail -n 12 | "${RG_BIN}" -q '^[[:space:]]*› '; then
+    printf 'DONE'
   else
     printf 'IDLE'
   fi
 }
 
-opencode_wait_or_run() {
+claude_heuristic_status() {
   local capture="$1"
 
-  if printf '%s\n' "$capture" | "${RG_BIN}" -qi 'Enter to confirm|Esc to cancel|approval|permission'; then
+  if capture_contains_lower "$capture" "enter to confirm" || capture_contains_lower "$capture" "esc to cancel" || capture_contains_lower "$capture" "approval required" || capture_contains_lower "$capture" "choose an option" || capture_contains_lower "$capture" "select an option" || capture_contains_lower "$capture" "do you want to use this api key"; then
     printf 'WAIT'
-  elif printf '%s\n' "$capture" | "${RG_BIN}" -qi '^[[:space:]]*▣[[:space:]]+Build|ctrl\+t variants|tab agents|ctrl\+p commands|OpenCode [0-9]'; then
+  elif capture_contains_lower "$capture" "error" || capture_contains_lower "$capture" "failed"; then
+    printf 'ERROR'
+  elif printf '%s\n' "$capture" | tail -n 8 | "${RG_BIN}" -q '^[[:space:]]*❯'; then
+    printf 'DONE'
+  elif capture_contains_lower "$capture" "what can i help with" || capture_contains_lower "$capture" "what coding task can i assist with" || capture_contains_lower "$capture" "what would you like" || capture_contains_lower "$capture" "start typing" || capture_contains_lower "$capture" "send a message"; then
+    printf 'DONE'
+  else
     printf 'RUN'
+  fi
+}
+
+opencode_heuristic_status() {
+  local capture="$1"
+
+  if capture_contains_lower "$capture" "enter to confirm" || capture_contains_lower "$capture" "esc to cancel" || capture_contains_lower "$capture" "approval" || capture_contains_lower "$capture" "permission"; then
+    printf 'WAIT'
+  elif capture_contains_lower "$capture" "error" || capture_contains_lower "$capture" "failed"; then
+    printf 'ERROR'
+  elif capture_contains_lower "$capture" "▣  build" || capture_contains_lower "$capture" "build ·" || capture_contains_lower "$capture" "ctrl+t variants" || capture_contains_lower "$capture" "tab agents" || capture_contains_lower "$capture" "ctrl+p commands" || capture_contains_lower "$capture" "opencode 1."; then
+    printf 'RUN'
+  elif capture_contains_lower "$capture" "ask anything" || capture_contains_lower "$capture" "how can i help" || capture_contains_lower "$capture" "greeting"; then
+    printf 'DONE'
   else
     printf 'IDLE'
   fi
+}
+
+provider_heuristic_status() {
+  local tool="$1"
+  local capture="$2"
+  local cmd="$3"
+  local dead="$4"
+  local dead_status="$5"
+
+  if [[ "$dead" == "1" ]]; then
+    inferred_status "$cmd" "$dead" "$dead_status"
+    return
+  fi
+
+  case "$tool" in
+    codex)
+      codex_heuristic_status "$capture"
+      ;;
+    claude)
+      claude_heuristic_status "$capture"
+      ;;
+    opencode)
+      opencode_heuristic_status "$capture"
+      ;;
+    shell)
+      printf 'IDLE'
+      ;;
+    *)
+      inferred_status "$cmd" "$dead" "$dead_status"
+      ;;
+  esac
 }
 
 fallback_raw_status() {
@@ -301,23 +365,12 @@ fallback_raw_status() {
     inferred_status "$cmd" "$dead" "$dead_status"
   else
     case "$tool" in
-      shell|claude)
-        printf 'IDLE'
-        ;;
-      codex)
+      shell|codex|claude|opencode)
         if [[ -n "$pane_id" ]]; then
           capture="$(pane_recent_capture "$pane_id")"
-          codex_wait_or_run "$capture"
+          provider_heuristic_status "$tool" "$capture" "$cmd" "$dead" "$dead_status"
         else
-          printf 'IDLE'
-        fi
-        ;;
-      opencode)
-        if [[ -n "$pane_id" ]]; then
-          capture="$(pane_recent_capture "$pane_id")"
-          opencode_wait_or_run "$capture"
-        else
-          printf 'IDLE'
+          provider_heuristic_status "$tool" "" "$cmd" "$dead" "$dead_status"
         fi
         ;;
       *)
