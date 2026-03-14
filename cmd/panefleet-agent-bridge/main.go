@@ -383,7 +383,10 @@ func logPayload(source, pane string, raw []byte) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return
 	}
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return
+	}
+	if err := os.Chmod(logDir, 0o700); err != nil {
 		return
 	}
 
@@ -405,11 +408,14 @@ func logPayload(source, pane string, raw []byte) {
 	}
 
 	path := filepath.Join(logDir, source+".jsonl")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return
 	}
 	defer file.Close()
+	if err := file.Chmod(0o600); err != nil {
+		return
+	}
 	_, _ = file.Write(append(encoded, '\n'))
 }
 
