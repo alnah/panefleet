@@ -20,9 +20,10 @@ export const PanefleetPlugin: Plugin = async () => {
         stderr: "ignore",
       })
 
-      const writer = proc.stdin.getWriter()
-      await writer.write(new TextEncoder().encode(payload))
-      await writer.close()
+      if (proc.stdin) {
+        await proc.stdin.write(payload)
+        await proc.stdin.end()
+      }
       await proc.exited
     },
   }
