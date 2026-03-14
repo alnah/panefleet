@@ -370,47 +370,68 @@ task_label() {
   esac
 }
 
+list_header() {
+  local status_cell tool_cell target_cell repo_cell display
+
+  status_cell="$(fit_cell "STATE" 5)"
+  tool_cell="$(fit_cell "TOOL" 8)"
+  target_cell="$(fit_cell "TARGET" 18)"
+  repo_cell="$(fit_cell "REPO" 14)"
+  display="$(printf '%s | %s | %s | %s | %4s | %s' "$status_cell" "$tool_cell" "$target_cell" "$repo_cell" "AGE" "TASK")"
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "__header__" \
+    "__header__" \
+    "-1" \
+    "0" \
+    "__header__" \
+    "$display"
+}
+
 list_rows() {
-  "${TMUX_BIN}" list-panes -a -F '#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}' |
-    while IFS=$'\t' read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity; do
-      local_status="$(manual_status "$pane_id")"
-      capture="$(pane_capture "$pane_id")"
-      tool="$(tool_kind "$cmd" "$title")"
-      activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
-      if [[ "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ]]; then
-        capture_tool="$(tool_from_capture "$capture")"
-        if [[ "$capture_tool" != "unknown" ]]; then
-          tool="$capture_tool"
+  {
+    list_header
+    "${TMUX_BIN}" list-panes -a -F '#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}' |
+      while IFS=$'\t' read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity; do
+        local_status="$(manual_status "$pane_id")"
+        capture="$(pane_capture "$pane_id")"
+        tool="$(tool_kind "$cmd" "$title")"
+        activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
+        if [[ "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ]]; then
+          capture_tool="$(tool_from_capture "$capture")"
+          if [[ "$capture_tool" != "unknown" ]]; then
+            tool="$capture_tool"
+          fi
         fi
-      fi
-      if [[ -n "$local_status" ]]; then
-        status="$local_status"
-      else
-        raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
-        status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
-      fi
+        if [[ -n "$local_status" ]]; then
+          status="$local_status"
+        else
+          raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
+          status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
+        fi
 
-      repo="$(basename "$path" 2>/dev/null || printf '%s' "$path")"
-      task="$(task_label "$cmd" "$title" "$window_name" "$repo")"
-      target_window="${session_name}:${window_index}"
-      target_pane="${target_window}.${pane_index}"
-      short_path="${path/#$HOME/\~}"
-      age="$(pretty_age "${activity:-0}")"
-      tool_cell="$(fit_cell "$tool" 8)"
-      target_cell="$(fit_cell "$target_pane" 18)"
-      repo_cell="$(fit_cell "$repo" 14)"
-      colored_status="$(colored_status_cell "$status")"
-      display="$(printf '%b | %s | %s | %s | %4s | %s' "$colored_status" "$tool_cell" "$target_cell" "$repo_cell" "$age" "$task")"
+        repo="$(basename "$path" 2>/dev/null || printf '%s' "$path")"
+        task="$(task_label "$cmd" "$title" "$window_name" "$repo")"
+        target_window="${session_name}:${window_index}"
+        target_pane="${target_window}.${pane_index}"
+        short_path="${path/#$HOME/\~}"
+        age="$(pretty_age "${activity:-0}")"
+        tool_cell="$(fit_cell "$tool" 8)"
+        target_cell="$(fit_cell "$target_pane" 18)"
+        repo_cell="$(fit_cell "$repo" 14)"
+        colored_status="$(colored_status_cell "$status")"
+        display="$(printf '%b | %s | %s | %s | %4s | %s' "$colored_status" "$tool_cell" "$target_cell" "$repo_cell" "$age" "$task")"
 
-      printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$pane_id" \
-        "$target_window" \
-        "$(status_rank "$status")" \
-        "${activity:-0}" \
-        "$short_path" \
-        "$display"
-    done |
-    sort -t $'\t' -k3,3n -k4,4nr
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+          "$pane_id" \
+          "$target_window" \
+          "$(status_rank "$status")" \
+          "${activity:-0}" \
+          "$short_path" \
+          "$display"
+      done |
+      sort -t $'\t' -k3,3n -k4,4nr
+  }
 }
 
 preview_row() {
@@ -487,6 +508,7 @@ open_board() {
     --ansi \
     --delimiter=$'\t' \
     --with-nth=6 \
+    --header-lines=1 \
     --no-sort \
     --layout=reverse \
     --height=100% \
