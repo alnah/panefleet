@@ -67,10 +67,10 @@ inferred_status() {
 
 status_rank() {
   case "$1" in
-    RUN) printf '0' ;;
-    WAIT) printf '1' ;;
-    DONE) printf '2' ;;
-    ERROR) printf '3' ;;
+    DONE) printf '0' ;;
+    RUN) printf '1' ;;
+    ERROR) printf '2' ;;
+    WAIT) printf '3' ;;
     IDLE) printf '4' ;;
     *) printf '9' ;;
   esac
