@@ -257,9 +257,54 @@ manual_status() {
   pane_option "$pane_id" @panefleet_status
 }
 
-pane_capture() {
+pane_recent_capture() {
   local pane_id="$1"
-  "${TMUX_BIN}" capture-pane -p -t "$pane_id" -S -40
+  "${TMUX_BIN}" capture-pane -p -t "$pane_id" -S -80
+}
+
+pane_visible_capture() {
+  local pane_id="$1"
+  "${TMUX_BIN}" capture-pane -p -t "$pane_id"
+}
+
+preview_body_capture() {
+  local pane_id="$1"
+  local visible_capture body_lines
+
+  visible_capture="$(pane_visible_capture "$pane_id")"
+  body_lines="${FZF_PREVIEW_LINES:-0}"
+  if [[ "$body_lines" =~ ^[0-9]+$ ]]; then
+    body_lines=$(( body_lines - 9 ))
+  else
+    body_lines=0
+  fi
+
+  if (( body_lines < 1 )); then
+    printf '%s\n' "$visible_capture"
+  else
+    printf '%s\n' "$visible_capture" | awk -v body_lines="$body_lines" '
+      { lines[++n] = $0 }
+      function visually_empty(line, tmp) {
+        tmp = line
+        gsub(/[[:space:]┃╹▀█▌▐▄▁▔▕▏]/, "", tmp)
+        return tmp == ""
+      }
+      END {
+        end = n
+        start = n - body_lines + 1
+        if (start < 1) {
+          start = 1
+        }
+        while (start > 1 && end > start && visually_empty(lines[start])) {
+          start--
+          end--
+        }
+        for (i = start; i <= end; i++) {
+          print lines[i]
+        }
+      }
+    '
+  fi
 }
 
 contains_line() {
@@ -1282,7 +1327,7 @@ list_rows() {
     "${TMUX_BIN}" list-panes -a -F '#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}' |
       while IFS=$'\t' read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity; do
         local_status="$(manual_status "$pane_id")"
-        capture="$(pane_capture "$pane_id")"
+        capture="$(pane_recent_capture "$pane_id")"
         tool="$(tool_kind "$cmd" "$title")"
         activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
         if [[ "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ]]; then
@@ -1343,7 +1388,7 @@ preview_row() {
   cmd="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_current_command}')"
   dead="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_dead}')"
   dead_status="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_dead_status}')"
-  capture="$(pane_capture "$pane_id")"
+  capture="$(pane_recent_capture "$pane_id")"
   tool="$(tool_kind "$cmd" "$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_title}')")"
   if [[ "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ]]; then
     capture_tool="$(tool_from_capture "$capture")"
@@ -1364,6 +1409,7 @@ preview_row() {
   title="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_title}')"
   path="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_current_path}')"
   short_path="${path/#$HOME/\~}"
+  capture="$(preview_body_capture "$pane_id")"
 
   printf '%s %s\n' "$(preview_label "status")" "$(status_color "$status")"
   printf '%s %s\n' "$(preview_label "target")" "$(preview_value "${session_name}:${window_index}.${pane_index}" "$THEME_ACCENT")"
@@ -1403,6 +1449,10 @@ jump_to_pane() {
   "${TMUX_BIN}" select-pane -t "$pane_id"
 }
 
+board_header_navigation() {
+  printf 'enter: jump | tab/btab: preview page | shift-up/down/home/end'
+}
+
 open_board() {
   require_tmux
   require_runtime_support
@@ -1421,12 +1471,18 @@ open_board() {
     --height=100% \
     --border=none \
     --prompt='panefleet> ' \
-    --header=$'enter: jump | ctrl-r: reload' \
+    --header="$(board_header_navigation)" \
     --separator='─' \
     --preview "${SELF} preview {1}" \
-    --preview-window='bottom,55%,border-top,wrap' \
+    --preview-window='bottom,55%,border-top,wrap,follow,~9' \
     --bind "enter:execute-silent(${SELF} jump {1} {2})+abort" \
-    --bind "ctrl-r:reload(${SELF} list)"
+    --bind "ctrl-r:reload(${SELF} list)" \
+    --bind "tab:preview-page-down" \
+    --bind "btab:preview-page-up" \
+    --bind "shift-up:preview-up" \
+    --bind "shift-down:preview-down" \
+    --bind "shift-home:preview-top" \
+    --bind "shift-end:preview-bottom"
   rc=$?
   set -e
 
