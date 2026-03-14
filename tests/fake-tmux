@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ROOT="${PANEFLEET_FAKE_TMUX_DIR:?PANEFLEET_FAKE_TMUX_DIR is required}"
+CURRENT_PANE="${PANEFLEET_FAKE_TMUX_CURRENT_PANE:-%101}"
+
+load_pane() {
+  local pane_id="$1"
+  # shellcheck disable=SC1090
+  source "${ROOT}/panes/${pane_id}/meta"
+}
+
+pane_option_path() {
+  local pane_id="$1"
+  local name="$2"
+  printf '%s/panes/%s/options/%s' "$ROOT" "$pane_id" "$name"
+}
+
+global_option_path() {
+  local name="$1"
+  printf '%s/globals/%s' "$ROOT" "$name"
+}
+
+read_pane_option() {
+  local pane_id="$1"
+  local name="$2"
+  local path
+
+  path="$(pane_option_path "$pane_id" "$name")"
+  if [[ -f "$path" ]]; then
+    cat "$path"
+  fi
+}
+
+write_pane_option() {
+  local pane_id="$1"
+  local name="$2"
+  local value="$3"
+  local path
+
+  path="$(pane_option_path "$pane_id" "$name")"
+  mkdir -p "$(dirname "$path")"
+  printf '%s' "$value" >"$path"
+}
+
+unset_pane_option_value() {
+  local pane_id="$1"
+  local name="$2"
+  rm -f "$(pane_option_path "$pane_id" "$name")"
+}
+
+read_global_option() {
+  local name="$1"
+  local path
+
+  path="$(global_option_path "$name")"
+  if [[ -f "$path" ]]; then
+    cat "$path"
+  fi
+}
+
+render_format() {
+  local pane_id="$1"
+  local format="$2"
+  local rendered="$format"
+  local key value
+
+  load_pane "$pane_id"
+
+  for key in pane_id session_name window_index window_name pane_index pane_current_command pane_title pane_current_path pane_dead pane_dead_status window_activity history_size cursor_x cursor_y client_termfeatures; do
+    value="${!key-}"
+    rendered="${rendered//\#\{$key\}/$value}"
+  done
+
+  for key in @panefleet_status @panefleet_agent_status @panefleet_agent_tool @panefleet_agent_source @panefleet_agent_updated_at @panefleet_last_touch @panefleet_last_done @panefleet_auto_signature @panefleet_auto_raw_status @panefleet_auto_tool; do
+    value="$(read_pane_option "$pane_id" "$key")"
+    rendered="${rendered//\#\{$key\}/$value}"
+  done
+
+  printf '%s\n' "$rendered"
+}
+
+show_options() {
+  local scope="" pane_id="" name=""
+
+  while (( $# > 0 )); do
+    case "$1" in
+      -g|-gq|-gqv)
+        scope="global"
+        shift
+        ;;
+      -p|-pt)
+        scope="pane"
+        pane_id="$2"
+        shift 2
+        ;;
+      -v|-q)
+        shift
+        ;;
+      *)
+        name="$1"
+        shift
+        ;;
+    esac
+  done
+
+  case "$scope" in
+    global) read_global_option "$name" ;;
+    pane) read_pane_option "$pane_id" "$name" ;;
+  esac
+}
+
+set_option() {
+  local pane_id="" name="" value="" unset_mode="0"
+
+  while (( $# > 0 )); do
+    case "$1" in
+      -pt)
+        pane_id="$2"
+        shift 2
+        ;;
+      -q)
+        shift
+        ;;
+      -u)
+        unset_mode="1"
+        shift
+        ;;
+      *)
+        if [[ -z "$name" ]]; then
+          name="$1"
+        else
+          value="$1"
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ "$unset_mode" == "1" ]]; then
+    unset_pane_option_value "$pane_id" "$name"
+  else
+    write_pane_option "$pane_id" "$name" "$value"
+  fi
+}
+
+display_message() {
+  local pane_id="$CURRENT_PANE" format=""
+
+  while (( $# > 0 )); do
+    case "$1" in
+      -p)
+        shift
+        ;;
+      -t)
+        pane_id="$2"
+        shift 2
+        ;;
+      *)
+        format="$1"
+        shift
+        ;;
+    esac
+  done
+
+  render_format "$pane_id" "$format"
+}
+
+list_panes() {
+  local format=""
+
+  while (( $# > 0 )); do
+    case "$1" in
+      -a)
+        shift
+        ;;
+      -F)
+        format="$2"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+
+  find "${ROOT}/panes" -mindepth 1 -maxdepth 1 -type d | sort | while read -r pane_dir; do
+    render_format "$(basename "$pane_dir")" "$format"
+  done
+}
+
+capture_pane() {
+  local pane_id=""
+
+  while (( $# > 0 )); do
+    case "$1" in
+      -p|-S)
+        shift
+        if [[ "${1:-}" =~ ^-?[0-9]+$ ]]; then
+          shift
+        fi
+        ;;
+      -t)
+        pane_id="$2"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+
+  cat "${ROOT}/panes/${pane_id}/capture"
+}
+
+case "${1:-}" in
+  list-commands)
+    printf 'display-popup\n'
+    ;;
+  show-options)
+    shift
+    show_options "$@"
+    ;;
+  set-option)
+    shift
+    set_option "$@"
+    ;;
+  display-message)
+    shift
+    display_message "$@"
+    ;;
+  list-panes)
+    shift
+    list_panes "$@"
+    ;;
+  capture-pane)
+    shift
+    capture_pane "$@"
+    ;;
+  *)
+    printf 'fake-tmux unsupported command: %s\n' "${1:-}" >&2
+    exit 1
+    ;;
+esac
