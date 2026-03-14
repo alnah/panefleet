@@ -15,6 +15,7 @@ Current implementation is tmux-only:
 - popup workboard driven by `fzf`
 - jump directly to a pane
 - automatic pane states: `RUN`, `WAIT`, `DONE`, `ERROR`, `IDLE`
+- aging states: recent `DONE` expires into `IDLE`, then `STALE`
 - agent-aware heuristics for `Codex`, `Claude Code`, and `OpenCode`
 
 This first version does not yet integrate with Claude Code, Codex, or OpenCode events.
@@ -29,10 +30,17 @@ This first version does not yet integrate with Claude Code, Codex, or OpenCode e
 
 ### Local development
 
-Source the plugin file in a running tmux session:
+Link the repo into the standard tmux plugin path:
 
 ```bash
-~/workspace/panefleet/scripts/dev-source.sh
+mkdir -p ~/.tmux/plugins
+ln -sfn "$PWD" ~/.tmux/plugins/panefleet
+```
+
+Then source the plugin in a running tmux session:
+
+```bash
+~/.tmux/plugins/panefleet/scripts/dev-source.sh
 ```
 
 Default binding:
@@ -65,6 +73,7 @@ bin/panefleet preview %1
 - `WAIT`: blocked or intentionally waiting
 - `DONE`: finished enough to revisit later
 - `IDLE`: shell is alive but no strong sign of active work
+- `STALE`: left open without interaction beyond the configured threshold
 - `ERROR`: pane process exited non-zero
 
 Manual status overrides take precedence over inferred status.
@@ -83,6 +92,17 @@ Current automatic behavior:
   - visible composer/home prompt -> `DONE`
   - approval/permission prompt -> `WAIT`
   - otherwise -> `RUN`
+
+State aging:
+
+- `DONE` is only a recent-completion state
+- after `@panefleet-done-recent-minutes`, `DONE` decays to `IDLE`
+- after `@panefleet-stale-minutes` without interaction, `IDLE` decays to `STALE`
+
+Default timing:
+
+- `@panefleet-done-recent-minutes = 10`
+- `@panefleet-stale-minutes = 45`
 
 ## Adapter roadmap
 
