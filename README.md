@@ -272,6 +272,20 @@ Current bridge mapping:
 - `Stop`, `SubagentStop`, `SessionEnd`, `PreCompact` -> `DONE`
 - payloads containing explicit failure markers still promote `ERROR`
 
+Smoke test:
+
+```bash
+rm -f ~/.local/state/panefleet/events/claude-hook.jsonl
+claude -p 'Run pwd, then answer with the directory only.'
+tail -n +1 ~/.local/state/panefleet/events/claude-hook.jsonl
+```
+
+Expected events:
+
+- `PreToolUse`
+- `PostToolUse`
+- `Stop`
+
 ### Codex
 
 Preferred path:
