@@ -276,6 +276,18 @@ codex_wait_or_run() {
   fi
 }
 
+opencode_wait_or_run() {
+  local capture="$1"
+
+  if printf '%s\n' "$capture" | "${RG_BIN}" -qi 'Enter to confirm|Esc to cancel|approval|permission'; then
+    printf 'WAIT'
+  elif printf '%s\n' "$capture" | "${RG_BIN}" -qi '^[[:space:]]*▣[[:space:]]+Build|ctrl\+t variants|tab agents|ctrl\+p commands|OpenCode [0-9]'; then
+    printf 'RUN'
+  else
+    printf 'IDLE'
+  fi
+}
+
 fallback_raw_status() {
   local cached_raw_status="$1"
   local tool="$2"
@@ -289,13 +301,21 @@ fallback_raw_status() {
     inferred_status "$cmd" "$dead" "$dead_status"
   else
     case "$tool" in
-      shell|claude|opencode)
+      shell|claude)
         printf 'IDLE'
         ;;
       codex)
         if [[ -n "$pane_id" ]]; then
           capture="$(pane_recent_capture "$pane_id")"
           codex_wait_or_run "$capture"
+        else
+          printf 'IDLE'
+        fi
+        ;;
+      opencode)
+        if [[ -n "$pane_id" ]]; then
+          capture="$(pane_recent_capture "$pane_id")"
+          opencode_wait_or_run "$capture"
         else
           printf 'IDLE'
         fi

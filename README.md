@@ -176,8 +176,12 @@ Current fallback behavior when no adapter state exists:
   - recent approval prompt -> `WAIT`
   - recent working footer/activity hint -> `RUN`
   - otherwise -> `IDLE`
+- OpenCode:
+  - recent approval/permission prompt -> `WAIT`
+  - recent build/footer chrome -> `RUN`
+  - otherwise -> `IDLE`
 - shell panes -> `IDLE`
-- other known agent tools (`Claude Code`, `OpenCode`) -> `IDLE`
+- other known agent tools (`Claude Code`) -> `IDLE`
 - non-agent live processes -> `RUN`
 - dead pane + zero exit -> `DONE`
 - dead pane + non-zero exit -> `ERROR`
@@ -185,8 +189,10 @@ Current fallback behavior when no adapter state exists:
 Limitation:
 
 - Codex fallback `RUN/WAIT` is heuristic and based on recent pane text because the interactive CLI does not expose an equally strong official signal for those states.
+- OpenCode fallback `RUN/WAIT` is also heuristic when no fresh plugin event is present.
 - Codex fallback never infers `DONE` from pane text. Authoritative `DONE` still comes from adapter events like `notify`.
-- `Claude Code` and `OpenCode` no longer use pane-text fallback for `RUN/WAIT/DONE`.
+- OpenCode fallback also never infers `DONE` from pane text.
+- `Claude Code` no longer uses pane-text fallback for `RUN/WAIT/DONE`.
 
 State aging:
 
@@ -201,7 +207,7 @@ Default timing:
 
 ## Adapter roadmap
 
-The preferred model is agent-aware adapters. Codex keeps a narrow heuristic fallback for `RUN/WAIT`; everything else remains conservative.
+The preferred model is agent-aware adapters. Codex and OpenCode keep a narrow heuristic fallback for `RUN/WAIT`; everything else remains conservative.
 
 ### Claude Code
 
