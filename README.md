@@ -10,22 +10,40 @@ Experimental repo for a tmux-first agent orchestration/workboard plugin.
 
 ## Current state
 
-Current implementation is tmux-only:
+Current implementation is tmux-first, with adapter ingestion available:
 
 - popup workboard driven by `fzf`
 - jump directly to a pane
+- adapter-driven pane state via `bin/panefleet state-set`
 - automatic pane states: `RUN`, `WAIT`, `DONE`, `ERROR`, `IDLE`
 - aging states: recent `DONE` expires into `IDLE`, then `STALE`
-- agent-aware heuristics for `Codex`, `Claude Code`, and `OpenCode`
+- fallback heuristics for `Codex`, `Claude Code`, and `OpenCode` when no adapter state exists
 
-This first version does not yet integrate with Claude Code, Codex, or OpenCode events.
+Included integration surfaces:
+
+- Compiled adapter bridge: [panefleet-agent-bridge](/Users/alexis/workspace/panefleet/cmd/panefleet-agent-bridge/main.go)
+- Claude Code hook wrapper: [claude-code-hook](/Users/alexis/workspace/panefleet/scripts/claude-code-hook)
+- Codex app-server wrapper: [codex-app-server-bridge](/Users/alexis/workspace/panefleet/scripts/codex-app-server-bridge)
+- OpenCode event wrapper: [opencode-event-bridge](/Users/alexis/workspace/panefleet/scripts/opencode-event-bridge)
+- OpenCode plugin shim: [opencode-panefleet.ts](/Users/alexis/workspace/panefleet/scripts/opencode-panefleet.ts)
 
 ## Requirements
+
+Core runtime:
 
 - `tmux` with `display-popup`
 - `fzf` with `--header-lines-border`
 - `ripgrep`
 - `bash`
+
+Source build:
+
+- `go`
+
+Adapter runtime:
+
+- no Python runtime dependency
+- OpenCode plugin integration runs inside the OpenCode plugin host
 
 Check your runtime with:
 
@@ -41,6 +59,12 @@ On macOS with Homebrew:
 
 ```bash
 ./scripts/install-deps-homebrew.sh
+```
+
+Build the compiled adapter bridge:
+
+```bash
+./scripts/build-agent-bridge.sh
 ```
 
 Link the repo into the standard tmux plugin path:
@@ -81,6 +105,12 @@ bin/panefleet list
 bin/panefleet board
 bin/panefleet popup
 bin/panefleet preview %1
+bin/panefleet state-set --pane %1 --status RUN --tool codex --source test
+bin/panefleet state-show --pane %1
+bin/panefleet state-clear --pane %1
+bin/panefleet-agent-bridge claude-hook
+bin/panefleet-agent-bridge codex-app-server --pane %1
+bin/panefleet-agent-bridge opencode-event --pane %1
 bin/panefleet themes
 bin/panefleet theme-apply dracula
 ```
@@ -140,7 +170,7 @@ Or interactively with:
 Manual status overrides take precedence over inferred status.
 Manual overrides exist only as a temporary fallback. The intended end state is fully automatic state detection.
 
-Current automatic behavior:
+Current fallback behavior when no adapter state exists:
 
 - Codex:
   - visible `Working (... • esc to interrupt)` footer -> `RUN`
@@ -169,30 +199,59 @@ Default timing:
 
 ## Adapter roadmap
 
-The current implementation is tmux-only. The next step is agent-aware adapters.
+The preferred model is agent-aware adapters. Pane-content heuristics remain fallback only.
 
 ### Claude Code
 
-Planned integration:
+Included bridge:
 
-- use official Claude Code hooks
-- write panefleet state on hook events
-- map active tool phases to `RUN`
-- map approval or user-blocked states to `WAIT`
-- map stop/completion events to `DONE`
-- remove the need for manual tmux status marking in normal usage
+- [claude-code-hook](/Users/alexis/workspace/panefleet/scripts/claude-code-hook)
 
-Expected implementation shape:
+Usage shape:
 
-- small shell adapter scripts
-- local state updates keyed by tmux pane id
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "~/.tmux/plugins/panefleet/scripts/claude-code-hook"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "~/.tmux/plugins/panefleet/scripts/claude-code-hook"
+      }
+    ],
+    "Notification": [
+      {
+        "type": "command",
+        "command": "~/.tmux/plugins/panefleet/scripts/claude-code-hook"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "~/.tmux/plugins/panefleet/scripts/claude-code-hook"
+      }
+    ]
+  }
+}
+```
 
 ### Codex
 
-Planned integration:
+Preferred path:
 
-- preferred path: Codex app-server events
-- fallback path: Codex `notify` plus process liveness
+- [codex-app-server-bridge](/Users/alexis/workspace/panefleet/scripts/codex-app-server-bridge)
+- map `thread/status/changed` notifications into pane-local state
+
+Usage shape:
+
+```bash
+<codex app-server notification stream> | ~/.tmux/plugins/panefleet/scripts/codex-app-server-bridge --pane "$TMUX_PANE"
+```
 
 State mapping target:
 
@@ -204,12 +263,16 @@ State mapping target:
 
 ### OpenCode
 
-Planned integration:
+Included bridge:
 
-- OpenCode plugin subscribing to session and tool lifecycle events
-- map active execution to `RUN`
-- map idle/waiting session states to `WAIT` or `DONE` depending on event semantics
-- remove manual marking once plugin events are wired in
+- [opencode-event-bridge](/Users/alexis/workspace/panefleet/scripts/opencode-event-bridge)
+- [opencode-panefleet.ts](/Users/alexis/workspace/panefleet/scripts/opencode-panefleet.ts)
+
+Expected plugin wiring:
+
+- plugin subscribes to session/tool lifecycle events
+- plugin shim forwards event JSON into `opencode-event-bridge --pane "$TMUX_PANE"`
+- `panefleet` stores authoritative pane state from those events
 
 ## Error detection
 
@@ -247,3 +310,4 @@ Desired model:
 - adapters emit authoritative lifecycle state
 - tmux only renders and navigates
 - manual overrides remain optional emergency controls, not primary workflow
+- pane-content heuristics remain fallback only when no adapter state is present

@@ -6,6 +6,7 @@ TMUX_BIN="${TMUX_BIN:-tmux}"
 FZF_BIN="${FZF_BIN:-fzf}"
 SELF="${0}"
 RG_BIN="${RG_BIN:-rg}"
+PANEFIELD_SEP=$'\037'
 
 THEME_NAME=""
 THEME_BG=""
@@ -239,6 +240,12 @@ pane_option() {
   "${TMUX_BIN}" show-options -pt "$pane_id" -v "$name" 2>/dev/null || true
 }
 
+pane_records() {
+  local format="$1"
+
+  "${TMUX_BIN}" list-panes -a -F "$format" | awk -v OFS="$PANEFIELD_SEP" '{ gsub(/\t/, OFS); print }'
+}
+
 set_pane_option() {
   local pane_id="$1"
   local name="$2"
@@ -252,14 +259,149 @@ unset_pane_option() {
   "${TMUX_BIN}" set-option -pt "$pane_id" -u "$name"
 }
 
+set_cached_state() {
+  local pane_id="$1"
+  local signature="$2"
+  local raw_status="$3"
+  local tool="$4"
+
+  set_pane_option "$pane_id" @panefleet_auto_signature "$signature"
+  set_pane_option "$pane_id" @panefleet_auto_raw_status "$raw_status"
+  set_pane_option "$pane_id" @panefleet_auto_tool "$tool"
+}
+
+cache_refresh_needed() {
+  local local_status="$1"
+  local cached_signature="$2"
+  local signature="$3"
+  local cached_raw_status="$4"
+
+  if [[ -n "$local_status" ]]; then
+    return 1
+  fi
+
+  if [[ -z "$cached_raw_status" ]]; then
+    return 0
+  fi
+
+  [[ "$cached_signature" != "$signature" ]]
+}
+
+fallback_raw_status() {
+  local cached_raw_status="$1"
+  local tool="$2"
+  local cmd="$3"
+  local dead="$4"
+  local dead_status="$5"
+
+  if [[ -n "$cached_raw_status" ]]; then
+    printf '%s' "$cached_raw_status"
+  elif [[ "$dead" == "1" ]]; then
+    inferred_status "$cmd" "$dead" "$dead_status"
+  elif [[ "$tool" == "shell" ]]; then
+    printf 'IDLE'
+  else
+    printf 'IDLE'
+  fi
+}
+
 manual_status() {
   local pane_id="$1"
   pane_option "$pane_id" @panefleet_status
 }
 
+agent_status() {
+  local pane_id="$1"
+  pane_option "$pane_id" @panefleet_agent_status
+}
+
+agent_tool() {
+  local pane_id="$1"
+  pane_option "$pane_id" @panefleet_agent_tool
+}
+
+agent_source() {
+  local pane_id="$1"
+  pane_option "$pane_id" @panefleet_agent_source
+}
+
+agent_updated_at() {
+  local pane_id="$1"
+  pane_option "$pane_id" @panefleet_agent_updated_at
+}
+
+resolve_target_pane() {
+  local target="${1:-${TMUX_PANE:-}}"
+
+  if [[ -n "$target" ]]; then
+    printf '%s' "$target"
+    return
+  fi
+
+  require_tmux
+  "${TMUX_BIN}" display-message -p '#{pane_id}'
+}
+
+validate_status_name() {
+  case "$1" in
+    RUN|WAIT|DONE|IDLE|ERROR|STALE)
+      ;;
+    *)
+      printf 'unsupported status: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+set_agent_state() {
+  local pane_id="$1"
+  local status="$2"
+  local tool="${3:-}"
+  local source="${4:-}"
+  local updated_at="${5:-}"
+
+  validate_status_name "$status"
+  if [[ -z "$updated_at" ]]; then
+    updated_at="$(now_epoch)"
+  fi
+
+  set_pane_option "$pane_id" @panefleet_agent_status "$status"
+  set_pane_option "$pane_id" @panefleet_agent_updated_at "$updated_at"
+
+  if [[ -n "$tool" ]]; then
+    set_pane_option "$pane_id" @panefleet_agent_tool "$tool"
+  else
+    unset_pane_option "$pane_id" @panefleet_agent_tool 2>/dev/null || true
+  fi
+
+  if [[ -n "$source" ]]; then
+    set_pane_option "$pane_id" @panefleet_agent_source "$source"
+  else
+    unset_pane_option "$pane_id" @panefleet_agent_source 2>/dev/null || true
+  fi
+
+  case "$status" in
+    DONE)
+      set_pane_option "$pane_id" @panefleet_last_done "$updated_at"
+      ;;
+    RUN|WAIT|ERROR)
+      unset_pane_option "$pane_id" @panefleet_last_done 2>/dev/null || true
+      ;;
+  esac
+}
+
+clear_agent_state() {
+  local pane_id="$1"
+
+  unset_pane_option "$pane_id" @panefleet_agent_status 2>/dev/null || true
+  unset_pane_option "$pane_id" @panefleet_agent_tool 2>/dev/null || true
+  unset_pane_option "$pane_id" @panefleet_agent_source 2>/dev/null || true
+  unset_pane_option "$pane_id" @panefleet_agent_updated_at 2>/dev/null || true
+}
+
 pane_recent_capture() {
   local pane_id="$1"
-  "${TMUX_BIN}" capture-pane -p -t "$pane_id" -S -80
+  "${TMUX_BIN}" capture-pane -p -t "$pane_id" -S -30
 }
 
 pane_visible_capture() {
@@ -489,6 +631,261 @@ effective_status() {
       return
       ;;
   esac
+}
+
+idle_or_stale_status_values() {
+  local touched_at="$1"
+  local last_done="$2"
+  local fallback_activity="$3"
+  local stale_minutes="$4"
+  local now="$5"
+  local age
+
+  if [[ -z "$touched_at" || "$touched_at" == "0" ]]; then
+    if [[ -n "$last_done" && "$last_done" != "0" ]]; then
+      touched_at="$last_done"
+    else
+      touched_at="$fallback_activity"
+    fi
+  fi
+
+  if [[ -z "$touched_at" || "$touched_at" == "0" ]]; then
+    printf 'IDLE'
+    return
+  fi
+
+  age=$(( now - touched_at ))
+  if (( age >= stale_minutes * 60 )); then
+    printf 'STALE'
+  else
+    printf 'IDLE'
+  fi
+}
+
+effective_status_values() {
+  local raw_status="$1"
+  local fallback_activity="$2"
+  local last_done="$3"
+  local last_touch="$4"
+  local done_recent_minutes="$5"
+  local stale_minutes="$6"
+  local now="$7"
+  local age
+
+  case "$raw_status" in
+    ERROR|WAIT|RUN)
+      printf '%s' "$raw_status"
+      return
+      ;;
+    DONE)
+      if [[ -z "$last_done" || "$last_done" == "0" ]]; then
+        if [[ -n "$fallback_activity" && "$fallback_activity" != "0" ]]; then
+          last_done="$fallback_activity"
+        else
+          last_done="$now"
+        fi
+      elif [[ -n "$fallback_activity" && "$fallback_activity" != "0" && "$fallback_activity" -lt "$last_done" ]]; then
+        last_done="$fallback_activity"
+      fi
+
+      age=$(( now - last_done ))
+      if (( age < done_recent_minutes * 60 )); then
+        printf 'DONE'
+      else
+        printf '%s' "$(idle_or_stale_status_values "$last_touch" "$last_done" "$fallback_activity" "$stale_minutes" "$now")"
+      fi
+      return
+      ;;
+    IDLE)
+      printf '%s' "$(idle_or_stale_status_values "$last_touch" "$last_done" "$fallback_activity" "$stale_minutes" "$now")"
+      return
+      ;;
+    *)
+      printf '%s' "$raw_status"
+      return
+      ;;
+  esac
+}
+
+normalized_last_done_value() {
+  local last_done="$1"
+  local fallback_activity="$2"
+  local now="$3"
+
+  if [[ -z "$last_done" || "$last_done" == "0" ]]; then
+    if [[ -n "$fallback_activity" && "$fallback_activity" != "0" ]]; then
+      printf '%s' "$fallback_activity"
+    else
+      printf '%s' "$now"
+    fi
+  elif [[ -n "$fallback_activity" && "$fallback_activity" != "0" && "$fallback_activity" -lt "$last_done" ]]; then
+    printf '%s' "$fallback_activity"
+  else
+    printf '%s' "$last_done"
+  fi
+}
+
+refresh_pane_cache_metadata() {
+  local pane_id="$1"
+  local activity="$2"
+  local signature="$3"
+  local cmd="$4"
+  local title="$5"
+  local dead="$6"
+  local dead_status="$7"
+  local last_done="${8:-}"
+  local now tool capture capture_tool raw_status normalized_last_done
+
+  tool="$(tool_kind "$cmd" "$title")"
+  if [[ "$dead" == "1" || "$tool" == "shell" ]]; then
+    raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
+  else
+    capture="$(pane_recent_capture "$pane_id")"
+    if [[ -n "$capture" && ( "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ) ]]; then
+      capture_tool="$(tool_from_capture "$capture")"
+      if [[ "$capture_tool" != "unknown" ]]; then
+        tool="$capture_tool"
+      fi
+    fi
+    raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
+  fi
+
+  set_cached_state "$pane_id" "$signature" "$raw_status" "$tool"
+
+  case "$raw_status" in
+    DONE)
+      now="$(now_epoch)"
+      normalized_last_done="$(normalized_last_done_value "$last_done" "${activity:-0}" "$now")"
+      if [[ "$normalized_last_done" != "$last_done" ]]; then
+        set_pane_option "$pane_id" @panefleet_last_done "$normalized_last_done"
+      fi
+      ;;
+    RUN|WAIT|ERROR)
+      if [[ -n "$last_done" && "$last_done" != "0" ]]; then
+        unset_pane_option "$pane_id" @panefleet_last_done 2>/dev/null || true
+      fi
+      ;;
+  esac
+}
+
+refresh_pane_cache_record() {
+  local pane_id="$1"
+  local activity="$2"
+  local signature="$3"
+  local cmd="$4"
+  local title="$5"
+  local dead="$6"
+  local dead_status="$7"
+  local last_done="${8:-}"
+  local now tool capture capture_tool raw_status normalized_last_done
+
+  tool="$(tool_kind "$cmd" "$title")"
+  if [[ "$dead" == "1" || "$tool" == "shell" ]]; then
+    raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
+  else
+    capture="$(pane_recent_capture "$pane_id")"
+    if [[ -n "$capture" && ( "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ) ]]; then
+      capture_tool="$(tool_from_capture "$capture")"
+      if [[ "$capture_tool" != "unknown" ]]; then
+        tool="$capture_tool"
+      fi
+    fi
+    raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
+  fi
+
+  set_cached_state "$pane_id" "$signature" "$raw_status" "$tool"
+
+  case "$raw_status" in
+    DONE)
+      now="$(now_epoch)"
+      normalized_last_done="$(normalized_last_done_value "$last_done" "${activity:-0}" "$now")"
+      if [[ "$normalized_last_done" != "$last_done" ]]; then
+        set_pane_option "$pane_id" @panefleet_last_done "$normalized_last_done"
+        last_done="$normalized_last_done"
+      fi
+      ;;
+    RUN|WAIT|ERROR)
+      if [[ -n "$last_done" && "$last_done" != "0" ]]; then
+        unset_pane_option "$pane_id" @panefleet_last_done 2>/dev/null || true
+        last_done=""
+      fi
+      ;;
+  esac
+
+  printf '%s%s%s%s%s\n' "$tool" "$PANEFIELD_SEP" "$raw_status" "$PANEFIELD_SEP" "$last_done"
+}
+
+refresh_panes_cache() {
+  local filter_set=""
+  local pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature last_done
+  local pane_format
+
+  require_runtime_support
+  pane_format='#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}	#{history_size}:#{cursor_x}:#{cursor_y}:#{pane_current_command}:#{pane_title}:#{pane_dead}:#{pane_dead_status}	#{@panefleet_last_done}'
+
+  if (( $# > 0 )); then
+    for pane_id in "$@"; do
+      filter_set+=$'\n'"$pane_id"
+    done
+    filter_set+=$'\n'
+  fi
+
+  while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature last_done; do
+    if [[ -n "$filter_set" && "$filter_set" != *$'\n'"$pane_id"$'\n'* ]]; then
+      continue
+    fi
+
+    refresh_pane_cache_metadata "$pane_id" "${activity:-0}" "$signature" "$cmd" "$title" "$dead" "$dead_status" "$last_done"
+  done < <(pane_records "$pane_format")
+}
+
+schedule_refresh_panes() {
+  local panes="$1"
+  local pane_id
+  local -a args=()
+
+  if [[ -z "$panes" ]]; then
+    return
+  fi
+
+  while IFS= read -r pane_id; do
+    if [[ -n "$pane_id" ]]; then
+      args+=("$pane_id")
+    fi
+  done <<<"$panes"
+
+  if (( ${#args[@]} == 0 )); then
+    return
+  fi
+
+  ("$SELF" refresh-panes-cache "${args[@]}" >/dev/null 2>&1 &)
+}
+
+should_sync_refresh_now() {
+  local now="$1"
+  local activity="$2"
+  local cached_raw_status="$3"
+  local sync_refresh_count="$4"
+  local age
+
+  if (( sync_refresh_count >= 6 )); then
+    return 1
+  fi
+
+  case "$cached_raw_status" in
+    RUN|WAIT|DONE|"")
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  if [[ -z "$activity" || "$activity" == "0" ]]; then
+    return 1
+  fi
+
+  age=$(( now - activity ))
+  (( age <= 1800 ))
 }
 
 adapter_status() {
@@ -908,6 +1305,14 @@ fit_cell() {
   printf "%-${width}.${width}s" "$value"
 }
 
+fit_cell_into() {
+  local outvar="$1"
+  local value="$2"
+  local width="$3"
+
+  printf -v "$outvar" "%-${width}.${width}s" "$value"
+}
+
 colored_status_cell() {
   local status="$1"
 
@@ -1247,9 +1652,8 @@ fzf_color_spec() {
 
 pretty_age() {
   local epoch="$1"
-  local now diff
-
-  now="$(date +%s)"
+  local now="${2:-$(date +%s)}"
+  local diff
   if [[ -z "$epoch" || "$epoch" == "0" ]]; then
     printf '-'
     return
@@ -1264,6 +1668,29 @@ pretty_age() {
     printf '%sh' $(( diff / 3600 ))
   else
     printf '%sd' $(( diff / 86400 ))
+  fi
+}
+
+pretty_age_into() {
+  local outvar="$1"
+  local epoch="$2"
+  local now="$3"
+  local diff
+
+  if [[ -z "$epoch" || "$epoch" == "0" ]]; then
+    printf -v "$outvar" '%s' '-'
+    return
+  fi
+
+  diff=$(( now - epoch ))
+  if (( diff < 60 )); then
+    printf -v "$outvar" '%ss' "$diff"
+  elif (( diff < 3600 )); then
+    printf -v "$outvar" '%sm' $(( diff / 60 ))
+  elif (( diff < 86400 )); then
+    printf -v "$outvar" '%sh' $(( diff / 3600 ))
+  else
+    printf -v "$outvar" '%sd' $(( diff / 86400 ))
   fi
 }
 
@@ -1289,24 +1716,65 @@ task_label() {
   esac
 }
 
-list_header() {
-  local status_cell tool_cell target_cell repo_cell display
+task_label_into() {
+  local outvar="$1"
+  local cmd="$2"
+  local title="$3"
+  local window_name="$4"
+  local repo="$5"
 
-  status_cell="$(header_cell "$(fit_cell "STATE" 5)")"
-  tool_cell="$(header_cell "$(fit_cell "TOOL" 8)")"
-  target_cell="$(header_cell "$(fit_cell "TARGET" 18)")"
-  repo_cell="$(header_cell "$(fit_cell "REPO" 14)")"
+  case "$title" in
+    ""|"$cmd"|zsh|bash|fish|sh|tmux|cdx)
+      if [[ -n "$window_name" && "$window_name" != "$repo" ]]; then
+        printf -v "$outvar" '%s' "$window_name"
+      elif [[ -n "$repo" ]]; then
+        printf -v "$outvar" '%s' "$repo"
+      else
+        printf -v "$outvar" '%s' "$cmd"
+      fi
+      ;;
+    *)
+      printf -v "$outvar" '%s' "$title"
+      ;;
+  esac
+}
+
+status_rank_value() {
+  case "$1" in
+    DONE) REPLY='0' ;;
+    RUN) REPLY='1' ;;
+    WAIT) REPLY='2' ;;
+    ERROR) REPLY='3' ;;
+    IDLE) REPLY='4' ;;
+    STALE) REPLY='5' ;;
+    *) REPLY='9' ;;
+  esac
+}
+
+list_header() {
+  local status_text tool_text target_text repo_text
+  local status_cell tool_cell target_cell repo_cell display sep
+
+  fit_cell_into status_text "STATE" 5
+  fit_cell_into tool_text "TOOL" 8
+  fit_cell_into target_text "TARGET" 18
+  fit_cell_into repo_text "REPO" 14
+  status_cell="$(header_cell "$status_text")"
+  tool_cell="$(header_cell "$tool_text")"
+  target_cell="$(header_cell "$target_text")"
+  repo_cell="$(header_cell "$repo_text")"
+  sep="$(separator_cell)"
   display="$(printf '%s%s%s%s%s%s%s%s%4s%s%s' \
     "$status_cell" \
-    "$(separator_cell)" \
+    "$sep" \
     "$tool_cell" \
-    "$(separator_cell)" \
+    "$sep" \
     "$target_cell" \
-    "$(separator_cell)" \
+    "$sep" \
     "$repo_cell" \
-    "$(separator_cell)" \
+    "$sep" \
     "$(header_cell "AGE")" \
-    "$(separator_cell)" \
+    "$sep" \
     "$(header_cell "TASK")")"
 
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
@@ -1321,66 +1789,116 @@ list_header() {
 list_rows() {
   require_runtime_support
   resolve_theme
+  local done_recent_minutes stale_minutes now rows_file refresh_queue sync_refresh_count
+  local pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool
+  local tool raw_status status repo task target_window target_pane short_path age tool_cell target_cell repo_cell colored_status display rank sep refresh_record=""
+  local pane_format
 
-  {
-    list_header
-    "${TMUX_BIN}" list-panes -a -F '#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}' |
-      while IFS=$'\t' read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity; do
-        local_status="$(manual_status "$pane_id")"
-        capture="$(pane_recent_capture "$pane_id")"
-        tool="$(tool_kind "$cmd" "$title")"
-        activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
-        if [[ "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ]]; then
-          capture_tool="$(tool_from_capture "$capture")"
-          if [[ "$capture_tool" != "unknown" ]]; then
-            tool="$capture_tool"
-          fi
-        fi
-        if [[ -n "$local_status" ]]; then
-          status="$local_status"
+  done_recent_minutes="$(tmux_global_option @panefleet-done-recent-minutes)"
+  stale_minutes="$(tmux_global_option @panefleet-stale-minutes)"
+  now="$(now_epoch)"
+  pane_format='#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}	#{history_size}:#{cursor_x}:#{cursor_y}:#{pane_current_command}:#{pane_title}:#{pane_dead}:#{pane_dead_status}	#{@panefleet_status}	#{@panefleet_agent_status}	#{@panefleet_agent_tool}	#{@panefleet_agent_source}	#{@panefleet_agent_updated_at}	#{@panefleet_last_touch}	#{@panefleet_last_done}	#{@panefleet_auto_signature}	#{@panefleet_auto_raw_status}	#{@panefleet_auto_tool}'
+  if [[ -z "$done_recent_minutes" ]]; then
+    done_recent_minutes="10"
+  fi
+  if [[ -z "$stale_minutes" ]]; then
+    stale_minutes="45"
+  fi
+
+  rows_file="$(mktemp "${TMPDIR:-/tmp}/panefleet-list.XXXXXX")"
+  refresh_queue=""
+  sync_refresh_count=0
+  sep="$(separator_cell)"
+
+  list_header >"$rows_file"
+  while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool; do
+    : "${agent_source_value:=}" "${agent_updated_at_value:=}"
+    tool="$(tool_kind "$cmd" "$title")"
+    if [[ -n "$cached_tool" ]]; then
+      tool="$cached_tool"
+    fi
+
+    if [[ -n "$local_status" ]]; then
+      status="$local_status"
+    elif [[ "$dead" == "1" ]]; then
+      raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
+      status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
+    elif [[ -n "$agent_status_value" ]]; then
+      raw_status="$agent_status_value"
+      if [[ -n "$agent_tool_value" ]]; then
+        tool="$agent_tool_value"
+      fi
+      status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
+    else
+      if cache_refresh_needed "$local_status" "$cached_signature" "$signature" "$cached_raw_status"; then
+        if should_sync_refresh_now "$now" "${activity:-0}" "$cached_raw_status" "$sync_refresh_count"; then
+          refresh_record="$(refresh_pane_cache_record "$pane_id" "${activity:-0}" "$signature" "$cmd" "$title" "$dead" "$dead_status" "$last_done")"
+          IFS="$PANEFIELD_SEP" read -r tool raw_status last_done <<<"$refresh_record"
+          sync_refresh_count=$(( sync_refresh_count + 1 ))
         else
-          raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
-          status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
+          refresh_queue+="$pane_id"$'\n'
+          raw_status="$(fallback_raw_status "$cached_raw_status" "$tool" "$cmd" "$dead" "$dead_status")"
         fi
+      else
+        raw_status="$(fallback_raw_status "$cached_raw_status" "$tool" "$cmd" "$dead" "$dead_status")"
+      fi
 
-        repo="$(basename "$path" 2>/dev/null || printf '%s' "$path")"
-        task="$(task_label "$cmd" "$title" "$window_name" "$repo")"
-        target_window="${session_name}:${window_index}"
-        target_pane="${target_window}.${pane_index}"
-        short_path="${path/#$HOME/\~}"
-        age="$(pretty_age "${activity:-0}")"
-        tool_cell="$(fit_cell "$tool" 8)"
-        target_cell="$(fit_cell "$target_pane" 18)"
-        repo_cell="$(fit_cell "$repo" 14)"
-        colored_status="$(colored_status_cell "$status")"
-        display="$(printf '%b%s%s%s%s%s%s%s%4s%s%s' \
-          "$colored_status" \
-          "$(separator_cell)" \
-          "$tool_cell" \
-          "$(separator_cell)" \
-          "$target_cell" \
-          "$(separator_cell)" \
-          "$repo_cell" \
-          "$(separator_cell)" \
-          "$age" \
-          "$(separator_cell)" \
-          "$task")"
+      if [[ -z "$tool" ]]; then
+        tool="$(tool_kind "$cmd" "$title")"
+      fi
+      if [[ -n "$cached_tool" && -z "$refresh_record" ]]; then
+        tool="$cached_tool"
+      fi
+      status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
+    fi
 
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-          "$pane_id" \
-          "$target_window" \
-          "$(status_rank "$status")" \
-          "${activity:-0}" \
-          "$short_path" \
-          "$display"
-      done |
-      sort -t $'\t' -k3,3n -k4,4nr
-  }
+    refresh_record=""
+
+    repo="${path##*/}"
+    if [[ -z "$repo" ]]; then
+      repo="$path"
+    fi
+    task_label_into task "$cmd" "$title" "$window_name" "$repo"
+    target_window="${session_name}:${window_index}"
+    target_pane="${target_window}.${pane_index}"
+    short_path="${path/#$HOME/\~}"
+    pretty_age_into age "${activity:-0}" "$now"
+    fit_cell_into tool_cell "$tool" 8
+    fit_cell_into target_cell "$target_pane" 18
+    fit_cell_into repo_cell "$repo" 14
+    colored_status="$(colored_status_cell "$status")"
+    status_rank_value "$status"
+    rank="$REPLY"
+    display="$(printf '%b%s%s%s%s%s%s%s%4s%s%s' \
+      "$colored_status" \
+      "$sep" \
+      "$tool_cell" \
+      "$sep" \
+      "$target_cell" \
+      "$sep" \
+      "$repo_cell" \
+      "$sep" \
+      "$age" \
+      "$sep" \
+      "$task")"
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$pane_id" \
+      "$target_window" \
+      "$rank" \
+      "${activity:-0}" \
+      "$short_path" \
+      "$display" >>"$rows_file"
+  done < <(pane_records "$pane_format")
+
+  sort -t $'\t' -k3,3n -k4,4nr "$rows_file"
+  rm -f "$rows_file"
+  schedule_refresh_panes "$refresh_queue"
 }
 
 preview_row() {
   local pane_id="${1:?pane_id is required}"
-  local status cmd title path short_path session_name window_index pane_index window_name dead dead_status
+  local status cmd title path short_path session_name window_index pane_index window_name dead dead_status agent_status_value agent_tool_value
 
   require_runtime_support
   resolve_theme
@@ -1390,13 +1908,26 @@ preview_row() {
   dead_status="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_dead_status}')"
   capture="$(pane_recent_capture "$pane_id")"
   tool="$(tool_kind "$cmd" "$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_title}')")"
+  agent_status_value="$(agent_status "$pane_id")"
+  agent_tool_value="$(agent_tool "$pane_id")"
   if [[ "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ]]; then
     capture_tool="$(tool_from_capture "$capture")"
     if [[ "$capture_tool" != "unknown" ]]; then
       tool="$capture_tool"
     fi
   fi
-  if [[ -z "$status" ]]; then
+  if [[ -z "$status" && "$dead" == "1" ]]; then
+    raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
+    activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
+    status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
+  elif [[ -z "$status" && -n "$agent_status_value" ]]; then
+    raw_status="$agent_status_value"
+    if [[ -n "$agent_tool_value" ]]; then
+      tool="$agent_tool_value"
+    fi
+    activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
+    status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
+  elif [[ -z "$status" ]]; then
     raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
     activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
     status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
@@ -1649,6 +2180,91 @@ open_theme_popup() {
     "${SELF} theme-select"
 }
 
+state_set_command() {
+  local pane_id="" status="" tool="" source="" updated_at=""
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --pane)
+        pane_id="${2:-}"
+        shift 2
+        ;;
+      --status)
+        status="${2:-}"
+        shift 2
+        ;;
+      --tool)
+        tool="${2:-}"
+        shift 2
+        ;;
+      --source)
+        source="${2:-}"
+        shift 2
+        ;;
+      --updated-at)
+        updated_at="${2:-}"
+        shift 2
+        ;;
+      *)
+        printf 'unknown state-set option: %s\n' "$1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  if [[ -z "$status" ]]; then
+    printf 'state-set requires --status\n' >&2
+    exit 1
+  fi
+
+  pane_id="$(resolve_target_pane "$pane_id")"
+  set_agent_state "$pane_id" "$status" "$tool" "$source" "$updated_at"
+}
+
+state_clear_command() {
+  local pane_id=""
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --pane)
+        pane_id="${2:-}"
+        shift 2
+        ;;
+      *)
+        printf 'unknown state-clear option: %s\n' "$1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  pane_id="$(resolve_target_pane "$pane_id")"
+  clear_agent_state "$pane_id"
+}
+
+state_show_command() {
+  local pane_id=""
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --pane)
+        pane_id="${2:-}"
+        shift 2
+        ;;
+      *)
+        printf 'unknown state-show option: %s\n' "$1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  pane_id="$(resolve_target_pane "$pane_id")"
+  printf 'pane    %s\n' "$pane_id"
+  printf 'status  %s\n' "$(agent_status "$pane_id")"
+  printf 'tool    %s\n' "$(agent_tool "$pane_id")"
+  printf 'source  %s\n' "$(agent_source "$pane_id")"
+  printf 'at      %s\n' "$(agent_updated_at "$pane_id")"
+}
+
 main() {
   local command="${1:-board}"
 
@@ -1675,6 +2291,18 @@ main() {
       require_tmux
       mark_status "$("${TMUX_BIN}" display-message -p '#{pane_id}')" "$1"
       ;;
+    state-set)
+      shift
+      state_set_command "$@"
+      ;;
+    state-clear)
+      shift
+      state_clear_command "$@"
+      ;;
+    state-show)
+      shift
+      state_show_command "$@"
+      ;;
     jump)
       shift
       jump_to_pane "$@"
@@ -1700,10 +2328,15 @@ main() {
       shift
       preflight "$@"
       ;;
+    refresh-panes-cache)
+      shift
+      refresh_panes_cache "$@"
+      ;;
     touch)
       shift
       target_pane="${1:-$("${TMUX_BIN}" display-message -p '#{pane_id}')}"
       set_pane_option "$target_pane" @panefleet_last_touch "$(now_epoch)"
+      ("$SELF" refresh-panes-cache "$target_pane" >/dev/null 2>&1 &)
       ;;
     *)
       printf 'unknown command: %s\n' "$command" >&2

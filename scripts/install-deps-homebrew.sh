@@ -7,6 +7,6 @@ if ! command -v brew >/dev/null 2>&1; then
   exit 1
 fi
 
-brew install tmux fzf ripgrep
+brew install tmux fzf ripgrep go
 
-printf 'Installed dependencies: tmux, fzf, ripgrep\n'
+printf 'Installed dependencies: tmux, fzf, ripgrep, go\n'

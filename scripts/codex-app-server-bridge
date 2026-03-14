@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+BRIDGE_BIN="${PANEFLEET_AGENT_BRIDGE_BIN:-$REPO_ROOT/bin/panefleet-agent-bridge}"
+
+if [[ ! -x "$BRIDGE_BIN" ]]; then
+  "$SCRIPT_DIR/build-agent-bridge.sh" >/dev/null
+fi
+
+exec "$BRIDGE_BIN" codex-app-server "$@"

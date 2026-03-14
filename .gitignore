@@ -48,8 +48,10 @@ tmp/
 .cache/
 
 bin/.tmp/
+bin/panefleet-agent-bridge
 out/
 
 .local/
 .state/
 docs/nocommit-*
+scripts/__pycache__/
