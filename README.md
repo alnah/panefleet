@@ -214,14 +214,24 @@ Usage shape:
   "hooks": {
     "PreToolUse": [
       {
-        "type": "command",
-        "command": "~/.tmux/plugins/panefleet/scripts/claude-code-hook"
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.tmux/plugins/panefleet/scripts/claude-code-hook"
+          }
+        ]
       }
     ],
     "PostToolUse": [
       {
-        "type": "command",
-        "command": "~/.tmux/plugins/panefleet/scripts/claude-code-hook"
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.tmux/plugins/panefleet/scripts/claude-code-hook"
+          }
+        ]
       }
     ],
     "Notification": [
@@ -239,6 +249,11 @@ Usage shape:
   }
 }
 ```
+
+Important:
+
+- Claude loads hooks from the settings schema above; `PreToolUse` and `PostToolUse` need `matcher` blocks.
+- Existing Claude sessions may need a restart before new hooks apply.
 
 Current bridge mapping:
 
