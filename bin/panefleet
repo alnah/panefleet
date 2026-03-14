@@ -397,6 +397,9 @@ set_agent_state() {
   validate_status_name "$status"
   if [[ -z "$updated_at" ]]; then
     updated_at="$(now_epoch)"
+  elif ! valid_epoch_seconds "$updated_at"; then
+    printf 'invalid updated-at: %s\n' "$updated_at" >&2
+    exit 1
   fi
 
   set_pane_option "$pane_id" @panefleet_agent_status "$status"
