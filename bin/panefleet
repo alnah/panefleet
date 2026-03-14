@@ -294,14 +294,21 @@ fallback_raw_status() {
   local dead="$4"
   local dead_status="$5"
 
-  if [[ -n "$cached_raw_status" ]]; then
-    printf '%s' "$cached_raw_status"
-  elif [[ "$dead" == "1" ]]; then
+  if [[ "$dead" == "1" ]]; then
     inferred_status "$cmd" "$dead" "$dead_status"
-  elif [[ "$tool" == "shell" ]]; then
-    printf 'IDLE'
   else
-    printf 'IDLE'
+    case "$tool" in
+      shell|codex|claude|opencode)
+        printf 'IDLE'
+        ;;
+      *)
+        if [[ -n "$cached_raw_status" ]]; then
+          printf '%s' "$cached_raw_status"
+        else
+          inferred_status "$cmd" "$dead" "$dead_status"
+        fi
+        ;;
+    esac
   fi
 }
 
@@ -448,11 +455,6 @@ agent_status_is_fresh() {
   (( age >= 0 && age <= max_age_seconds ))
 }
 
-pane_recent_capture() {
-  local pane_id="$1"
-  "${TMUX_BIN}" capture-pane -p -t "$pane_id" -S -30
-}
-
 pane_visible_capture() {
   local pane_id="$1"
   "${TMUX_BIN}" capture-pane -p -t "$pane_id"
@@ -498,47 +500,15 @@ preview_body_capture() {
   fi
 }
 
-contains_line() {
-  local haystack="$1"
-  local pattern="$2"
-  printf '%s\n' "$haystack" | "${RG_BIN}" -qi -- "$pattern"
-}
-
-codex_is_working() {
-  local capture="$1"
-
-  contains_line "$capture" 'Working \([0-9]+[smhd]|esc to interrupt|background terminal[s]? running'
-}
-
-codex_is_waiting() {
-  local capture="$1"
-
-  printf '%s\n' "$capture" | "${RG_BIN}" -qi '^[[:space:]]*(Enter to confirm|Esc to cancel)$'
-}
-
-opencode_is_working() {
-  local capture="$1"
-
-  printf '%s\n' "$capture" | "${RG_BIN}" -qi '^[[:space:]]*▣[[:space:]]+Build|^[[:space:]]*⬝+.*esc interrupt'
-}
-
-opencode_is_waiting() {
-  local capture="$1"
-
-  printf '%s\n' "$capture" | "${RG_BIN}" -qi '^[[:space:]]*(Enter to confirm|Esc to cancel)$'
-}
-
-opencode_is_done() {
-  local capture="$1"
-
-  contains_line "$capture" 'Ask anything\.\.\.|ctrl\+p.*commands|tab.*agents'
-}
-
 tool_kind() {
   local cmd="$1"
   local title="$2"
+  local lowered_cmd lowered_title
 
-  case "${cmd}:${title}" in
+  lowered_cmd="${cmd,,}"
+  lowered_title="${title,,}"
+
+  case "${lowered_cmd}:${lowered_title}" in
     codex*:*)
       printf 'codex'
       ;;
@@ -555,20 +525,6 @@ tool_kind() {
       printf '%s' "$cmd"
       ;;
   esac
-}
-
-tool_from_capture() {
-  local capture="$1"
-
-  if contains_line "$capture" 'OpenAI Codex|/model to change|gpt-5\.[0-9].*left'; then
-    printf 'codex'
-  elif contains_line "$capture" 'ANTHROPIC_API_KEY|Claude Code|Do you want to use this API key'; then
-    printf 'claude'
-  elif contains_line "$capture" 'Ask anything\.\.\.|OpenCode|ctrl\+p.*commands|tab.*agents'; then
-    printf 'opencode'
-  else
-    printf 'unknown'
-  fi
 }
 
 inferred_status() {
@@ -783,21 +739,10 @@ refresh_pane_cache_metadata() {
   local dead="$6"
   local dead_status="$7"
   local last_done="${8:-}"
-  local now tool capture capture_tool raw_status normalized_last_done
+  local now tool raw_status normalized_last_done
 
   tool="$(tool_kind "$cmd" "$title")"
-  if [[ "$dead" == "1" || "$tool" == "shell" ]]; then
-    raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
-  else
-    capture="$(pane_recent_capture "$pane_id")"
-    if [[ -n "$capture" && ( "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ) ]]; then
-      capture_tool="$(tool_from_capture "$capture")"
-      if [[ "$capture_tool" != "unknown" ]]; then
-        tool="$capture_tool"
-      fi
-    fi
-    raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
-  fi
+  raw_status="$(fallback_raw_status "" "$tool" "$cmd" "$dead" "$dead_status")"
 
   set_cached_state "$pane_id" "$signature" "$raw_status" "$tool"
 
@@ -826,21 +771,10 @@ refresh_pane_cache_record() {
   local dead="$6"
   local dead_status="$7"
   local last_done="${8:-}"
-  local now tool capture capture_tool raw_status normalized_last_done
+  local now tool raw_status normalized_last_done
 
   tool="$(tool_kind "$cmd" "$title")"
-  if [[ "$dead" == "1" || "$tool" == "shell" ]]; then
-    raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
-  else
-    capture="$(pane_recent_capture "$pane_id")"
-    if [[ -n "$capture" && ( "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ) ]]; then
-      capture_tool="$(tool_from_capture "$capture")"
-      if [[ "$capture_tool" != "unknown" ]]; then
-        tool="$capture_tool"
-      fi
-    fi
-    raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
-  fi
+  raw_status="$(fallback_raw_status "" "$tool" "$cmd" "$dead" "$dead_status")"
 
   set_cached_state "$pane_id" "$signature" "$raw_status" "$tool"
 
@@ -935,60 +869,6 @@ should_sync_refresh_now() {
 
   age=$(( now - activity ))
   (( age <= 1800 ))
-}
-
-adapter_status() {
-  local pane_id="$1"
-  local tool="$2"
-  local cmd="$3"
-  local dead="$4"
-  local dead_status="$5"
-  local capture="$6"
-  local recent
-
-  if [[ "$dead" == "1" ]]; then
-    inferred_status "$cmd" "$dead" "$dead_status"
-    return
-  fi
-
-  recent="$(printf '%s\n' "$capture" | tail -n 20)"
-
-  case "$tool" in
-    codex)
-      if codex_is_waiting "$recent"; then
-        printf 'WAIT'
-      elif codex_is_working "$recent"; then
-        printf 'RUN'
-      elif printf '%s\n' "$recent" | tail -n 12 | "${RG_BIN}" -q '^[[:space:]]*› '; then
-        printf 'DONE'
-      else
-        printf 'RUN'
-      fi
-      ;;
-    claude)
-      if contains_line "$capture" 'Enter to confirm|Esc to cancel|Do you want to use this API key|approval|required|choose an option|select an option'; then
-        printf 'WAIT'
-      elif contains_line "$capture" 'All set|What would you like|Start typing|Send a message'; then
-        printf 'DONE'
-      else
-        printf 'RUN'
-      fi
-      ;;
-    opencode)
-      if opencode_is_waiting "$recent"; then
-        printf 'WAIT'
-      elif opencode_is_working "$recent"; then
-        printf 'RUN'
-      elif opencode_is_done "$recent"; then
-        printf 'DONE'
-      else
-        printf 'RUN'
-      fi
-      ;;
-    *)
-      inferred_status "$cmd" "$dead" "$dead_status"
-      ;;
-  esac
 }
 
 status_rank() {

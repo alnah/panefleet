@@ -17,7 +17,7 @@ Current implementation is tmux-first, with adapter ingestion available:
 - adapter-driven pane state via `bin/panefleet state-set`
 - automatic pane states: `RUN`, `WAIT`, `DONE`, `ERROR`, `IDLE`
 - aging states: recent `DONE` expires into `IDLE`, then `STALE`
-- fallback heuristics for `Codex`, `Claude Code`, and `OpenCode` when no adapter state exists
+- conservative fallback when no adapter state exists
 
 Included integration surfaces:
 
@@ -172,19 +172,13 @@ Manual overrides exist only as a temporary fallback. The intended end state is f
 
 Current fallback behavior when no adapter state exists:
 
-- Codex:
-  - visible `Working (... • esc to interrupt)` footer -> `RUN`
-  - visible input prompt -> `DONE`
-  - approval/confirm prompt -> `WAIT`
-  - otherwise -> `RUN`
-- Claude Code:
-  - confirm/choice prompt -> `WAIT`
-  - otherwise -> `RUN`
-- OpenCode:
-  - visible `Build` / `esc interrupt` footer -> `RUN`
-  - visible composer/home prompt -> `DONE`
-  - approval/permission prompt -> `WAIT`
-  - otherwise -> `RUN`
+- known agent tools (`Codex`, `Claude Code`, `OpenCode`) -> `IDLE`
+- shell panes -> `IDLE`
+- non-agent live processes -> `RUN`
+- dead pane + zero exit -> `DONE`
+- dead pane + non-zero exit -> `ERROR`
+
+This is intentionally conservative. `panefleet` no longer scrapes agent UI text to infer `RUN`, `WAIT`, or `DONE`.
 
 State aging:
 
@@ -199,7 +193,7 @@ Default timing:
 
 ## Adapter roadmap
 
-The preferred model is agent-aware adapters. Pane-content heuristics remain fallback only.
+The preferred model is agent-aware adapters. Fallback remains conservative and liveness-based only.
 
 ### Claude Code
 
@@ -366,4 +360,4 @@ Desired model:
 - adapters emit authoritative lifecycle state
 - tmux only renders and navigates
 - manual overrides remain optional emergency controls, not primary workflow
-- pane-content heuristics remain fallback only when no adapter state is present
+- conservative liveness fallback remains only when no adapter state is present
