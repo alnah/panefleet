@@ -83,12 +83,10 @@ func runClaudeHook(ctx context.Context, args []string) error {
 		return setState(ctx, *pane, statusRun, "claude", "claude-hook")
 	case containsString([]string{"Stop", "SubagentStop", "SessionEnd", "PreCompact"}, event):
 		return setState(ctx, *pane, statusDone, "claude", "claude-hook")
-	case containsAny(lowerBlob, "permission", "approval", "confirm"):
+	case event == "Notification":
 		return setState(ctx, *pane, statusWait, "claude", "claude-hook")
 	case containsAny(lowerBlob, "error", "failed"):
 		return setState(ctx, *pane, statusError, "claude", "claude-hook")
-	case event == "Notification":
-		return clearState(ctx, *pane)
 	default:
 		return nil
 	}
@@ -203,17 +201,57 @@ func mapOpenCodeEvent(payload map[string]any, lowerBlob string) string {
 	switch {
 	case eventType == "session.idle":
 		return statusDone
+	case eventType == "session.error":
+		return statusError
 	case eventType == "session.status" && containsString([]string{"busy", "running", "active"}, status):
 		return statusRun
 	case strings.HasPrefix(eventType, "tool.execute.before"):
 		return statusRun
-	case containsAny(strings.ToLower(eventType), "permission") || containsAny(lowerBlob, "permission", "approval"):
+	case strings.HasPrefix(eventType, "tool.execute.after"):
+		if containsAny(status, "error", "failed") || containsAny(lowerBlob, "\"error\"", "\"failed\"") {
+			return statusError
+		}
+		return statusRun
+	case eventType == "permission.asked":
 		return statusWait
+	case eventType == "permission.replied":
+		if permissionDecisionDenied(payload) {
+			return statusError
+		}
+		if permissionDecisionApproved(payload) {
+			return statusRun
+		}
+		return ""
 	case containsAny(strings.ToLower(eventType), "error") || status == "error":
 		return statusError
 	default:
 		return ""
 	}
+}
+
+func permissionDecisionApproved(payload map[string]any) bool {
+	return containsString([]string{"approve", "approved", "allow", "allowed", "accept", "accepted"}, permissionDecision(payload))
+}
+
+func permissionDecisionDenied(payload map[string]any) bool {
+	return containsString([]string{"deny", "denied", "reject", "rejected", "block", "blocked"}, permissionDecision(payload))
+}
+
+func permissionDecision(payload map[string]any) string {
+	event := mapValue(payload["event"])
+	for _, candidate := range []string{
+		stringValue(payload["decision"]),
+		stringValue(event["decision"]),
+		stringValue(payload["result"]),
+		stringValue(event["result"]),
+		stringValue(payload["response"]),
+		stringValue(event["response"]),
+	} {
+		if candidate != "" {
+			return strings.ToLower(candidate)
+		}
+	}
+	return ""
 }
 
 func activeFlags(status map[string]any) []string {

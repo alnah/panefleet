@@ -240,6 +240,13 @@ Usage shape:
 }
 ```
 
+Current bridge mapping:
+
+- `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart` -> `RUN`
+- `Notification` -> `WAIT`
+- `Stop`, `SubagentStop`, `SessionEnd`, `PreCompact` -> `DONE`
+- payloads containing explicit failure markers still promote `ERROR`
+
 ### Codex
 
 Preferred path:
@@ -273,6 +280,16 @@ Expected plugin wiring:
 - plugin subscribes to session/tool lifecycle events
 - plugin shim forwards event JSON into `opencode-event-bridge --pane "$TMUX_PANE"`
 - `panefleet` stores authoritative pane state from those events
+
+Current bridge mapping:
+
+- `session.idle` -> `DONE`
+- `session.error` -> `ERROR`
+- `session.status` with `busy|running|active` -> `RUN`
+- `tool.execute.before*` -> `RUN`
+- `tool.execute.after*` -> `RUN`, or `ERROR` on explicit failed/error status
+- `permission.asked` -> `WAIT`
+- `permission.replied` -> `RUN` on explicit approval, `ERROR` on explicit denial
 
 ## Error detection
 
