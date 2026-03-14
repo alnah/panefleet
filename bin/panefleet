@@ -259,97 +259,32 @@ unset_pane_option() {
   "${TMUX_BIN}" set-option -pt "$pane_id" -u "$name"
 }
 
-pane_recent_capture() {
+set_cached_state() {
   local pane_id="$1"
-  "${TMUX_BIN}" capture-pane -p -t "$pane_id" -S -40
+  local signature="$2"
+  local raw_status="$3"
+  local tool="$4"
+
+  set_pane_option "$pane_id" @panefleet_auto_signature "$signature"
+  set_pane_option "$pane_id" @panefleet_auto_raw_status "$raw_status"
+  set_pane_option "$pane_id" @panefleet_auto_tool "$tool"
 }
 
-capture_contains_lower() {
-  local capture="$1"
-  local needle="$2"
-  local lowered_capture
+cache_refresh_needed() {
+  local local_status="$1"
+  local cached_signature="$2"
+  local signature="$3"
+  local cached_raw_status="$4"
 
-  lowered_capture="${capture,,}"
-  [[ "$lowered_capture" == *"$needle"* ]]
-}
-
-codex_heuristic_status() {
-  local capture="$1"
-
-  if capture_contains_lower "$capture" "enter to confirm" || capture_contains_lower "$capture" "esc to cancel" || capture_contains_lower "$capture" "approval required" || capture_contains_lower "$capture" "waiting on approval"; then
-    printf 'WAIT'
-  elif capture_contains_lower "$capture" "system error" || capture_contains_lower "$capture" "request failed" || capture_contains_lower "$capture" "operation failed"; then
-    printf 'ERROR'
-  elif capture_contains_lower "$capture" "working (" || capture_contains_lower "$capture" "esc to interrupt" || capture_contains_lower "$capture" "background terminal" || capture_contains_lower "$capture" "background terminals running"; then
-    printf 'RUN'
-  elif printf '%s\n' "$capture" | tail -n 12 | "${RG_BIN}" -q '^[[:space:]]*› '; then
-    printf 'DONE'
-  else
-    printf 'IDLE'
-  fi
-}
-
-claude_heuristic_status() {
-  local capture="$1"
-
-  if capture_contains_lower "$capture" "enter to confirm" || capture_contains_lower "$capture" "esc to cancel" || capture_contains_lower "$capture" "approval required" || capture_contains_lower "$capture" "choose an option" || capture_contains_lower "$capture" "select an option" || capture_contains_lower "$capture" "do you want to use this api key"; then
-    printf 'WAIT'
-  elif capture_contains_lower "$capture" "error" || capture_contains_lower "$capture" "failed"; then
-    printf 'ERROR'
-  elif printf '%s\n' "$capture" | tail -n 8 | "${RG_BIN}" -q '^[[:space:]]*❯'; then
-    printf 'DONE'
-  elif capture_contains_lower "$capture" "what can i help with" || capture_contains_lower "$capture" "what coding task can i assist with" || capture_contains_lower "$capture" "what would you like" || capture_contains_lower "$capture" "start typing" || capture_contains_lower "$capture" "send a message"; then
-    printf 'DONE'
-  else
-    printf 'RUN'
-  fi
-}
-
-opencode_heuristic_status() {
-  local capture="$1"
-
-  if capture_contains_lower "$capture" "enter to confirm" || capture_contains_lower "$capture" "esc to cancel" || capture_contains_lower "$capture" "approval" || capture_contains_lower "$capture" "permission"; then
-    printf 'WAIT'
-  elif capture_contains_lower "$capture" "error" || capture_contains_lower "$capture" "failed"; then
-    printf 'ERROR'
-  elif capture_contains_lower "$capture" "▣  build" || capture_contains_lower "$capture" "build ·" || capture_contains_lower "$capture" "ctrl+t variants" || capture_contains_lower "$capture" "tab agents" || capture_contains_lower "$capture" "ctrl+p commands" || capture_contains_lower "$capture" "opencode 1."; then
-    printf 'RUN'
-  elif capture_contains_lower "$capture" "ask anything" || capture_contains_lower "$capture" "how can i help" || capture_contains_lower "$capture" "greeting"; then
-    printf 'DONE'
-  else
-    printf 'IDLE'
-  fi
-}
-
-provider_heuristic_status() {
-  local tool="$1"
-  local capture="$2"
-  local cmd="$3"
-  local dead="$4"
-  local dead_status="$5"
-
-  if [[ "$dead" == "1" ]]; then
-    inferred_status "$cmd" "$dead" "$dead_status"
-    return
+  if [[ -n "$local_status" ]]; then
+    return 1
   fi
 
-  case "$tool" in
-    codex)
-      codex_heuristic_status "$capture"
-      ;;
-    claude)
-      claude_heuristic_status "$capture"
-      ;;
-    opencode)
-      opencode_heuristic_status "$capture"
-      ;;
-    shell)
-      printf 'IDLE'
-      ;;
-    *)
-      inferred_status "$cmd" "$dead" "$dead_status"
-      ;;
-  esac
+  if [[ -z "$cached_raw_status" ]]; then
+    return 0
+  fi
+
+  [[ "$cached_signature" != "$signature" ]]
 }
 
 fallback_raw_status() {
@@ -358,29 +293,15 @@ fallback_raw_status() {
   local cmd="$3"
   local dead="$4"
   local dead_status="$5"
-  local pane_id="${6:-}"
-  local capture
 
-  if [[ "$dead" == "1" ]]; then
+  if [[ -n "$cached_raw_status" ]]; then
+    printf '%s' "$cached_raw_status"
+  elif [[ "$dead" == "1" ]]; then
     inferred_status "$cmd" "$dead" "$dead_status"
+  elif [[ "$tool" == "shell" ]]; then
+    printf 'IDLE'
   else
-    case "$tool" in
-      shell|codex|claude|opencode)
-        if [[ -n "$pane_id" ]]; then
-          capture="$(pane_recent_capture "$pane_id")"
-          provider_heuristic_status "$tool" "$capture" "$cmd" "$dead" "$dead_status"
-        else
-          provider_heuristic_status "$tool" "" "$cmd" "$dead" "$dead_status"
-        fi
-        ;;
-      *)
-        if [[ -n "$cached_raw_status" ]]; then
-          printf '%s' "$cached_raw_status"
-        else
-          inferred_status "$cmd" "$dead" "$dead_status"
-        fi
-        ;;
-    esac
+    printf 'IDLE'
   fi
 }
 
@@ -478,53 +399,9 @@ clear_agent_state() {
   unset_pane_option "$pane_id" @panefleet_agent_updated_at 2>/dev/null || true
 }
 
-clear_cached_state() {
+pane_recent_capture() {
   local pane_id="$1"
-
-  unset_pane_option "$pane_id" @panefleet_auto_signature 2>/dev/null || true
-  unset_pane_option "$pane_id" @panefleet_auto_raw_status 2>/dev/null || true
-  unset_pane_option "$pane_id" @panefleet_auto_tool 2>/dev/null || true
-}
-
-validate_epoch_value() {
-  local value="$1"
-
-  if [[ -z "$value" ]]; then
-    return 0
-  fi
-
-  if [[ ! "$value" =~ ^[0-9]+$ ]]; then
-    printf 'invalid epoch value: %s\n' "$value" >&2
-    exit 1
-  fi
-}
-
-agent_status_is_fresh() {
-  local status="$1"
-  local updated_at="$2"
-  local max_age_seconds="$3"
-  local now="$4"
-  local age
-
-  case "$status" in
-    "")
-      return 1
-      ;;
-    DONE)
-      return 0
-      ;;
-  esac
-
-  if [[ -z "$updated_at" || "$updated_at" == "0" || ! "$updated_at" =~ ^[0-9]+$ ]]; then
-    return 1
-  fi
-
-  if [[ -z "$max_age_seconds" || ! "$max_age_seconds" =~ ^[0-9]+$ ]]; then
-    max_age_seconds="600"
-  fi
-
-  age=$(( now - updated_at ))
-  (( age >= 0 && age <= max_age_seconds ))
+  "${TMUX_BIN}" capture-pane -p -t "$pane_id" -S -30
 }
 
 pane_visible_capture() {
@@ -572,15 +449,47 @@ preview_body_capture() {
   fi
 }
 
+contains_line() {
+  local haystack="$1"
+  local pattern="$2"
+  printf '%s\n' "$haystack" | "${RG_BIN}" -qi -- "$pattern"
+}
+
+codex_is_working() {
+  local capture="$1"
+
+  contains_line "$capture" 'Working \([0-9]+[smhd]|esc to interrupt|background terminal[s]? running'
+}
+
+codex_is_waiting() {
+  local capture="$1"
+
+  printf '%s\n' "$capture" | "${RG_BIN}" -qi '^[[:space:]]*(Enter to confirm|Esc to cancel)$'
+}
+
+opencode_is_working() {
+  local capture="$1"
+
+  printf '%s\n' "$capture" | "${RG_BIN}" -qi '^[[:space:]]*▣[[:space:]]+Build|^[[:space:]]*⬝+.*esc interrupt'
+}
+
+opencode_is_waiting() {
+  local capture="$1"
+
+  printf '%s\n' "$capture" | "${RG_BIN}" -qi '^[[:space:]]*(Enter to confirm|Esc to cancel)$'
+}
+
+opencode_is_done() {
+  local capture="$1"
+
+  contains_line "$capture" 'Ask anything\.\.\.|ctrl\+p.*commands|tab.*agents'
+}
+
 tool_kind() {
   local cmd="$1"
   local title="$2"
-  local lowered_cmd lowered_title
 
-  lowered_cmd="${cmd,,}"
-  lowered_title="${title,,}"
-
-  case "${lowered_cmd}:${lowered_title}" in
+  case "${cmd}:${title}" in
     codex*:*)
       printf 'codex'
       ;;
@@ -597,6 +506,20 @@ tool_kind() {
       printf '%s' "$cmd"
       ;;
   esac
+}
+
+tool_from_capture() {
+  local capture="$1"
+
+  if contains_line "$capture" 'OpenAI Codex|/model to change|gpt-5\.[0-9].*left'; then
+    printf 'codex'
+  elif contains_line "$capture" 'ANTHROPIC_API_KEY|Claude Code|Do you want to use this API key'; then
+    printf 'claude'
+  elif contains_line "$capture" 'Ask anything\.\.\.|OpenCode|ctrl\+p.*commands|tab.*agents'; then
+    printf 'opencode'
+  else
+    printf 'unknown'
+  fi
 }
 
 inferred_status() {
@@ -800,6 +723,223 @@ normalized_last_done_value() {
   else
     printf '%s' "$last_done"
   fi
+}
+
+refresh_pane_cache_metadata() {
+  local pane_id="$1"
+  local activity="$2"
+  local signature="$3"
+  local cmd="$4"
+  local title="$5"
+  local dead="$6"
+  local dead_status="$7"
+  local last_done="${8:-}"
+  local now tool capture capture_tool raw_status normalized_last_done
+
+  tool="$(tool_kind "$cmd" "$title")"
+  if [[ "$dead" == "1" || "$tool" == "shell" ]]; then
+    raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
+  else
+    capture="$(pane_recent_capture "$pane_id")"
+    if [[ -n "$capture" && ( "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ) ]]; then
+      capture_tool="$(tool_from_capture "$capture")"
+      if [[ "$capture_tool" != "unknown" ]]; then
+        tool="$capture_tool"
+      fi
+    fi
+    raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
+  fi
+
+  set_cached_state "$pane_id" "$signature" "$raw_status" "$tool"
+
+  case "$raw_status" in
+    DONE)
+      now="$(now_epoch)"
+      normalized_last_done="$(normalized_last_done_value "$last_done" "${activity:-0}" "$now")"
+      if [[ "$normalized_last_done" != "$last_done" ]]; then
+        set_pane_option "$pane_id" @panefleet_last_done "$normalized_last_done"
+      fi
+      ;;
+    RUN|WAIT|ERROR)
+      if [[ -n "$last_done" && "$last_done" != "0" ]]; then
+        unset_pane_option "$pane_id" @panefleet_last_done 2>/dev/null || true
+      fi
+      ;;
+  esac
+}
+
+refresh_pane_cache_record() {
+  local pane_id="$1"
+  local activity="$2"
+  local signature="$3"
+  local cmd="$4"
+  local title="$5"
+  local dead="$6"
+  local dead_status="$7"
+  local last_done="${8:-}"
+  local now tool capture capture_tool raw_status normalized_last_done
+
+  tool="$(tool_kind "$cmd" "$title")"
+  if [[ "$dead" == "1" || "$tool" == "shell" ]]; then
+    raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
+  else
+    capture="$(pane_recent_capture "$pane_id")"
+    if [[ -n "$capture" && ( "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ) ]]; then
+      capture_tool="$(tool_from_capture "$capture")"
+      if [[ "$capture_tool" != "unknown" ]]; then
+        tool="$capture_tool"
+      fi
+    fi
+    raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
+  fi
+
+  set_cached_state "$pane_id" "$signature" "$raw_status" "$tool"
+
+  case "$raw_status" in
+    DONE)
+      now="$(now_epoch)"
+      normalized_last_done="$(normalized_last_done_value "$last_done" "${activity:-0}" "$now")"
+      if [[ "$normalized_last_done" != "$last_done" ]]; then
+        set_pane_option "$pane_id" @panefleet_last_done "$normalized_last_done"
+        last_done="$normalized_last_done"
+      fi
+      ;;
+    RUN|WAIT|ERROR)
+      if [[ -n "$last_done" && "$last_done" != "0" ]]; then
+        unset_pane_option "$pane_id" @panefleet_last_done 2>/dev/null || true
+        last_done=""
+      fi
+      ;;
+  esac
+
+  printf '%s%s%s%s%s\n' "$tool" "$PANEFIELD_SEP" "$raw_status" "$PANEFIELD_SEP" "$last_done"
+}
+
+refresh_panes_cache() {
+  local filter_set=""
+  local pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature last_done
+  local pane_format
+
+  require_runtime_support
+  pane_format='#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}	#{history_size}:#{cursor_x}:#{cursor_y}:#{pane_current_command}:#{pane_title}:#{pane_dead}:#{pane_dead_status}	#{@panefleet_last_done}'
+
+  if (( $# > 0 )); then
+    for pane_id in "$@"; do
+      filter_set+=$'\n'"$pane_id"
+    done
+    filter_set+=$'\n'
+  fi
+
+  while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature last_done; do
+    if [[ -n "$filter_set" && "$filter_set" != *$'\n'"$pane_id"$'\n'* ]]; then
+      continue
+    fi
+
+    refresh_pane_cache_metadata "$pane_id" "${activity:-0}" "$signature" "$cmd" "$title" "$dead" "$dead_status" "$last_done"
+  done < <(pane_records "$pane_format")
+}
+
+schedule_refresh_panes() {
+  local panes="$1"
+  local pane_id
+  local -a args=()
+
+  if [[ -z "$panes" ]]; then
+    return
+  fi
+
+  while IFS= read -r pane_id; do
+    if [[ -n "$pane_id" ]]; then
+      args+=("$pane_id")
+    fi
+  done <<<"$panes"
+
+  if (( ${#args[@]} == 0 )); then
+    return
+  fi
+
+  ("$SELF" refresh-panes-cache "${args[@]}" >/dev/null 2>&1 &)
+}
+
+should_sync_refresh_now() {
+  local now="$1"
+  local activity="$2"
+  local cached_raw_status="$3"
+  local sync_refresh_count="$4"
+  local age
+
+  if (( sync_refresh_count >= 6 )); then
+    return 1
+  fi
+
+  case "$cached_raw_status" in
+    RUN|WAIT|DONE|"")
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  if [[ -z "$activity" || "$activity" == "0" ]]; then
+    return 1
+  fi
+
+  age=$(( now - activity ))
+  (( age <= 1800 ))
+}
+
+adapter_status() {
+  local pane_id="$1"
+  local tool="$2"
+  local cmd="$3"
+  local dead="$4"
+  local dead_status="$5"
+  local capture="$6"
+  local recent
+
+  if [[ "$dead" == "1" ]]; then
+    inferred_status "$cmd" "$dead" "$dead_status"
+    return
+  fi
+
+  recent="$(printf '%s\n' "$capture" | tail -n 20)"
+
+  case "$tool" in
+    codex)
+      if codex_is_waiting "$recent"; then
+        printf 'WAIT'
+      elif codex_is_working "$recent"; then
+        printf 'RUN'
+      elif printf '%s\n' "$recent" | tail -n 12 | "${RG_BIN}" -q '^[[:space:]]*› '; then
+        printf 'DONE'
+      else
+        printf 'RUN'
+      fi
+      ;;
+    claude)
+      if contains_line "$capture" 'Enter to confirm|Esc to cancel|Do you want to use this API key|approval|required|choose an option|select an option'; then
+        printf 'WAIT'
+      elif contains_line "$capture" 'All set|What would you like|Start typing|Send a message'; then
+        printf 'DONE'
+      else
+        printf 'RUN'
+      fi
+      ;;
+    opencode)
+      if opencode_is_waiting "$recent"; then
+        printf 'WAIT'
+      elif opencode_is_working "$recent"; then
+        printf 'RUN'
+      elif opencode_is_done "$recent"; then
+        printf 'DONE'
+      else
+        printf 'RUN'
+      fi
+      ;;
+    *)
+      inferred_status "$cmd" "$dead" "$dead_status"
+      ;;
+  esac
 }
 
 status_rank() {
@@ -1543,9 +1683,6 @@ pretty_age_into() {
   fi
 
   diff=$(( now - epoch ))
-  if (( diff < 0 )); then
-    diff=0
-  fi
   if (( diff < 60 )); then
     printf -v "$outvar" '%ss' "$diff"
   elif (( diff < 3600 )); then
@@ -1652,49 +1789,70 @@ list_header() {
 list_rows() {
   require_runtime_support
   resolve_theme
-  local done_recent_minutes stale_minutes agent_status_max_age_seconds now rows_file
-  local pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done
-  local tool raw_status status repo task target_window target_pane short_path age tool_cell target_cell repo_cell colored_status display rank sep
+  local done_recent_minutes stale_minutes now rows_file refresh_queue sync_refresh_count
+  local pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool
+  local tool raw_status status repo task target_window target_pane short_path age tool_cell target_cell repo_cell colored_status display rank sep refresh_record=""
   local pane_format
 
   done_recent_minutes="$(tmux_global_option @panefleet-done-recent-minutes)"
   stale_minutes="$(tmux_global_option @panefleet-stale-minutes)"
-  agent_status_max_age_seconds="$(tmux_global_option @panefleet-agent-status-max-age-seconds)"
   now="$(now_epoch)"
-  pane_format='#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}	#{@panefleet_status}	#{@panefleet_agent_status}	#{@panefleet_agent_tool}	#{@panefleet_agent_source}	#{@panefleet_agent_updated_at}	#{@panefleet_last_touch}	#{@panefleet_last_done}'
+  pane_format='#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}	#{history_size}:#{cursor_x}:#{cursor_y}:#{pane_current_command}:#{pane_title}:#{pane_dead}:#{pane_dead_status}	#{@panefleet_status}	#{@panefleet_agent_status}	#{@panefleet_agent_tool}	#{@panefleet_agent_source}	#{@panefleet_agent_updated_at}	#{@panefleet_last_touch}	#{@panefleet_last_done}	#{@panefleet_auto_signature}	#{@panefleet_auto_raw_status}	#{@panefleet_auto_tool}'
   if [[ -z "$done_recent_minutes" ]]; then
     done_recent_minutes="10"
   fi
   if [[ -z "$stale_minutes" ]]; then
     stale_minutes="45"
   fi
-  if [[ -z "$agent_status_max_age_seconds" ]]; then
-    agent_status_max_age_seconds="600"
-  fi
 
   rows_file="$(mktemp "${TMPDIR:-/tmp}/panefleet-list.XXXXXX")"
+  refresh_queue=""
+  sync_refresh_count=0
   sep="$(separator_cell)"
 
   list_header >"$rows_file"
-  while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done; do
+  while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool; do
     : "${agent_source_value:=}" "${agent_updated_at_value:=}"
     tool="$(tool_kind "$cmd" "$title")"
+    if [[ -n "$cached_tool" ]]; then
+      tool="$cached_tool"
+    fi
 
     if [[ -n "$local_status" ]]; then
       status="$local_status"
     elif [[ "$dead" == "1" ]]; then
       raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
       status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
-    elif agent_status_is_fresh "$agent_status_value" "$agent_updated_at_value" "$agent_status_max_age_seconds" "$now"; then
+    elif [[ -n "$agent_status_value" ]]; then
       raw_status="$agent_status_value"
       if [[ -n "$agent_tool_value" ]]; then
         tool="$agent_tool_value"
       fi
       status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
     else
-      raw_status="$(fallback_raw_status "" "$tool" "$cmd" "$dead" "$dead_status" "$pane_id")"
+      if cache_refresh_needed "$local_status" "$cached_signature" "$signature" "$cached_raw_status"; then
+        if should_sync_refresh_now "$now" "${activity:-0}" "$cached_raw_status" "$sync_refresh_count"; then
+          refresh_record="$(refresh_pane_cache_record "$pane_id" "${activity:-0}" "$signature" "$cmd" "$title" "$dead" "$dead_status" "$last_done")"
+          IFS="$PANEFIELD_SEP" read -r tool raw_status last_done <<<"$refresh_record"
+          sync_refresh_count=$(( sync_refresh_count + 1 ))
+        else
+          refresh_queue+="$pane_id"$'\n'
+          raw_status="$(fallback_raw_status "$cached_raw_status" "$tool" "$cmd" "$dead" "$dead_status")"
+        fi
+      else
+        raw_status="$(fallback_raw_status "$cached_raw_status" "$tool" "$cmd" "$dead" "$dead_status")"
+      fi
+
+      if [[ -z "$tool" ]]; then
+        tool="$(tool_kind "$cmd" "$title")"
+      fi
+      if [[ -n "$cached_tool" && -z "$refresh_record" ]]; then
+        tool="$cached_tool"
+      fi
       status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
     fi
+
+    refresh_record=""
 
     repo="${path##*/}"
     if [[ -z "$repo" ]]; then
@@ -1735,11 +1893,12 @@ list_rows() {
 
   sort -t $'\t' -k3,3n -k4,4nr "$rows_file"
   rm -f "$rows_file"
+  schedule_refresh_panes "$refresh_queue"
 }
 
 preview_row() {
   local pane_id="${1:?pane_id is required}"
-  local status cmd title path short_path session_name window_index pane_index window_name dead dead_status agent_status_value agent_tool_value agent_updated_at_value agent_status_max_age_seconds now raw_status activity tool
+  local status cmd title path short_path session_name window_index pane_index window_name dead dead_status agent_status_value agent_tool_value
 
   require_runtime_support
   resolve_theme
@@ -1747,27 +1906,30 @@ preview_row() {
   cmd="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_current_command}')"
   dead="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_dead}')"
   dead_status="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_dead_status}')"
+  capture="$(pane_recent_capture "$pane_id")"
   tool="$(tool_kind "$cmd" "$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_title}')")"
   agent_status_value="$(agent_status "$pane_id")"
   agent_tool_value="$(agent_tool "$pane_id")"
-  agent_updated_at_value="$(agent_updated_at "$pane_id")"
-  agent_status_max_age_seconds="$(tmux_global_option @panefleet-agent-status-max-age-seconds)"
-  now="$(now_epoch)"
-  activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
-  if [[ -z "$agent_status_max_age_seconds" ]]; then
-    agent_status_max_age_seconds="600"
+  if [[ "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ]]; then
+    capture_tool="$(tool_from_capture "$capture")"
+    if [[ "$capture_tool" != "unknown" ]]; then
+      tool="$capture_tool"
+    fi
   fi
   if [[ -z "$status" && "$dead" == "1" ]]; then
     raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
+    activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
     status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
-  elif [[ -z "$status" ]] && agent_status_is_fresh "$agent_status_value" "$agent_updated_at_value" "$agent_status_max_age_seconds" "$now"; then
+  elif [[ -z "$status" && -n "$agent_status_value" ]]; then
     raw_status="$agent_status_value"
     if [[ -n "$agent_tool_value" ]]; then
       tool="$agent_tool_value"
     fi
+    activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
     status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
   elif [[ -z "$status" ]]; then
-    raw_status="$(fallback_raw_status "" "$tool" "$cmd" "$dead" "$dead_status" "$pane_id")"
+    raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
+    activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
     status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
   fi
 
@@ -2055,7 +2217,6 @@ state_set_command() {
     exit 1
   fi
 
-  validate_epoch_value "$updated_at"
   pane_id="$(resolve_target_pane "$pane_id")"
   set_agent_state "$pane_id" "$status" "$tool" "$source" "$updated_at"
 }
@@ -2078,7 +2239,6 @@ state_clear_command() {
 
   pane_id="$(resolve_target_pane "$pane_id")"
   clear_agent_state "$pane_id"
-  clear_cached_state "$pane_id"
 }
 
 state_show_command() {
@@ -2168,10 +2328,15 @@ main() {
       shift
       preflight "$@"
       ;;
+    refresh-panes-cache)
+      shift
+      refresh_panes_cache "$@"
+      ;;
     touch)
       shift
       target_pane="${1:-$("${TMUX_BIN}" display-message -p '#{pane_id}')}"
       set_pane_option "$target_pane" @panefleet_last_touch "$(now_epoch)"
+      ("$SELF" refresh-panes-cache "$target_pane" >/dev/null 2>&1 &)
       ;;
     *)
       printf 'unknown command: %s\n' "$command" >&2
