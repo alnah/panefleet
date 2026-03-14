@@ -22,13 +22,26 @@ This first version does not yet integrate with Claude Code, Codex, or OpenCode e
 
 ## Requirements
 
-- `tmux`
-- `fzf`
+- `tmux` with `display-popup`
+- `fzf` with `--header-lines-border`
+- `ripgrep`
 - `bash`
+
+Check your runtime with:
+
+```bash
+bin/panefleet preflight
+```
 
 ## Install
 
 ### Local development
+
+On macOS with Homebrew:
+
+```bash
+./scripts/install-deps-homebrew.sh
+```
 
 Link the repo into the standard tmux plugin path:
 
@@ -46,6 +59,7 @@ Then source the plugin in a running tmux session:
 Default binding:
 
 - `prefix + P` opens the panefleet workboard
+- `prefix + T` opens the theme picker
 
 ### TPM-style plugin path
 
@@ -62,10 +76,57 @@ bin/panefleet
 Useful commands:
 
 ```bash
+bin/panefleet preflight
 bin/panefleet list
 bin/panefleet board
+bin/panefleet popup
 bin/panefleet preview %1
+bin/panefleet themes
+bin/panefleet theme-apply dracula
 ```
+
+## Themes
+
+Panefleet ships with 11 built-in themes:
+
+- `panefleet-dark`
+- `panefleet-light`
+- `dracula`
+- `catppuccin-mocha`
+- `tokyo-night`
+- `gruvbox-dark`
+- `nord`
+- `solarized-dark`
+- `rose-pine`
+- `monokai`
+- `github-dark`
+
+Default:
+
+- `@panefleet-theme = panefleet-dark`
+
+Color portability:
+
+- automatic fallback from truecolor to 256 colors, then ANSI
+- optional override with `PANEFLEET_COLOR_MODE=truecolor|256|ansi`
+
+Theme surfaces:
+
+- popup background and border
+- `fzf` prompt, header, separator, preview, selection, and borders
+- board status colors
+- preview body block rendering
+- diff colors in preview blocks
+
+You can switch themes with:
+
+```bash
+tmux set-option -g @panefleet-theme panefleet-light
+```
+
+Or interactively with:
+
+- `prefix + T`
 
 ## Status model
 
