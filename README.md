@@ -8,9 +8,9 @@ Experimental repo for a tmux-first agent orchestration/workboard plugin.
 - agent state adapters
 - Claude Code, Codex, and OpenCode integration
 
-## MVP
+## Current State
 
-Current MVP is tmux-only:
+Current implementation is tmux-only:
 
 - popup workboard driven by `fzf`
 - jump directly to a pane
@@ -70,6 +70,88 @@ bin/panefleet mark-current CLEAR
 - `ERROR`: pane process exited non-zero
 
 Manual status overrides take precedence over inferred status.
+Manual overrides exist only as a temporary fallback. The intended end state is fully automatic state detection.
+
+## Adapter Roadmap
+
+The current implementation is tmux-only. The next step is agent-aware adapters.
+
+### Claude Code
+
+Planned integration:
+
+- use official Claude Code hooks
+- write panefleet state on hook events
+- map active tool phases to `RUN`
+- map approval or user-blocked states to `WAIT`
+- map stop/completion events to `DONE`
+- remove the need for manual tmux status marking in normal usage
+
+Expected implementation shape:
+
+- small shell adapter scripts
+- local state updates keyed by tmux pane id
+
+### Codex
+
+Planned integration:
+
+- preferred path: Codex app-server events
+- fallback path: Codex `notify` plus process liveness
+
+State mapping target:
+
+- thread active -> `RUN`
+- waiting on approval or blocked interaction -> `WAIT`
+- completed turn with no active follow-up -> `DONE`
+- app-server/system failure -> `ERROR`
+- remove manual marking once app-server coverage is sufficient
+
+### OpenCode
+
+Planned integration:
+
+- OpenCode plugin subscribing to session and tool lifecycle events
+- map active execution to `RUN`
+- map idle/waiting session states to `WAIT` or `DONE` depending on event semantics
+- remove manual marking once plugin events are wired in
+
+## Error Detection
+
+`ERROR` should not be guessed from generic inactivity. It should be promoted only from a strong signal.
+
+Strong signals:
+
+- pane process exited non-zero
+- adapter event reports failure, abort, or system error
+- tool lifecycle indicates command/tool execution failure
+
+Weak signals that should not alone become `ERROR`:
+
+- no recent output
+- user stopped looking at the pane
+- shell prompt is visible
+
+Current behavior:
+
+- dead pane + non-zero exit status -> `ERROR`
+- dead pane + zero exit status -> `DONE`
+
+Future adapter behavior:
+
+- Claude Code hook failures can explicitly mark `ERROR`
+- Codex app-server `systemError`-style states should map to `ERROR`
+- OpenCode tool/session failure events should map to `ERROR`
+
+## Target End State
+
+The final product should not depend on manual `RUN`, `WAIT`, `DONE`, or `ERROR` shortcuts for normal operation.
+
+Desired model:
+
+- adapters emit authoritative lifecycle state
+- tmux only renders and navigates
+- manual overrides remain optional emergency controls, not primary workflow
 
 ## Notes
 
