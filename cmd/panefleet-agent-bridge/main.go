@@ -21,6 +21,8 @@ const (
 	statusWait  = "WAIT"
 	statusDone  = "DONE"
 	statusError = "ERROR"
+
+	defaultBridgeTimeout = 2 * time.Second
 )
 
 func main() {
@@ -334,10 +336,16 @@ func clearState(ctx context.Context, pane string) error {
 }
 
 func runPanefleet(ctx context.Context, args ...string) error {
-	cmd := exec.CommandContext(ctx, panefleetBin(), args...)
+	timeoutCtx, cancel := context.WithTimeout(ctx, bridgeTimeout())
+	defer cancel()
+
+	cmd := exec.CommandContext(timeoutCtx, panefleetBin(), args...)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Run(); err != nil {
+		if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("run panefleet %s: timeout after %s", strings.Join(args, " "), bridgeTimeout())
+		}
 		return fmt.Errorf("run panefleet %s: %w", strings.Join(args, " "), err)
 	}
 	return nil
@@ -373,6 +381,19 @@ func panefleetBin() string {
 		return "panefleet"
 	}
 	return filepath.Join(home, ".tmux", "plugins", "panefleet", "bin", "panefleet")
+}
+
+func bridgeTimeout() time.Duration {
+	raw := os.Getenv("PANEFLEET_BRIDGE_TIMEOUT_MS")
+	if raw == "" {
+		return defaultBridgeTimeout
+	}
+
+	millis, err := strconv.Atoi(raw)
+	if err != nil || millis <= 0 {
+		return defaultBridgeTimeout
+	}
+	return time.Duration(millis) * time.Millisecond
 }
 
 func logPayload(source, pane string, raw []byte) {
