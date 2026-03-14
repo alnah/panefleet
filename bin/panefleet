@@ -470,7 +470,7 @@ codex_is_waiting() {
 opencode_is_working() {
   local capture="$1"
 
-  printf '%s\n' "$capture" | "${RG_BIN}" -qi '^[[:space:]]*▣[[:space:]]+Build|^[[:space:]]*⬝+.*esc interrupt'
+  printf '%s\n' "$capture" | "${RG_BIN}" -qi 'esc interrupt'
 }
 
 opencode_is_waiting() {
@@ -821,7 +821,7 @@ refresh_panes_cache() {
   local pane_format
 
   require_runtime_support
-  pane_format='#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}	#{history_size}:#{cursor_x}:#{cursor_y}:#{pane_current_command}:#{pane_title}:#{pane_dead}:#{pane_dead_status}	#{@panefleet_last_done}'
+  pane_format='#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}	stable:#{history_size}:#{cursor_x}:#{cursor_y}:#{pane_current_command}:#{pane_title}:#{pane_dead}:#{pane_dead_status}	#{@panefleet_last_done}'
 
   if (( $# > 0 )); then
     for pane_id in "$@"; do
@@ -910,7 +910,7 @@ adapter_status() {
         printf 'WAIT'
       elif codex_is_working "$recent"; then
         printf 'RUN'
-      elif printf '%s\n' "$recent" | tail -n 12 | "${RG_BIN}" -q '^[[:space:]]*› '; then
+      elif printf '%s\n' "$recent" | "${RG_BIN}" -q '^[[:space:]]*› '; then
         printf 'DONE'
       else
         printf 'RUN'
@@ -1797,7 +1797,7 @@ list_rows() {
   done_recent_minutes="$(tmux_global_option @panefleet-done-recent-minutes)"
   stale_minutes="$(tmux_global_option @panefleet-stale-minutes)"
   now="$(now_epoch)"
-  pane_format='#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}	#{history_size}:#{cursor_x}:#{cursor_y}:#{pane_current_command}:#{pane_title}:#{pane_dead}:#{pane_dead_status}	#{@panefleet_status}	#{@panefleet_agent_status}	#{@panefleet_agent_tool}	#{@panefleet_agent_source}	#{@panefleet_agent_updated_at}	#{@panefleet_last_touch}	#{@panefleet_last_done}	#{@panefleet_auto_signature}	#{@panefleet_auto_raw_status}	#{@panefleet_auto_tool}'
+  pane_format='#{pane_id}	#{session_name}	#{window_index}	#{window_name}	#{pane_index}	#{pane_current_command}	#{pane_title}	#{pane_current_path}	#{pane_dead}	#{pane_dead_status}	#{window_activity}	stable:#{history_size}:#{cursor_x}:#{cursor_y}:#{pane_current_command}:#{pane_title}:#{pane_dead}:#{pane_dead_status}	#{@panefleet_status}	#{@panefleet_agent_status}	#{@panefleet_agent_tool}	#{@panefleet_agent_source}	#{@panefleet_agent_updated_at}	#{@panefleet_last_touch}	#{@panefleet_last_done}	#{@panefleet_auto_signature}	#{@panefleet_auto_raw_status}	#{@panefleet_auto_tool}'
   if [[ -z "$done_recent_minutes" ]]; then
     done_recent_minutes="10"
   fi
