@@ -51,6 +51,12 @@ Check your runtime with:
 bin/panefleet preflight
 ```
 
+Run the current non-regression suite with:
+
+```bash
+./scripts/test.sh
+```
+
 ## Install
 
 ### Local development
@@ -113,6 +119,7 @@ bin/panefleet-agent-bridge codex-app-server --pane %1
 bin/panefleet-agent-bridge opencode-event --pane %1
 bin/panefleet themes
 bin/panefleet theme-apply dracula
+./scripts/test.sh
 ```
 
 ## Themes
