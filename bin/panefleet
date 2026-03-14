@@ -29,6 +29,9 @@ THEME_DIFF_ADD=""
 THEME_DIFF_REMOVE=""
 THEME_DIFF_HUNK=""
 PANEFLEET_COLOR_MODE_RESOLVED=""
+PANEFLEET_RESOLVED_TOOL=""
+PANEFLEET_RESOLVED_RAW_STATUS=""
+PANEFLEET_RESOLVED_STATUS=""
 
 now_epoch() {
   date +%s
@@ -762,6 +765,89 @@ normalized_last_done_value() {
   fi
 }
 
+resolve_live_raw_state_values() {
+  local pane_id="$1"
+  local initial_tool="$2"
+  local cmd="$3"
+  local title="$4"
+  local dead="$5"
+  local dead_status="$6"
+  local capture="${7:-}"
+  local tool capture_tool raw_status
+
+  tool="$initial_tool"
+  if [[ -z "$tool" ]]; then
+    tool="$(tool_kind "$cmd" "$title")"
+  fi
+
+  if [[ "$dead" == "1" || "$tool" == "shell" ]]; then
+    raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
+  else
+    if [[ -z "$capture" ]]; then
+      capture="$(pane_recent_capture "$pane_id")"
+    fi
+    if [[ -n "$capture" && ( "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ) ]]; then
+      capture_tool="$(tool_from_capture "$capture")"
+      if [[ "$capture_tool" != "unknown" ]]; then
+        tool="$capture_tool"
+      fi
+    fi
+    raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
+  fi
+
+  PANEFLEET_RESOLVED_TOOL="$tool"
+  PANEFLEET_RESOLVED_RAW_STATUS="$raw_status"
+}
+
+resolve_uncached_state_values() {
+  local pane_id="$1"
+  local initial_tool="$2"
+  local cmd="$3"
+  local title="$4"
+  local dead="$5"
+  local dead_status="$6"
+  local activity="$7"
+  local capture="$8"
+  local local_status="$9"
+  local agent_status_value="${10}"
+  local agent_tool_value="${11}"
+  local agent_updated_at_value="${12}"
+  local last_touch="${13}"
+  local last_done="${14}"
+  local done_recent_minutes="${15}"
+  local stale_minutes="${16}"
+  local agent_status_max_age="${17}"
+  local now="${18}"
+  local tool raw_status status
+
+  tool="$initial_tool"
+  raw_status=""
+  status=""
+
+  if [[ -n "$local_status" ]]; then
+    raw_status="$local_status"
+    status="$local_status"
+  elif [[ "$dead" == "1" ]]; then
+    raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
+    status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
+  elif [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$agent_status_max_age" "$now"; then
+    raw_status="$agent_status_value"
+    if [[ -n "$agent_tool_value" ]]; then
+      tool="$agent_tool_value"
+    fi
+    status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
+  else
+    resolve_live_raw_state_values "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "$capture"
+    tool="$PANEFLEET_RESOLVED_TOOL"
+    raw_status="$PANEFLEET_RESOLVED_RAW_STATUS"
+    status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
+  fi
+
+  PANEFLEET_RESOLVED_TOOL="$tool"
+  PANEFLEET_RESOLVED_RAW_STATUS="$raw_status"
+  PANEFLEET_RESOLVED_STATUS="$status"
+}
+
 refresh_pane_cache_metadata() {
   local pane_id="$1"
   local activity="$2"
@@ -771,21 +857,13 @@ refresh_pane_cache_metadata() {
   local dead="$6"
   local dead_status="$7"
   local last_done="${8:-}"
-  local now tool capture capture_tool raw_status normalized_last_done
+  local now tool capture raw_status normalized_last_done
 
   tool="$(tool_kind "$cmd" "$title")"
-  if [[ "$dead" == "1" || "$tool" == "shell" ]]; then
-    raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
-  else
-    capture="$(pane_recent_capture "$pane_id")"
-    if [[ -n "$capture" && ( "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ) ]]; then
-      capture_tool="$(tool_from_capture "$capture")"
-      if [[ "$capture_tool" != "unknown" ]]; then
-        tool="$capture_tool"
-      fi
-    fi
-    raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
-  fi
+  capture="$(pane_recent_capture "$pane_id")"
+  resolve_live_raw_state_values "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "$capture"
+  tool="$PANEFLEET_RESOLVED_TOOL"
+  raw_status="$PANEFLEET_RESOLVED_RAW_STATUS"
 
   set_cached_state "$pane_id" "$signature" "$raw_status" "$tool"
 
@@ -814,21 +892,13 @@ refresh_pane_cache_record() {
   local dead="$6"
   local dead_status="$7"
   local last_done="${8:-}"
-  local now tool capture capture_tool raw_status normalized_last_done
+  local now tool capture raw_status normalized_last_done
 
   tool="$(tool_kind "$cmd" "$title")"
-  if [[ "$dead" == "1" || "$tool" == "shell" ]]; then
-    raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
-  else
-    capture="$(pane_recent_capture "$pane_id")"
-    if [[ -n "$capture" && ( "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ) ]]; then
-      capture_tool="$(tool_from_capture "$capture")"
-      if [[ "$capture_tool" != "unknown" ]]; then
-        tool="$capture_tool"
-      fi
-    fi
-    raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
-  fi
+  capture="$(pane_recent_capture "$pane_id")"
+  resolve_live_raw_state_values "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "$capture"
+  tool="$PANEFLEET_RESOLVED_TOOL"
+  raw_status="$PANEFLEET_RESOLVED_RAW_STATUS"
 
   set_cached_state "$pane_id" "$signature" "$raw_status" "$tool"
 
@@ -1856,17 +1926,11 @@ list_rows() {
       tool="$cached_tool"
     fi
 
-    if [[ -n "$local_status" ]]; then
-      status="$local_status"
-    elif [[ "$dead" == "1" ]]; then
-      raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
-      status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
-    elif [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$agent_status_max_age" "$now"; then
-      raw_status="$agent_status_value"
-      if [[ -n "$agent_tool_value" ]]; then
-        tool="$agent_tool_value"
-      fi
-      status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
+    if [[ -n "$local_status" || "$dead" == "1" || -n "$agent_status_value" ]]; then
+      resolve_uncached_state_values "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$done_recent_minutes" "$stale_minutes" "$agent_status_max_age" "$now"
+      tool="$PANEFLEET_RESOLVED_TOOL"
+      raw_status="$PANEFLEET_RESOLVED_RAW_STATUS"
+      status="$PANEFLEET_RESOLVED_STATUS"
     else
       if cache_refresh_needed "$local_status" "$cached_signature" "$signature" "$cached_raw_status"; then
         if should_sync_refresh_now "$now" "${activity:-0}" "$cached_raw_status" "$sync_refresh_count"; then
@@ -1951,27 +2015,11 @@ preview_row() {
   agent_status_value="$(agent_status "$pane_id")"
   agent_tool_value="$(agent_tool "$pane_id")"
   agent_updated_at_value="$(agent_updated_at "$pane_id")"
-  if [[ "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ]]; then
-    capture_tool="$(tool_from_capture "$capture")"
-    if [[ "$capture_tool" != "unknown" ]]; then
-      tool="$capture_tool"
-    fi
-  fi
-  if [[ -z "$status" && "$dead" == "1" ]]; then
-    raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
-    activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
-    status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
-  elif [[ -z "$status" && -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$agent_status_max_age" "$now"; then
-    raw_status="$agent_status_value"
-    if [[ -n "$agent_tool_value" ]]; then
-      tool="$agent_tool_value"
-    fi
-    activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
-    status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
-  elif [[ -z "$status" ]]; then
-    raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
-    activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
-    status="$(effective_status "$pane_id" "$raw_status" "${activity:-0}")"
+  activity="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{window_activity}')"
+  if [[ -z "$status" ]]; then
+    resolve_uncached_state_values "$pane_id" "$tool" "$cmd" "" "$dead" "$dead_status" "${activity:-0}" "$capture" "" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$(pane_option "$pane_id" @panefleet_last_touch)" "$(pane_option "$pane_id" @panefleet_last_done)" "$(tmux_global_option @panefleet-done-recent-minutes)" "$(tmux_global_option @panefleet-stale-minutes)" "$agent_status_max_age" "$now"
+    tool="$PANEFLEET_RESOLVED_TOOL"
+    status="$PANEFLEET_RESOLVED_STATUS"
   fi
 
   session_name="$("${TMUX_BIN}" display-message -p -t "$pane_id" '#{session_name}')"
@@ -2386,4 +2434,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${PANEFLEET_SOURCE_ONLY:-0}" != "1" ]]; then
+  main "$@"
+fi
