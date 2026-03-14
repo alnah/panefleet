@@ -113,6 +113,9 @@ bin/panefleet popup
 bin/panefleet preview %1
 bin/panefleet state-set --pane %1 --status RUN --tool codex --source test
 bin/panefleet state-show --pane %1
+bin/panefleet inspect --pane %1
+bin/panefleet state-list
+bin/panefleet doctor --verbose
 bin/panefleet state-clear --pane %1
 bin/panefleet-agent-bridge claude-hook
 bin/panefleet-agent-bridge codex-app-server --pane %1
@@ -121,6 +124,61 @@ bin/panefleet themes
 bin/panefleet theme-apply dracula
 ./scripts/test.sh
 ```
+
+## Observability
+
+Useful runtime commands:
+
+```bash
+bin/panefleet state-show --pane %1
+bin/panefleet inspect --pane %1
+bin/panefleet state-list
+bin/panefleet doctor --verbose
+```
+
+What they expose:
+
+- `state-show` / `inspect`
+  - final displayed status
+  - raw underlying status
+  - source of truth used: `manual`, `agent`, `heuristic-live`, `heuristic-cache`, `process`, `default`
+  - resolution reason
+  - agent freshness and timestamps
+  - cache signature and cached heuristic state
+- `state-list`
+  - one line per pane with final state, raw state, source, tool, freshness, and reason
+- `doctor --verbose`
+  - preflight result
+  - resolved runtime binaries and theme/color mode
+  - timing options
+  - state counts
+  - full `state-list`
+
+Optional runtime logs:
+
+- `PANEFLEET_RUNTIME_LOG_DIR`
+  - logs pane touch, heuristic refresh scheduling, heuristic cache refresh, and explicit state writes
+- `PANEFLEET_EVENT_LOG_DIR`
+  - bridge JSONL logs with correlated `payload` and `decision` records sharing the same `event_id`
+
+Example:
+
+```bash
+export PANEFLEET_RUNTIME_LOG_DIR=~/.local/state/panefleet/runtime
+export PANEFLEET_EVENT_LOG_DIR=~/.local/state/panefleet/events
+bin/panefleet doctor --verbose
+tail -n +1 ~/.local/state/panefleet/runtime/runtime.log
+tail -n +1 ~/.local/state/panefleet/events/claude-hook.jsonl
+```
+
+Incident runbook:
+
+1. Run `bin/panefleet state-show --pane %pane` on the suspicious pane.
+2. Check `final.source` and `final.reason` first.
+3. If `final.source=agent`, compare `agent.status`, `agent.source`, `agent.at`, and `agent.fresh`.
+4. If `final.source=heuristic-*`, inspect `cache.*` and `live.sig`.
+5. Run `bin/panefleet doctor --verbose` to see whether the problem is isolated or systemic.
+6. If bridges are involved, inspect `PANEFLEET_EVENT_LOG_DIR/*.jsonl` for matching `event_id` payload/decision pairs.
 
 ## Themes
 
