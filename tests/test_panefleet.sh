@@ -142,7 +142,7 @@ test_sourced_helpers() {
 }
 
 test_fake_tmux_cli() {
-  local output line101 line102 line103
+  local output line101 line102 line103 inspect_output doctor_output
 
   output="$(run_list)"
   line101="$(printf '%s\n' "$output" | rg '^%101')"
@@ -165,6 +165,18 @@ test_fake_tmux_cli() {
   line103="$(printf '%s\n' "$output" | rg '^%103')"
   [[ "$line103" == *"IDLE"* ]] || fail "state-clear should restore heuristic state"
   pass "state-clear restores heuristic state"
+
+  inspect_output="$(TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-show --pane %101)"
+  [[ "$inspect_output" == *"final.status   WAIT"* ]] || fail "state-show should expose final WAIT status"
+  [[ "$inspect_output" == *"final.source   heuristic-"* ]] || fail "state-show should expose heuristic source"
+  [[ "$inspect_output" == *"final.reason   "* ]] || fail "state-show should expose resolution reason"
+  pass "state-show exposes source and reason"
+
+  doctor_output="$(TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" doctor --verbose)"
+  [[ "$doctor_output" == *"state counts"* ]] || fail "doctor should print state counts"
+  [[ "$doctor_output" == *"state list"* ]] || fail "doctor --verbose should print state list"
+  [[ "$doctor_output" == *"heuristic-"* ]] || fail "doctor --verbose should expose state source"
+  pass "doctor --verbose exposes runtime diagnostics"
 }
 
 setup_fake_tmux_fixture "${TEST_TMPDIR}/fake-tmux"
