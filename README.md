@@ -23,22 +23,26 @@ If better hooks become available later, or if bridge distribution gets simpler, 
 
 ## Installation
 
-Install is target-based. Use exactly one provider target:
+Preferred install path (Homebrew):
+
+```bash
+brew tap alnah/tap
+brew install alnah/tap/panefleet
+panefleet install all
+panefleet doctor --install
+```
+
+Install targets:
 - `core`: heuristic-only runtime (no bridge)
 - `codex`: core + Codex integration
 - `claude`: core + Claude integration
 - `opencode`: core + OpenCode integration
 - `all`: core + Codex + Claude + OpenCode
 
-Canonical command:
+`panefleet install` without a target defaults to `core`.
 
-```bash
-make install <core|codex|claude|opencode|all>
-```
-
-`make install` without a target defaults to `core`.
-
-From source checkout, run inside `tmux`:
+<details>
+<summary>Source install (clone + make)</summary>
 
 ```bash
 git clone https://github.com/alnah/panefleet.git
@@ -47,12 +51,7 @@ make install all
 make doctor
 ```
 
-Direct CLI entrypoint (same behavior):
-
-```bash
-bin/panefleet install all
-bin/panefleet doctor --install
-```
+</details>
 
 What install does:
 - checks and installs missing runtime dependencies with the detected package manager
