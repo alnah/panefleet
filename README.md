@@ -61,7 +61,8 @@ What install does:
 Install output contract:
 - `install core` prints `Core installed` and keeps adapter mode `heuristic-only`
 - provider installs print integration result + `Bridge: ...` + `Adapter mode: auto`
-- re-running `install all` is idempotent (no duplicate wiring in config files)
+- re-running `install all` is idempotent and reports `Bridge: already installed`
+- force bridge refresh is available with `PANEFLEET_BRIDGE_INSTALL_MODE=force-build` or `force-download`
 
 ## Features
 
