@@ -155,7 +155,7 @@ Provider heuristics are intentionally narrow:
 
 ## Optional integrations
 
-Panefleet works without any adapter bridge. That remains the default and recommended install path.
+Panefleet works without any adapter bridge, but the recommended install path is to use the provider integrations when they match your setup.
 
 All provider integrations reuse the same `panefleet-agent-bridge` binary. Provider-specific setup only adds the matching wrapper or plugin layer on top of that shared bridge.
 
