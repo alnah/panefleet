@@ -208,14 +208,6 @@ Common checks:
   - verify `make doctor` points to the expected `opencode.plugin`
   - rerun `make install opencode`
 
-Reset the plugin bindings and hooks:
-
-```bash
-make uninstall
-```
-
-Use `make uninstall` to remove the tmux bindings and hooks installed by panefleet.
-
 If you installed panefleet with Homebrew, uninstall it with:
 
 ```bash
@@ -223,6 +215,14 @@ brew uninstall panefleet
 # optional: remove the tap if you no longer use it
 brew untap alnah/tap
 ```
+
+Reset the plugin bindings and hooks:
+
+```bash
+make uninstall
+```
+
+Use `make uninstall` to remove the tmux bindings and hooks installed by panefleet.
 
 ## Testing
 
@@ -248,8 +248,6 @@ make bridge
 make bridge-download
 make release-check
 ```
-
-Tag pushes (`v*`) run the release workflow. Homebrew tap auto-bump runs in the same workflow when `HOMEBREW_TAP_TOKEN` is configured in GitHub Actions secrets.
 
 Release readiness checklist (maintainers):
 
