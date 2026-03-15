@@ -1,6 +1,6 @@
 # panefleet
 
-> tmux workboard plugin for agent panes. Provides a popup board, pane preview, theme picker, and heuristics-first state detection for Codex, Claude Code, OpenCode, and shell panes.
+> tmux workboard plugin for agent panes. Provides a popup board, pane preview, theme picker, and state detection for Codex, Claude Code, OpenCode, and shell panes.
 
 ## Table of contents
 
@@ -18,16 +18,22 @@
 
 ## Installation
 
-### Source checkout
+Panefleet has two install layers:
+
+- `core`: the portable tmux plugin, heuristic-first
+- `integrations`: optional provider bridges for Codex, Claude Code, and OpenCode
+
+### Core from a checkout
 
 ```bash
 git clone https://github.com/alnah/panefleet.git ~/workspace/panefleet
 cd ~/workspace/panefleet
-./scripts/install-deps-homebrew.sh
+./scripts/install-deps.sh # optional helper
+bin/panefleet preflight
 tmux source-file "$PWD/panefleet.tmux"
 ```
 
-That loads the plugin directly from the checkout. No symlink is required.
+That loads the plugin directly from the checkout. No symlink and no Go toolchain are required for the core mode.
 
 ### TPM-style path
 
@@ -41,7 +47,7 @@ tmux source-file ~/.tmux/plugins/panefleet/panefleet.tmux
 
 ```bash
 bin/panefleet install
-bin/panefleet install-integrations
+bin/panefleet install-integrations all
 bin/panefleet reconcile
 bin/panefleet uninstall
 bin/panefleet doctor --install
@@ -53,18 +59,20 @@ bin/panefleet doctor --install
 - `prefix + T` for the theme picker
 
 <details>
-<summary>Optional build dependency</summary>
+<summary>Package manager helpers</summary>
 
-The heuristics-first core does not require Go.
+Use the generic helper when possible:
 
-Build the optional adapter bridge only if you want adapter integrations:
+```bash
+./scripts/install-deps.sh
+./scripts/install-deps.sh --with-go
+```
+
+If you already standardize on Homebrew, the old Homebrew-only helper still exists:
 
 ```bash
 ./scripts/install-deps-homebrew.sh --with-go
-bin/panefleet install-integrations
 ```
-
-Inside tmux, `install-integrations` also switches `@panefleet-adapter-mode` to `auto`.
 
 </details>
 
@@ -79,7 +87,8 @@ Core runtime:
 
 Optional runtime:
 
-- `go` to build `bin/panefleet-agent-bridge` from source
+- `curl` and `tar` to download a prebuilt bridge from GitHub Releases
+- `go` only if you want or need to build `bin/panefleet-agent-bridge` from source
 - `bun` and the OpenCode plugin host only for the OpenCode plugin integration
 
 Check the local runtime with:
@@ -129,13 +138,13 @@ set -g @panefleet-adapter-mode heuristic-only
 
 Supported options:
 
-| Option | Default | Description |
-| --- | --- | --- |
-| `@panefleet-theme` | `panefleet-dark` | Active board theme |
-| `@panefleet-done-recent-minutes` | `10` | How long `DONE` stays visible before aging into `IDLE` |
-| `@panefleet-stale-minutes` | `45` | When `IDLE` ages into `STALE` |
-| `@panefleet-agent-status-max-age-seconds` | `600` | Freshness window for adapter-provided states |
-| `@panefleet-adapter-mode` | `heuristic-only` | `heuristic-only` or `auto` |
+| Option                                    | Default          | Description                                            |
+| ----------------------------------------- | ---------------- | ------------------------------------------------------ |
+| `@panefleet-theme`                        | `panefleet-dark` | Active board theme                                     |
+| `@panefleet-done-recent-minutes`          | `10`             | How long `DONE` stays visible before aging into `IDLE` |
+| `@panefleet-stale-minutes`                | `45`             | When `IDLE` ages into `STALE`                          |
+| `@panefleet-agent-status-max-age-seconds` | `600`            | Freshness window for adapter-provided states           |
+| `@panefleet-adapter-mode`                 | `heuristic-only` | `heuristic-only` or `auto`                             |
 
 Color portability:
 
@@ -152,7 +161,10 @@ bin/panefleet preview %1
 bin/panefleet jump %1
 
 bin/panefleet install
-bin/panefleet install-integrations
+bin/panefleet install-integrations codex
+bin/panefleet install-integrations claude
+bin/panefleet install-integrations opencode
+bin/panefleet install-integrations all
 bin/panefleet reconcile
 bin/panefleet uninstall
 
@@ -187,14 +199,14 @@ bin/panefleet theme-apply dracula
 
 Panefleet displays these states:
 
-| State | Meaning |
-| --- | --- |
-| `RUN` | Active work in progress |
-| `WAIT` | Clear chooser or approval prompt |
-| `DONE` | Work appears finished and the pane is back at a ready prompt |
-| `IDLE` | No strong sign of active work |
-| `STALE` | Left open beyond the configured stale threshold |
-| `ERROR` | Dead pane with a non-zero exit status |
+| State   | Meaning                                                      |
+| ------- | ------------------------------------------------------------ |
+| `RUN`   | Active work in progress                                      |
+| `WAIT`  | Clear chooser or approval prompt                             |
+| `DONE`  | Work appears finished and the pane is back at a ready prompt |
+| `IDLE`  | No strong sign of active work                                |
+| `STALE` | Left open beyond the configured stale threshold              |
+| `ERROR` | Dead pane with a non-zero exit status                        |
 
 Status resolution order:
 
@@ -222,29 +234,52 @@ Provider heuristics are intentionally narrow:
 
 ## Optional integrations
 
-Panefleet works without any adapter bridge. That is the default install path.
+Panefleet works without any adapter bridge. That remains the default and recommended install path.
 
-Optional integration files in this repo:
+Install integrations explicitly by provider:
+
+```bash
+bin/panefleet install-integrations codex
+bin/panefleet install-integrations claude
+bin/panefleet install-integrations opencode
+bin/panefleet install-integrations all
+```
+
+`install-integrations` resolves the bridge in this order:
+
+1. exact tagged release asset when the checkout is on a release tag
+2. local source build when `go` is available
+3. latest matching GitHub Release asset for the current OS/arch
+
+If the command runs inside tmux, it also switches `@panefleet-adapter-mode` to `auto`.
+
+Provider notes:
+
+- `Codex`
+  - installs the shared bridge
+  - exposes ready wrapper paths for `notify` and app-server integration
+  - does not overwrite user Codex config automatically
+- `Claude Code`
+  - installs the shared bridge
+  - exposes the ready hook wrapper path
+  - does not overwrite `~/.claude/settings.json` automatically
+- `OpenCode`
+  - installs the shared bridge
+  - writes a plugin file to `~/.config/opencode/plugins/panefleet.ts` by default
+  - still requires `bun` and the OpenCode plugin host
+
+Wrapper paths in this repo:
 
 - `scripts/claude-code-hook`
 - `scripts/codex-app-server-bridge`
 - `scripts/codex-notify-bridge`
 - `scripts/opencode-event-bridge`
-- `scripts/opencode-panefleet.ts`
-- `bin/panefleet-agent-bridge`
-
-Build the bridge explicitly:
-
-```bash
-bin/panefleet install-integrations
-```
-
-If the command is run inside tmux, it also enables adapter mode for that session.
 
 Important constraints:
 
 - wrappers do not auto-build the bridge
 - missing bridge errors are explicit
+- the core plugin still works when no integration is installed
 - OpenCode plugin integration requires its plugin host and `bun`
 - these integrations are optional and do not change the default tmux install
 
@@ -298,6 +333,9 @@ Common checks:
   - verify `tmux`, `fzf`, and `rg` are installed
   - verify `tmux` supports `display-popup`
   - verify `fzf` supports `--header-lines-border`
+- `doctor --install` shows `bridge-missing`
+  - run `bin/panefleet install-integrations codex|claude|opencode|all`
+  - if release download is unavailable, install `go` and rerun
 - board does not open
   - reload `panefleet.tmux`
   - run `bin/panefleet doctor --install`
@@ -305,8 +343,10 @@ Common checks:
 - status looks wrong for one pane
   - run `bin/panefleet state-show --pane %pane`
   - inspect `final.source` and `final.reason`
-- optional bridge wrapper fails
-  - build `bin/panefleet-agent-bridge` explicitly with `bin/panefleet install-integrations`
+- OpenCode integration is not active
+  - verify `bun` is installed
+  - verify `doctor --install` points to the expected `opencode.plugin`
+  - rerun `bin/panefleet install-integrations opencode`
 
 Reset the plugin bindings and hooks:
 
@@ -321,6 +361,7 @@ Run the full local regression suite with:
 
 ```bash
 ./scripts/test.sh
+make test
 ```
 
 That runs:
@@ -329,3 +370,11 @@ That runs:
 - `go test -race ./cmd/panefleet-agent-bridge`
 - `shellcheck`
 - the shell regression harness in `tests/test_panefleet.sh`
+
+Maintainer release helpers:
+
+```bash
+make bridge
+make bridge-download
+make release-check
+```
