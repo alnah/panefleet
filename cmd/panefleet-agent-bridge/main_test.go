@@ -111,16 +111,28 @@ func TestMapClaudeHookEvent(t *testing.T) {
 			wantState: statusWait,
 		},
 		{
-			name:      "notification is wait",
+			name:      "notification is ignored",
 			event:     "Notification",
 			lowerBlob: "{}",
-			wantState: statusWait,
+			wantState: "",
+		},
+		{
+			name:      "post tool use is ignored",
+			event:     "PostToolUse",
+			lowerBlob: "{}",
+			wantState: "",
 		},
 		{
 			name:      "stop is done",
 			event:     "Stop",
 			lowerBlob: "{}",
 			wantState: statusDone,
+		},
+		{
+			name:      "subagent stop is ignored",
+			event:     "SubagentStop",
+			lowerBlob: "{}",
+			wantState: "",
 		},
 		{
 			name:      "error blob is error",

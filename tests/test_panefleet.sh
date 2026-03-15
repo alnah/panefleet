@@ -240,15 +240,27 @@ test_sourced_helpers() {
   assert_eq "$got" "RUN" "adapter_status infers claude run from active assistant marker in the focus region"
   pass "adapter_status infers claude run from active assistant marker in the focus region"
 
+  # shellcheck disable=SC2034
+  PANEFLEET_ADAPTERS_ENABLED=1
   resolve_uncached_state_values "%105" "claude" "2.1.76" "✳ Claude Code" 0 "" "$(date +%s)" $'Some transcript above\n❯\n' "" "RUN" "claude" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "claude-hook"
-  assert_eq "$PANEFLEET_RESOLVED_STATUS" "DONE" "resolve_uncached_state_values lets a bare claude prompt override a fresh adapter run"
-  assert_eq "$PANEFLEET_RESOLVED_SOURCE" "heuristic-live" "resolve_uncached_state_values reports heuristic-live when claude prompt overrides adapter run"
-  pass "resolve_uncached_state_values lets claude prompt override fresh adapter run"
+  assert_eq "$PANEFLEET_RESOLVED_STATUS" "RUN" "resolve_uncached_state_values keeps a fresh claude adapter run"
+  assert_eq "$PANEFLEET_RESOLVED_SOURCE" "agent" "resolve_uncached_state_values reports agent source for fresh claude adapter run"
+  pass "resolve_uncached_state_values keeps fresh claude adapter run"
 
   resolve_uncached_state_values "%105" "claude" "2.1.76" "✳ Claude Code" 0 "" "$(date +%s)" $'Permissions: Allow Ask Deny\n❯ 1. Add a new rule…\nPress ↑↓ to navigate · Enter to select · Type to search · Esc to cancel' "" "RUN" "claude" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "claude-hook"
-  assert_eq "$PANEFLEET_RESOLVED_STATUS" "WAIT" "resolve_uncached_state_values lets a visible claude chooser override a fresh adapter run"
-  assert_eq "$PANEFLEET_RESOLVED_SOURCE" "heuristic-live" "resolve_uncached_state_values reports heuristic-live when claude chooser overrides adapter run"
-  pass "resolve_uncached_state_values lets claude chooser override fresh adapter run"
+  assert_eq "$PANEFLEET_RESOLVED_STATUS" "WAIT" "resolve_uncached_state_values lets claude chooser override adapter run"
+  assert_eq "$PANEFLEET_RESOLVED_SOURCE" "heuristic-live" "resolve_uncached_state_values reports heuristic source for claude chooser override"
+  pass "resolve_uncached_state_values lets claude chooser override adapter run"
+
+  resolve_uncached_state_values "%105" "claude" "2.1.76" "✳ Claude Code" 0 "" "$(date +%s)" $'Permissions: Allow Ask Deny\n❯ 1. Add a new rule…\nPress ↑↓ to navigate · Enter to select · Type to search · Esc to cancel' "" "DONE" "claude" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "claude-hook"
+  assert_eq "$PANEFLEET_RESOLVED_STATUS" "WAIT" "resolve_uncached_state_values lets claude chooser override adapter done"
+  pass "resolve_uncached_state_values lets claude chooser override adapter done"
+
+  resolve_uncached_state_values "%103" "shell" "zsh" "$HOME/workspace" 0 "" "$(date +%s)" $'prompt' "" "RUN" "claude" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "claude-hook"
+  assert_eq "$PANEFLEET_RESOLVED_STATUS" "IDLE" "resolve_uncached_state_values ignores fresh claude adapter state on shell pane"
+  pass "resolve_uncached_state_values ignores stale claude adapter state on shell pane"
+  # shellcheck disable=SC2034
+  PANEFLEET_ADAPTERS_ENABLED=0
 
   got="$(adapter_status "%104" "opencode" "opencode" 0 "" $'┃  Thinking: Setting up a script path\n   ~ Preparing patch...\n   ▣  Build · model-x · interrupted\nctrl+t variants')"
   assert_eq "$got" "RUN" "adapter_status infers opencode run from active transcript"

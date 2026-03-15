@@ -453,6 +453,29 @@ adapters_enabled() {
   esac
 }
 
+agent_state_matches_live_tool() {
+  local live_tool="$1"
+  local agent_tool_value="$2"
+
+  if [[ -z "$agent_tool_value" ]]; then
+    return 0
+  fi
+
+  case "$live_tool" in
+    codex|claude|opencode)
+      [[ "$agent_tool_value" == "$live_tool" ]]
+      return
+      ;;
+    shell)
+      [[ "$agent_tool_value" == "shell" ]]
+      return
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 agent_status_is_fresh() {
   local updated_at="$1"
   local max_age="$2"
@@ -717,7 +740,7 @@ claude_is_working() {
 claude_is_waiting() {
   local capture="$1"
 
-  contains_line "$capture" 'Enter to confirm|Esc to cancel|Do you want to|approval|required|choose an option|select an option|Yes, proceed|No, cancel|Permission'
+  contains_line "$capture" 'Enter to confirm|Esc to cancel|Do you want to|approval|required|choose an option|select an option|Yes, proceed|No, cancel|Permission|/permissions|Allow Ask Deny|Press .*navigate|allow all edits|allow once|deny'
 }
 
 claude_is_done() {
@@ -923,6 +946,8 @@ resolve_live_raw_state_values() {
   local capture="${7:-}"
   local tool capture_tool raw_status
 
+  PANEFLEET_RESOLVED_SOURCE=""
+  PANEFLEET_RESOLVED_REASON=""
   tool="$initial_tool"
   if [[ -z "$tool" ]]; then
     tool="$(tool_kind "$cmd" "$title")"
@@ -979,6 +1004,8 @@ resolve_uncached_state_values() {
   local agent_source_value="${19:-}"
   local tool raw_status status
 
+  PANEFLEET_RESOLVED_SOURCE=""
+  PANEFLEET_RESOLVED_REASON=""
   tool="$initial_tool"
   raw_status=""
   status=""
@@ -993,25 +1020,21 @@ resolve_uncached_state_values() {
     status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
     PANEFLEET_RESOLVED_SOURCE="process"
     PANEFLEET_RESOLVED_REASON="dead pane exit=${dead_status:-unknown}"
-  elif [[ "${PANEFLEET_ADAPTERS_ENABLED:-1}" == "1" ]] && [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$agent_status_max_age" "$now"; then
+  elif [[ "${PANEFLEET_ADAPTERS_ENABLED:-1}" == "1" ]] && [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$agent_status_max_age" "$now" && agent_state_matches_live_tool "$tool" "$agent_tool_value"; then
     raw_status="$agent_status_value"
     if [[ -n "$agent_tool_value" ]]; then
       tool="$agent_tool_value"
     fi
-    if [[ "$tool" == "claude" && ( "$raw_status" == "RUN" || "$raw_status" == "WAIT" ) ]]; then
+    if [[ "$tool" == "claude" && "$raw_status" != "WAIT" ]]; then
       if [[ -z "$capture" ]]; then
         capture="$(pane_visible_capture "$pane_id")"
       fi
       if [[ -n "$capture" ]]; then
         capture="$(claude_focus_capture "$capture")"
-        if [[ "$raw_status" == "RUN" ]] && claude_is_waiting "$capture"; then
+        if claude_is_waiting "$capture"; then
           raw_status="WAIT"
           PANEFLEET_RESOLVED_SOURCE="heuristic-live"
           PANEFLEET_RESOLVED_REASON="claude chooser overrides adapter ${agent_status_value}"
-        elif claude_is_done "$capture"; then
-          raw_status="DONE"
-          PANEFLEET_RESOLVED_SOURCE="heuristic-live"
-          PANEFLEET_RESOLVED_REASON="claude prompt overrides adapter ${agent_status_value}"
         fi
       fi
     fi

@@ -83,11 +83,11 @@ func runClaudeHook(ctx context.Context, args []string) error {
 
 func mapClaudeHookEvent(event, lowerBlob string) (string, string) {
 	switch {
-	case containsString([]string{"PreToolUse", "PostToolUse", "UserPromptSubmit", "SessionStart"}, event):
-		return statusRun, "hook lifecycle event"
-	case event == "PermissionRequest" || event == "Notification":
-		return statusWait, "hook input request event"
-	case containsString([]string{"Stop", "SubagentStop", "SessionEnd", "PreCompact"}, event):
+	case containsString([]string{"PreToolUse", "UserPromptSubmit"}, event):
+		return statusRun, "hook work event"
+	case event == "PermissionRequest":
+		return statusWait, "hook permission event"
+	case event == "Stop":
 		return statusDone, "hook completion event"
 	case containsAny(lowerBlob, "error", "failed"):
 		return statusError, "payload contains failure marker"
