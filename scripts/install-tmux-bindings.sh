@@ -40,14 +40,15 @@ touch_hook_command() {
   printf 'run-shell -b "%s touch \\"#{pane_id}\\""' "$PANEFLEET_BIN"
 }
 
-remove_matching_hooks() {
+remove_panefleet_touch_hooks() {
   local hook_name="$1"
-  local hook_command="$2"
   local hook_ref
 
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    [[ "$line" != *"$hook_command"* ]] && continue
+    [[ "$line" != *"panefleet"* ]] && continue
+    [[ "$line" != *" touch "* ]] && continue
+    [[ "$line" != *"#{pane_id}"* ]] && continue
     hook_ref="${line%% *}"
     "${TMUX_BIN}" set-hook -gu "$hook_ref"
   done < <("${TMUX_BIN}" show-hooks -g "$hook_name" 2>/dev/null || true)
@@ -67,6 +68,10 @@ case "$ACTION" in
   install)
     "${TMUX_BIN}" bind-key -T prefix P run-shell -b "${PANEFLEET_BIN} popup"
     "${TMUX_BIN}" bind-key -T prefix T run-shell -b "${PANEFLEET_BIN} theme-popup"
+    remove_panefleet_touch_hooks after-select-pane
+    remove_panefleet_touch_hooks after-select-window
+    remove_panefleet_touch_hooks client-session-changed
+    remove_panefleet_touch_hooks client-active
     ensure_hook after-select-pane "$(touch_hook_command)"
     ensure_hook after-select-window "$(touch_hook_command)"
     ensure_hook client-session-changed "$(touch_hook_command)"
@@ -75,10 +80,10 @@ case "$ACTION" in
   uninstall)
     "${TMUX_BIN}" unbind-key -q -T prefix P
     "${TMUX_BIN}" unbind-key -q -T prefix T
-    remove_matching_hooks after-select-pane "$(touch_hook_command)"
-    remove_matching_hooks after-select-window "$(touch_hook_command)"
-    remove_matching_hooks client-session-changed "$(touch_hook_command)"
-    remove_matching_hooks client-active "$(touch_hook_command)"
+    remove_panefleet_touch_hooks after-select-pane
+    remove_panefleet_touch_hooks after-select-window
+    remove_panefleet_touch_hooks client-session-changed
+    remove_panefleet_touch_hooks client-active
     ;;
   *)
     printf 'unknown action: %s\n' "$ACTION" >&2
