@@ -1,6 +1,8 @@
 .DEFAULT_GOAL := help
 
 INSTALL_TARGETS := core codex claude opencode all
+PANEFLEET_BIN ?= bin/panefleet
+PANEFLEET_INSTALL_DEPS_CMD ?= ./scripts/install-deps.sh
 
 .PHONY: help install $(INSTALL_TARGETS) doctor uninstall deps test preflight bridge bridge-download release-check
 
@@ -24,31 +26,31 @@ install:
 	  core|codex|claude|opencode|all) ;; \
 	  *) printf 'unknown install target: %s\n' "$$target" >&2; exit 1 ;; \
 	esac; \
-	./scripts/install-deps.sh; \
-	bin/panefleet install "$$target"
+	$(PANEFLEET_INSTALL_DEPS_CMD); \
+	$(PANEFLEET_BIN) install "$$target"
 
 deps:
-	@./scripts/install-deps.sh
+	@$(PANEFLEET_INSTALL_DEPS_CMD)
 
 $(INSTALL_TARGETS):
 	@if [ "$(firstword $(MAKECMDGOALS))" = "install" ]; then \
 	  :; \
 	else \
-	  ./scripts/install-deps.sh; \
-	  bin/panefleet install "$@"; \
+	  $(PANEFLEET_INSTALL_DEPS_CMD); \
+	  $(PANEFLEET_BIN) install "$@"; \
 	fi
 
 doctor:
-	@bin/panefleet doctor --install
+	@$(PANEFLEET_BIN) doctor --install
 
 uninstall:
-	@bin/panefleet uninstall
+	@$(PANEFLEET_BIN) uninstall
 
 test:
 	./scripts/test.sh
 
 preflight:
-	bin/panefleet preflight
+	$(PANEFLEET_BIN) preflight
 
 bridge:
 	PANEFLEET_BRIDGE_INSTALL_MODE=build ./scripts/install-bridge.sh

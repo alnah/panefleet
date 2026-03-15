@@ -31,6 +31,9 @@ jobs:
       - name: run test suite
         run: ./scripts/test.sh
 
+      - name: verify make install contract
+        run: ./tests/test_make_install.sh
+
       - name: validate release snapshot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
