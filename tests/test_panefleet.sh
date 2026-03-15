@@ -34,6 +34,21 @@ strip_ansi() {
   perl -pe 's/\e\[[0-9;]*m//g'
 }
 
+file_mode_octal() {
+  local path="$1"
+
+  if stat -c '%a' "$path" >/dev/null 2>&1; then
+    stat -c '%a' "$path"
+    return
+  fi
+  if stat -f '%Lp' "$path" >/dev/null 2>&1; then
+    stat -f '%Lp' "$path"
+    return
+  fi
+
+  fail "unable to read mode for $path"
+}
+
 setup_fake_tmux_fixture() {
   local root="$1"
   local now
@@ -365,9 +380,36 @@ test_install_integrations_command() {
   [[ -f "$claude_settings" ]] || fail "install-integrations should create the claude settings when needed"
   rg -Fq -- "$codex_wrapper" "$codex_config" || fail "install-integrations should wire codex notify wrapper"
   rg -Fq -- "$claude_wrapper" "$claude_settings" || fail "install-integrations should wire claude hook wrapper"
+  [[ "$(file_mode_octal "$codex_config")" == "600" ]] || fail "install-integrations should restrict codex config permissions"
+  [[ "$(file_mode_octal "$claude_settings")" == "600" ]] || fail "install-integrations should restrict claude settings permissions"
   mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
   [[ "$mode" == "auto" ]] || fail "install-integrations should enable adapter mode in tmux"
   pass "install-integrations wires provider integrations"
+}
+
+test_wrapper_install_hints() {
+  local fake_bin missing_bridge stderr_file fake_panefleet
+
+  fake_bin="${TEST_TMPDIR}/fake-bin"
+  missing_bridge="${TEST_TMPDIR}/missing/panefleet-agent-bridge"
+  stderr_file="${TEST_TMPDIR}/wrapper.stderr"
+  fake_panefleet="${fake_bin}/panefleet"
+  mkdir -p "$fake_bin"
+  cat >"$fake_panefleet" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$fake_panefleet"
+
+  PATH="$fake_bin:${PATH}" PANEFLEET_AGENT_BRIDGE_BIN="$missing_bridge" "${REPO_ROOT}/scripts/codex-notify-bridge" > /dev/null 2>"$stderr_file" || true
+  [[ "$(cat "$stderr_file")" == *"install it with ${fake_panefleet} install codex"* ]] || fail "codex wrapper should suggest panefleet install codex"
+
+  PATH="$fake_bin:${PATH}" PANEFLEET_AGENT_BRIDGE_BIN="$missing_bridge" "${REPO_ROOT}/scripts/claude-code-hook" > /dev/null 2>"$stderr_file" || true
+  [[ "$(cat "$stderr_file")" == *"install it with ${fake_panefleet} install claude"* ]] || fail "claude wrapper should suggest panefleet install claude"
+
+  PATH="$fake_bin:${PATH}" PANEFLEET_AGENT_BRIDGE_BIN="$missing_bridge" "${REPO_ROOT}/scripts/opencode-event-bridge" > /dev/null 2>"$stderr_file" || true
+  [[ "$(cat "$stderr_file")" == *"install it with ${fake_panefleet} install opencode"* ]] || fail "opencode wrapper should suggest panefleet install opencode"
+  pass "wrappers print consistent install hints"
 }
 
 test_install_command() {
@@ -424,3 +466,4 @@ test_fake_tmux_cli
 test_install_integrations_command
 test_install_command
 test_setup_command
+test_wrapper_install_hints

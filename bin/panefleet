@@ -313,6 +313,7 @@ install_codex_integration() {
   fi
 
   mv "$tmp_path" "$config_path"
+  chmod 600 "$config_path" 2>/dev/null || true
 }
 
 install_claude_integration() {
@@ -389,6 +390,7 @@ open my $out, '>', $path or die "failed to write $path: $!";
 print {$out} $json;
 close $out;
 PERL
+  chmod 600 "$settings_path" 2>/dev/null || true
 }
 
 codex_notify_is_wired() {
