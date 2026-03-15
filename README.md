@@ -224,8 +224,6 @@ Reset the plugin bindings and hooks:
 make uninstall
 ```
 
-Use `make uninstall` to remove the tmux bindings and hooks installed by panefleet.
-
 ## Testing
 
 Run the full local regression suite with:
