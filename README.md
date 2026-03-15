@@ -36,7 +36,7 @@ make install opencode  # core, opencode bridge
 make install all       # core, codex, claude, opencode
 ```
 
-## About installation process
+## About the installation process
 
 The installers first check the core system dependencies:
 
@@ -44,27 +44,27 @@ The installers first check the core system dependencies:
 - `ripgrep`
 - `bash`
 
-If you install a bridge, it will check for:
+If you install a bridge, it checks for:
 
 - `curl` and `tar` to download a prebuilt bridge from GitHub Releases
 - `bun` and the OpenCode plugin host only for the OpenCode plugin integration
 
-If it detects missing ones it will install through the detected package manager. That step is explicit in the command output and may prompt for `sudo` on Linux.
+If it detects missing ones, it installs them through the detected package manager. That step is explicit in the command output and may prompt for `sudo` on Linux.
 
-It also install the local bindings directly:
+It also installs the local bindings directly:
 
 - `prefix + P` for the board
 - `prefix + T` for the theme picker
 
 ## Verifying installation
 
-When the installation is done, **from `tmux`** inspect the installed state:
+Once installation is complete, **from `tmux`** inspect the installed state:
 
 ```bash
 make doctor
 ```
 
-It something is wrong, it will provide useful information for you, or your agent, to help you!
+If something is wrong, it provides useful information for you, or your agent, to help.
 
 ## Features
 
@@ -124,7 +124,7 @@ Provider heuristics are intentionally narrow:
 
 ## Configuration
 
-Panefleet uses tmux global options. You them to tweak your installation. Here are my defauls:
+Panefleet uses tmux global options. Use them to tweak your installation. Here are my defaults:
 
 ```tmux
 set -g @panefleet-theme panefleet-dark
@@ -216,7 +216,7 @@ make uninstall
 
 Use `make uninstall` to remove the tmux bindings and hooks installed by panefleet.
 
-## Dev
+## Development
 
 Run the full local regression suite with:
 
