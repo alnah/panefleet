@@ -2474,14 +2474,11 @@ state_show_command() {
   printf 'age.done       %s\n' "$done_age"
 }
 
-state_list_command() {
+render_state_snapshot() {
   local pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool
   local rows_file tool status fresh updated_age target task
 
-  require_runtime_support
-  list_runtime_defaults
-  rows_file="$(mktemp "${TMPDIR:-/tmp}/panefleet-state-list.XXXXXX")"
-  printf 'PANE\tSTATE\tRAW\tSOURCE\tTOOL\tAGENT\tUPDATED\tTARGET\tTASK\tREASON\n' >"$rows_file"
+  rows_file="$(mktemp "${TMPDIR:-/tmp}/panefleet-state-snapshot.XXXXXX")"
 
   while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool; do
     resolve_list_row_values "$pane_id" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$signature" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$cached_signature" "$cached_raw_status" "$cached_tool"
@@ -2504,7 +2501,16 @@ state_list_command() {
       "$PANEFLEET_RESOLVED_REASON" >>"$rows_file"
   done < <(pane_records "$(list_pane_record_format)")
 
-  awk -F '\t' '
+  printf '%s\n' "$rows_file"
+}
+
+print_state_list_snapshot() {
+  local rows_file="$1"
+
+  {
+    printf 'PANE\tSTATE\tRAW\tSOURCE\tTOOL\tAGENT\tUPDATED\tTARGET\tTASK\tREASON\n'
+    cat "$rows_file"
+  } | awk -F '\t' '
     NR == 1 {
       printf "%-7s %-6s %-6s %-16s %-10s %-7s %-8s %-18s %-18s %s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
       next
@@ -2512,13 +2518,28 @@ state_list_command() {
     {
       printf "%-7s %-6s %-6s %-16s %-10s %-7s %-8s %-18s %-18s %s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
     }
-  ' "$rows_file"
+  '
+}
+
+state_list_command() {
+  local rows_file
+
+  require_runtime_support
+  list_runtime_defaults
+  rows_file="$(render_state_snapshot)"
+  print_state_list_snapshot "$rows_file"
   rm -f "$rows_file"
+}
+
+print_state_counts_snapshot() {
+  local rows_file="$1"
+
+  cut -f2 "$rows_file" | sort | uniq -c | awk '{ printf "  %-5s %s\n", $2, $1 }'
 }
 
 doctor_command() {
   local verbose="0"
-  local pane_count counts_file pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool
+  local pane_count rows_file
   local tmux_bin_path fzf_bin_path rg_bin_path
 
   while (( $# > 0 )); do
@@ -2556,21 +2577,17 @@ doctor_command() {
   printf 'agent.max_age   %s\n' "$PANEFLEET_AGENT_STATUS_MAX_AGE"
   printf 'runtime.logs    %s\n' "$(runtime_log_dir)"
   printf 'event.logs      %s\n' "${PANEFLEET_EVENT_LOG_DIR:-}"
-
-  counts_file="$(mktemp "${TMPDIR:-/tmp}/panefleet-doctor.XXXXXX")"
-  while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool; do
-    resolve_list_row_values "$pane_id" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$signature" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$cached_signature" "$cached_raw_status" "$cached_tool"
-    printf '%s\n' "$PANEFLEET_RESOLVED_STATUS" >>"$counts_file"
-  done < <(pane_records "$(list_pane_record_format)")
+  rows_file="$(render_state_snapshot)"
 
   printf '\nstate counts\n'
-  sort "$counts_file" | uniq -c | awk '{ printf "  %-5s %s\n", $2, $1 }'
-  rm -f "$counts_file"
+  print_state_counts_snapshot "$rows_file"
 
   if [[ "$verbose" == "1" ]]; then
     printf '\nstate list\n'
-    state_list_command
+    print_state_list_snapshot "$rows_file"
   fi
+
+  rm -f "$rows_file"
 }
 
 main() {
