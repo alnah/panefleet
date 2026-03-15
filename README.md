@@ -2,7 +2,7 @@
 
 > tmux workboard plugin for agent panes. Provides a popup board, pane preview, theme picker, and state detection for Codex, Claude Code, OpenCode, and shell panes.
 
-[TODO: GIF]
+![Panefleet demo](assets/demo.gif)
 
 Panefleet started as a way to reduce context switching across tmux windows and sessions while running Codex, Claude Code, and OpenCode in parallel. The agents can produce strong code, but I still need to track the production chain around them: implementation, behavior checks, security, testability, refactors, optimization, and portability across several chat sessions and projects at once.
 
