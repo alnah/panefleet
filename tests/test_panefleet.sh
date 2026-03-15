@@ -316,11 +316,14 @@ test_fake_tmux_cli() {
 test_install_integrations_command() {
   local out_bin
   local mode
+  local plugin_dir
 
   out_bin="${TEST_TMPDIR}/bin/panefleet-agent-bridge"
+  plugin_dir="${TEST_TMPDIR}/opencode-plugins"
   mkdir -p "$(dirname "$out_bin")"
-  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" install-integrations >/dev/null
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install-integrations >/dev/null
   [[ -x "$out_bin" ]] || fail "install-integrations should build the bridge binary"
+  [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "install-integrations should install the opencode plugin file"
   mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
   [[ "$mode" == "auto" ]] || fail "install-integrations should enable adapter mode in tmux"
   pass "install-integrations builds the bridge binary"

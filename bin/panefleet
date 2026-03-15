@@ -56,6 +56,10 @@ build_bridge_script_path() {
   printf '%s/scripts/build-agent-bridge.sh' "$(self_root)"
 }
 
+install_bridge_script_path() {
+  printf '%s/scripts/install-bridge.sh' "$(self_root)"
+}
+
 bridge_bin_path() {
   printf '%s/bin/panefleet-agent-bridge' "$(self_root)"
 }
@@ -66,6 +70,148 @@ touch_hook_command_value() {
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
+}
+
+bridge_present() {
+  [[ -x "$(bridge_bin_path)" ]]
+}
+
+opencode_plugin_dir() {
+  printf '%s' "${PANEFLEET_OPENCODE_PLUGIN_DIR:-$HOME/.config/opencode/plugins}"
+}
+
+opencode_plugin_path() {
+  printf '%s/panefleet.ts' "$(opencode_plugin_dir)"
+}
+
+js_escape_string() {
+  local value="$1"
+
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '%s' "$value"
+}
+
+ensure_bridge_binary() {
+  local root install_script
+
+  root="$(self_root)"
+  install_script="$(install_bridge_script_path)"
+  if [[ ! -x "$install_script" ]]; then
+    printf 'panefleet: missing bridge install script %s\n' "$install_script" >&2
+    exit 1
+  fi
+
+  PANEFLEET_ROOT="$root" "$install_script"
+}
+
+install_opencode_plugin() {
+  local plugin_dir plugin_path bridge_path escaped_bridge
+
+  plugin_dir="$(opencode_plugin_dir)"
+  plugin_path="$(opencode_plugin_path)"
+  bridge_path="$(self_root)/scripts/opencode-event-bridge"
+  escaped_bridge="$(js_escape_string "$bridge_path")"
+
+  mkdir -p "$plugin_dir"
+  cat >"$plugin_path" <<EOF
+import { Plugin } from "@opencode-ai/plugin"
+
+const bridgePath = process.env.PANEFLEET_OPENCODE_BRIDGE || "${escaped_bridge}"
+
+export const PanefleetPlugin: Plugin = async () => {
+  const pane = process.env.PANEFLEET_PANE || process.env.TMUX_PANE || ""
+
+  return {
+    event: async ({ event }) => {
+      if (!pane) {
+        return
+      }
+
+      const payload = JSON.stringify({ event })
+      const proc = Bun.spawn([bridgePath, "--pane", pane], {
+        stdin: "pipe",
+        stdout: "ignore",
+        stderr: "inherit",
+      })
+
+      if (proc.stdin) {
+        await proc.stdin.write(payload)
+        await proc.stdin.end()
+      }
+      await proc.exited
+    },
+  }
+}
+EOF
+}
+
+append_unique_target() {
+  local value="$1"
+  local existing
+
+  for existing in "${PANEFLEET_INSTALL_TARGETS[@]:-}"; do
+    if [[ "$existing" == "$value" ]]; then
+      return
+    fi
+  done
+
+  PANEFLEET_INSTALL_TARGETS+=("$value")
+}
+
+resolve_integration_targets() {
+  local arg
+
+  PANEFLEET_INSTALL_TARGETS=()
+  if (( $# == 0 )); then
+    set -- all
+  fi
+
+  for arg in "$@"; do
+    case "$arg" in
+      all)
+        append_unique_target codex
+        append_unique_target claude
+        append_unique_target opencode
+        ;;
+      codex|claude|opencode)
+        append_unique_target "$arg"
+        ;;
+      *)
+        printf 'unknown integration target: %s\n' "$arg" >&2
+        printf 'expected one of: codex, claude, opencode, all\n' >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+integration_status_codex() {
+  if bridge_present; then
+    printf 'bridge-ready'
+  else
+    printf 'bridge-missing'
+  fi
+}
+
+integration_status_claude() {
+  if bridge_present; then
+    printf 'bridge-ready'
+  else
+    printf 'bridge-missing'
+  fi
+}
+
+integration_status_opencode() {
+  if ! bridge_present; then
+    printf 'bridge-missing'
+  elif [[ ! -f "$(opencode_plugin_path)" ]]; then
+    printf 'plugin-missing'
+  elif ! command_exists bun; then
+    printf 'plugin-ready bun-missing'
+  else
+    printf 'ready'
+  fi
 }
 
 require_tmux() {
@@ -2447,24 +2593,38 @@ uninstall_command() {
 }
 
 install_integrations_command() {
-  local root
-  local build_script
+  local target
 
-  root="$(self_root)"
-  build_script="$(build_bridge_script_path)"
+  resolve_integration_targets "$@"
+  ensure_bridge_binary
 
-  if [[ ! -x "$build_script" ]]; then
-    printf 'panefleet: missing build script %s\n' "$build_script" >&2
-    exit 1
-  fi
-
-  PANEFLEET_ROOT="$root" "$build_script"
+  for target in "${PANEFLEET_INSTALL_TARGETS[@]}"; do
+    case "$target" in
+      codex)
+        printf 'codex bridge ready\n'
+        printf '  notify wrapper: %s\n' "$(self_root)/scripts/codex-notify-bridge"
+        printf '  app-server wrapper: %s\n' "$(self_root)/scripts/codex-app-server-bridge"
+        ;;
+      claude)
+        printf 'claude bridge ready\n'
+        printf '  hook wrapper: %s\n' "$(self_root)/scripts/claude-code-hook"
+        ;;
+      opencode)
+        install_opencode_plugin
+        printf 'opencode bridge ready\n'
+        printf '  plugin file: %s\n' "$(opencode_plugin_path)"
+        if ! command_exists bun; then
+          printf '  warning: bun is missing; OpenCode plugin loading stays unavailable until bun is installed\n'
+        fi
+        ;;
+    esac
+  done
 
   if [[ -n "${TMUX:-}" ]]; then
     "${TMUX_BIN}" set-option -gq @panefleet-adapter-mode auto
     printf 'Enabled adapter mode: auto\n'
   else
-    printf 'Bridge built. Enable adapters in tmux with: tmux set-option -g @panefleet-adapter-mode auto\n'
+    printf 'Enable adapters in tmux with: tmux set-option -g @panefleet-adapter-mode auto\n'
   fi
 }
 
@@ -2840,7 +3000,7 @@ doctor_command() {
   local verbose="0"
   local install_view="0"
   local pane_count rows_file
-  local tmux_bin_path fzf_bin_path rg_bin_path root bridge_bin touch_hook adapter_default
+  local tmux_bin_path fzf_bin_path rg_bin_path root bridge_bin touch_hook adapter_default bun_bin_path
 
   while (( $# > 0 )); do
     case "$1" in
@@ -2871,6 +3031,7 @@ doctor_command() {
   tmux_bin_path="$(command -v "${TMUX_BIN}" 2>/dev/null || printf '%s' "${TMUX_BIN}")"
   fzf_bin_path="$(command -v "${FZF_BIN}" 2>/dev/null || printf '%s' "${FZF_BIN}")"
   rg_bin_path="$(command -v "${RG_BIN}" 2>/dev/null || printf '%s' "${RG_BIN}")"
+  bun_bin_path="$(command -v bun 2>/dev/null || printf 'missing')"
   if [[ "$install_view" == "1" ]]; then
     adapter_default="heuristic-only"
     if adapters_enabled; then
@@ -2881,6 +3042,11 @@ doctor_command() {
     printf 'install.script   %s\n' "$(install_script_path)"
     printf 'bridge.bin       %s\n' "$bridge_bin"
     printf 'bridge.present   %s\n' "$([[ -x "$bridge_bin" ]] && printf 'yes' || printf 'no')"
+    printf 'bun.bin          %s\n' "$bun_bin_path"
+    printf 'integration.codex   %s\n' "$(integration_status_codex)"
+    printf 'integration.claude  %s\n' "$(integration_status_claude)"
+    printf 'integration.opencode %s\n' "$(integration_status_opencode)"
+    printf 'opencode.plugin  %s\n' "$(opencode_plugin_path)"
     printf 'adapter.default  %s\n' "$adapter_default"
     printf 'key.prefix.P     %s\n' "$(binding_state P)"
     printf 'key.prefix.T     %s\n' "$(binding_state T)"

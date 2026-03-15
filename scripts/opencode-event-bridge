@@ -9,7 +9,7 @@ export PANEFLEET_EVENT_LOG_DIR="${PANEFLEET_EVENT_LOG_DIR:-$HOME/.local/state/pa
 
 if [[ ! -x "$BRIDGE_BIN" ]]; then
   printf 'panefleet: missing compiled bridge %s\n' "$BRIDGE_BIN" >&2
-  printf 'build it explicitly with %s/build-agent-bridge.sh\n' "$SCRIPT_DIR" >&2
+  printf 'install it with %s/bin/panefleet install-integrations opencode\n' "$REPO_ROOT" >&2
   exit 1
 fi
 
