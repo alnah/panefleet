@@ -213,7 +213,7 @@ test_sourced_helpers() {
   assert_eq "$got" "WAIT" "adapter_status infers codex wait from chooser text"
   pass "adapter_status infers codex wait from chooser text"
 
-  # shellcheck disable=SC2329
+  # shellcheck disable=SC2317,SC2329
   codex_process_is_working() { return 0; }
   got="$(adapter_status "%101" "codex" "codex-aarch64-a" 0 "" $'No chooser\nNo prompt yet')"
   assert_eq "$got" "RUN" "adapter_status infers codex run from process tree"
