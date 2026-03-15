@@ -68,7 +68,7 @@ Use the generic helper when possible:
 ./scripts/install-deps.sh --with-go
 ```
 
-If you already standardize on Homebrew, the old Homebrew-only helper still exists:
+If you already standardize on Homebrew, the Homebrew-specific helper is available:
 
 ```bash
 ./scripts/install-deps-homebrew.sh --with-go
