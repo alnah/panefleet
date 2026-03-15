@@ -35,6 +35,7 @@ PANEFLEET_RESOLVED_STATUS=""
 PANEFLEET_RESOLVED_LAST_DONE=""
 PANEFLEET_RESOLVED_SOURCE=""
 PANEFLEET_RESOLVED_REASON=""
+PANEFLEET_ADAPTERS_ENABLED="${PANEFLEET_ADAPTERS_ENABLED:-1}"
 
 now_epoch() {
   date +%s
@@ -416,6 +417,23 @@ agent_status_max_age_seconds() {
   printf '%s' "$max_age"
 }
 
+adapters_enabled() {
+  local mode
+
+  mode="$(tmux_global_option @panefleet-adapter-mode)"
+  case "$mode" in
+    ""|auto|on|enabled)
+      return 0
+      ;;
+    heuristic-only|heuristic|off|disabled)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 agent_status_is_fresh() {
   local updated_at="$1"
   local max_age="$2"
@@ -521,6 +539,81 @@ pane_recent_capture() {
   "${TMUX_BIN}" capture-pane -p -t "$pane_id" -S -30
 }
 
+pane_pid_value() {
+  local pane_id="$1"
+  "${TMUX_BIN}" display-message -p -t "$pane_id" '#{pane_pid}' 2>/dev/null || true
+}
+
+process_child_pids() {
+  local pid="$1"
+
+  if [[ -z "$pid" ]]; then
+    return
+  fi
+
+  pgrep -P "$pid" 2>/dev/null || true
+}
+
+process_command_name() {
+  local pid="$1"
+
+  if [[ -z "$pid" ]]; then
+    return
+  fi
+
+  ps -o comm= -p "$pid" 2>/dev/null | awk 'NR == 1 { print $1 }'
+}
+
+process_has_children() {
+  local pid="$1"
+
+  [[ -n "$pid" ]] && pgrep -P "$pid" >/dev/null 2>&1
+}
+
+deepest_codex_pid_for_pane() {
+  local pane_id="$1"
+  local current next_pid pid comm
+
+  current="$(pane_pid_value "$pane_id")"
+  if [[ -z "$current" ]]; then
+    return
+  fi
+
+  while :; do
+    next_pid=""
+    while IFS= read -r pid; do
+      [[ -z "$pid" ]] && continue
+      comm="$(process_command_name "$pid")"
+      case "$comm" in
+        codex|codex-aarch64-a)
+          next_pid="$pid"
+          ;;
+      esac
+    done < <(process_child_pids "$current")
+
+    if [[ -n "$next_pid" ]]; then
+      current="$next_pid"
+    else
+      break
+    fi
+  done
+
+  comm="$(process_command_name "$current")"
+  case "$comm" in
+    codex|codex-aarch64-a)
+      printf '%s' "$current"
+      ;;
+  esac
+}
+
+codex_process_is_working() {
+  local pane_id="$1"
+  local codex_pid
+
+  codex_pid="$(deepest_codex_pid_for_pane "$pane_id")"
+  process_has_children "$codex_pid"
+}
+
 pane_visible_capture() {
   local pane_id="$1"
   "${TMUX_BIN}" capture-pane -p -t "$pane_id"
@@ -572,6 +665,12 @@ contains_line() {
   printf '%s\n' "$haystack" | "${RG_BIN}" -qi -- "$pattern"
 }
 
+codex_is_error() {
+  local capture="$1"
+
+  contains_line "$capture" 'permission denied|access denied|fatal:|traceback|exception|command failed|request failed'
+}
+
 codex_is_working() {
   local capture="$1"
 
@@ -581,19 +680,43 @@ codex_is_working() {
 codex_is_waiting() {
   local capture="$1"
 
-  printf '%s\n' "$capture" | "${RG_BIN}" -qi '^[[:space:]]*(Enter to confirm|Esc to cancel)$'
+  contains_line "$capture" 'Enter to confirm|Esc to cancel|waiting on approval|approval required|select model|choose model|model to change|permission mode|approval mode|/permissions|/models'
+}
+
+claude_is_error() {
+  local capture="$1"
+
+  contains_line "$capture" 'permission denied|access denied|fatal:|traceback|exception|command failed|tool failed'
+}
+
+claude_is_working() {
+  local capture="$1"
+
+  contains_line "$capture" '^\s*⏺ |Bash\(|Read\(|Write\(|Edit\(|MultiEdit\(|Glob\(|Grep\(|LS\(|Task\(|Running|Processing'
+}
+
+claude_is_waiting() {
+  local capture="$1"
+
+  contains_line "$capture" 'Enter to confirm|Esc to cancel|Do you want to|approval|required|choose an option|select an option|Yes, proceed|No, cancel|Permission'
+}
+
+claude_is_done() {
+  local capture="$1"
+
+  printf '%s\n' "$capture" | "${RG_BIN}" -q '^\s*❯\s*$'
 }
 
 opencode_is_working() {
   local capture="$1"
 
-  printf '%s\n' "$capture" | "${RG_BIN}" -qi 'esc interrupt'
+  contains_line "$capture" 'esc interrupt|Thinking:|Preparing patch|Applying patch|Running|Generating|Writing|Tool execution'
 }
 
 opencode_is_waiting() {
   local capture="$1"
 
-  printf '%s\n' "$capture" | "${RG_BIN}" -qi '^[[:space:]]*(Enter to confirm|Esc to cancel)$'
+  contains_line "$capture" 'Enter to confirm|Esc to cancel|approval|required|permission|confirm|cancel|select model|select variant'
 }
 
 opencode_is_done() {
@@ -602,11 +725,33 @@ opencode_is_done() {
   contains_line "$capture" 'Ask anything\.\.\.|ctrl\+p.*commands|tab.*agents'
 }
 
+opencode_focus_capture() {
+  local capture="$1"
+
+  printf '%s\n' "$capture" | tail -n 8
+}
+
+claude_focus_capture() {
+  local capture="$1"
+
+  printf '%s\n' "$capture" | tail -n 12
+}
+
+opencode_is_error() {
+  local capture="$1"
+
+  contains_line "$capture" 'permission denied|access denied|fatal:|traceback|exception|command failed|request failed'
+}
+
 tool_kind() {
   local cmd="$1"
   local title="$2"
+  local cmd_lower title_lower
 
-  case "${cmd}:${title}" in
+  cmd_lower="$(printf '%s' "$cmd" | tr '[:upper:]' '[:lower:]')"
+  title_lower="$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]')"
+
+  case "${cmd_lower}:${title_lower}" in
     codex*:*)
       printf 'codex'
       ;;
@@ -714,7 +859,7 @@ effective_status_values() {
         else
           last_done="$now"
         fi
-      elif [[ -n "$fallback_activity" && "$fallback_activity" != "0" && "$fallback_activity" -lt "$last_done" ]]; then
+      elif [[ -n "$fallback_activity" && "$fallback_activity" != "0" && "$fallback_activity" -gt "$last_done" ]]; then
         last_done="$fallback_activity"
       fi
 
@@ -748,7 +893,7 @@ normalized_last_done_value() {
     else
       printf '%s' "$now"
     fi
-  elif [[ -n "$fallback_activity" && "$fallback_activity" != "0" && "$fallback_activity" -lt "$last_done" ]]; then
+  elif [[ -n "$fallback_activity" && "$fallback_activity" != "0" && "$fallback_activity" -gt "$last_done" ]]; then
     printf '%s' "$fallback_activity"
   else
     printf '%s' "$last_done"
@@ -779,7 +924,11 @@ resolve_live_raw_state_values() {
     fi
   else
     if [[ -z "$capture" ]]; then
-      capture="$(pane_recent_capture "$pane_id")"
+      if [[ "$tool" == "opencode" ]]; then
+        capture="$(pane_visible_capture "$pane_id")"
+      else
+        capture="$(pane_recent_capture "$pane_id")"
+      fi
     fi
     if [[ -n "$capture" && ( "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ) ]]; then
       capture_tool="$(tool_from_capture "$capture")"
@@ -831,17 +980,36 @@ resolve_uncached_state_values() {
     status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
     PANEFLEET_RESOLVED_SOURCE="process"
     PANEFLEET_RESOLVED_REASON="dead pane exit=${dead_status:-unknown}"
-  elif [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$agent_status_max_age" "$now"; then
+  elif [[ "${PANEFLEET_ADAPTERS_ENABLED:-1}" == "1" ]] && [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$agent_status_max_age" "$now"; then
     raw_status="$agent_status_value"
     if [[ -n "$agent_tool_value" ]]; then
       tool="$agent_tool_value"
     fi
+    if [[ "$tool" == "claude" && ( "$raw_status" == "RUN" || "$raw_status" == "WAIT" ) ]]; then
+      if [[ -z "$capture" ]]; then
+        capture="$(pane_visible_capture "$pane_id")"
+      fi
+      if [[ -n "$capture" ]]; then
+        capture="$(claude_focus_capture "$capture")"
+        if [[ "$raw_status" == "RUN" ]] && claude_is_waiting "$capture"; then
+          raw_status="WAIT"
+          PANEFLEET_RESOLVED_SOURCE="heuristic-live"
+          PANEFLEET_RESOLVED_REASON="claude chooser overrides adapter ${agent_status_value}"
+        elif claude_is_done "$capture"; then
+          raw_status="DONE"
+          PANEFLEET_RESOLVED_SOURCE="heuristic-live"
+          PANEFLEET_RESOLVED_REASON="claude prompt overrides adapter ${agent_status_value}"
+        fi
+      fi
+    fi
     status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
-    PANEFLEET_RESOLVED_SOURCE="agent"
-    if [[ -n "$agent_source_value" ]]; then
-      PANEFLEET_RESOLVED_REASON="fresh adapter state from ${agent_source_value}"
-    else
-      PANEFLEET_RESOLVED_REASON="fresh adapter state"
+    if [[ -z "${PANEFLEET_RESOLVED_SOURCE:-}" ]]; then
+      PANEFLEET_RESOLVED_SOURCE="agent"
+      if [[ -n "$agent_source_value" ]]; then
+        PANEFLEET_RESOLVED_REASON="fresh adapter state from ${agent_source_value}"
+      else
+        PANEFLEET_RESOLVED_REASON="fresh adapter state"
+      fi
     fi
   else
     resolve_live_raw_state_values "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "$capture"
@@ -1001,6 +1169,28 @@ should_sync_refresh_now() {
   (( age <= 1800 ))
 }
 
+should_bypass_heuristic_cache() {
+  local tool="$1"
+  local activity="$2"
+  local now="$3"
+  local age
+
+  case "$tool" in
+    codex|claude|opencode)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  if [[ -z "$activity" || "$activity" == "0" ]]; then
+    return 1
+  fi
+
+  age=$(( now - activity ))
+  (( age >= 0 && age <= 180 ))
+}
+
 adapter_status() {
   local pane_id="$1"
   local tool="$2"
@@ -1008,7 +1198,7 @@ adapter_status() {
   local dead="$4"
   local dead_status="$5"
   local capture="$6"
-  local recent
+  local recent focus
 
   if [[ "$dead" == "1" ]]; then
     inferred_status "$cmd" "$dead" "$dead_status"
@@ -1016,12 +1206,19 @@ adapter_status() {
   fi
 
   recent="$(printf '%s\n' "$capture" | tail -n 20)"
+  focus="$(printf '%s\n' "$recent" | tail -n 8)"
 
   case "$tool" in
     codex)
       if codex_is_waiting "$recent"; then
         PANEFLEET_RESOLVED_REASON="codex approval prompt"
         printf 'WAIT'
+      elif codex_is_error "$recent"; then
+        PANEFLEET_RESOLVED_REASON="codex error text"
+        printf 'ERROR'
+      elif codex_process_is_working "$pane_id"; then
+        PANEFLEET_RESOLVED_REASON="codex process tree has active children"
+        printf 'RUN'
       elif codex_is_working "$recent"; then
         PANEFLEET_RESOLVED_REASON="codex working footer"
         printf 'RUN'
@@ -1029,35 +1226,45 @@ adapter_status() {
         PANEFLEET_RESOLVED_REASON="codex prompt"
         printf 'DONE'
       else
-        PANEFLEET_RESOLVED_REASON="codex fallback active process"
-        printf 'RUN'
+        PANEFLEET_RESOLVED_REASON="codex fallback idle session"
+        printf 'IDLE'
       fi
       ;;
     claude)
-      if contains_line "$capture" 'Enter to confirm|Esc to cancel|Do you want to use this API key|approval|required|choose an option|select an option'; then
+      focus="$(claude_focus_capture "$recent")"
+      if claude_is_waiting "$focus"; then
         PANEFLEET_RESOLVED_REASON="claude approval or chooser prompt"
         printf 'WAIT'
-      elif contains_line "$capture" 'All set|What would you like|Start typing|Send a message'; then
-        PANEFLEET_RESOLVED_REASON="claude ready prompt"
+      elif claude_is_error "$focus"; then
+        PANEFLEET_RESOLVED_REASON="claude error text"
+        printf 'ERROR'
+      elif claude_is_done "$focus"; then
+        PANEFLEET_RESOLVED_REASON="claude prompt"
         printf 'DONE'
-      else
-        PANEFLEET_RESOLVED_REASON="claude active session fallback"
+      elif claude_is_working "$focus"; then
+        PANEFLEET_RESOLVED_REASON="claude tool activity"
         printf 'RUN'
+      else
+        PANEFLEET_RESOLVED_REASON="claude fallback idle session"
+        printf 'IDLE'
       fi
       ;;
     opencode)
-      if opencode_is_waiting "$recent"; then
+      if opencode_is_waiting "$focus"; then
         PANEFLEET_RESOLVED_REASON="opencode approval prompt"
         printf 'WAIT'
-      elif opencode_is_working "$recent"; then
-        PANEFLEET_RESOLVED_REASON="opencode interrupt footer"
-        printf 'RUN'
-      elif opencode_is_done "$recent"; then
+      elif opencode_is_done "$focus" && ! opencode_is_working "$focus"; then
         PANEFLEET_RESOLVED_REASON="opencode ready prompt"
         printf 'DONE'
-      else
-        PANEFLEET_RESOLVED_REASON="opencode fallback active process"
+      elif opencode_is_error "$focus"; then
+        PANEFLEET_RESOLVED_REASON="opencode error text"
+        printf 'ERROR'
+      elif opencode_is_working "$recent"; then
+        PANEFLEET_RESOLVED_REASON="opencode activity text"
         printf 'RUN'
+      else
+        PANEFLEET_RESOLVED_REASON="opencode fallback idle session"
+        printf 'IDLE'
       fi
       ;;
     *)
@@ -1833,9 +2040,9 @@ task_label_into() {
 
 status_rank_value() {
   case "$1" in
-    DONE) REPLY='0' ;;
-    RUN) REPLY='1' ;;
-    WAIT) REPLY='2' ;;
+    RUN) REPLY='0' ;;
+    WAIT) REPLY='1' ;;
+    DONE) REPLY='2' ;;
     ERROR) REPLY='3' ;;
     IDLE) REPLY='4' ;;
     STALE) REPLY='5' ;;
@@ -1847,6 +2054,11 @@ list_runtime_defaults() {
   PANEFLEET_DONE_RECENT_MINUTES="$(tmux_global_option @panefleet-done-recent-minutes)"
   PANEFLEET_STALE_MINUTES="$(tmux_global_option @panefleet-stale-minutes)"
   PANEFLEET_AGENT_STATUS_MAX_AGE="$(agent_status_max_age_seconds)"
+  if adapters_enabled; then
+    PANEFLEET_ADAPTERS_ENABLED="1"
+  else
+    PANEFLEET_ADAPTERS_ENABLED="0"
+  fi
   PANEFLEET_NOW="$(now_epoch)"
   PANEFLEET_REFRESH_QUEUE="${PANEFLEET_REFRESH_QUEUE:-}"
   PANEFLEET_SYNC_REFRESH_COUNT="${PANEFLEET_SYNC_REFRESH_COUNT:-0}"
@@ -1877,10 +2089,15 @@ resolve_list_row_values() {
   local cached_raw_status="${15}"
   local cached_tool="${16}"
   local tool raw_status status refresh_record=""
+  local force_live_refresh="0"
 
   tool="$(tool_kind "$cmd" "$title")"
-  if [[ -n "$cached_tool" ]]; then
+  if [[ -n "$cached_tool" && ( "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ) ]]; then
     tool="$cached_tool"
+  fi
+
+  if should_bypass_heuristic_cache "$tool" "${activity:-0}" "$PANEFLEET_NOW"; then
+    force_live_refresh="1"
   fi
 
   if [[ -n "$local_status" || "$dead" == "1" || -n "$agent_status_value" ]]; then
@@ -1889,14 +2106,18 @@ resolve_list_row_values() {
     return
   fi
 
-  if cache_refresh_needed "$local_status" "$cached_signature" "$signature" "$cached_raw_status"; then
+  if [[ "$force_live_refresh" == "1" ]] || cache_refresh_needed "$local_status" "$cached_signature" "$signature" "$cached_raw_status"; then
     if should_sync_refresh_now "$PANEFLEET_NOW" "${activity:-0}" "$cached_raw_status" "$PANEFLEET_SYNC_REFRESH_COUNT"; then
       refresh_record="$(refresh_pane_cache_record "$pane_id" "${activity:-0}" "$signature" "$cmd" "$title" "$dead" "$dead_status" "$last_done")"
       IFS="$PANEFIELD_SEP" read -r tool raw_status last_done <<<"$refresh_record"
       PANEFLEET_SYNC_REFRESH_COUNT=$(( PANEFLEET_SYNC_REFRESH_COUNT + 1 ))
       PANEFLEET_RESOLVED_SOURCE="heuristic-live"
       if [[ -z "$PANEFLEET_RESOLVED_REASON" ]]; then
-        PANEFLEET_RESOLVED_REASON="sync cache refresh"
+        if [[ "$force_live_refresh" == "1" ]]; then
+          PANEFLEET_RESOLVED_REASON="recent pane activity forced live refresh"
+        else
+          PANEFLEET_RESOLVED_REASON="sync cache refresh"
+        fi
       fi
     else
       PANEFLEET_REFRESH_QUEUE+="$pane_id"$'\n'
@@ -2057,8 +2278,12 @@ preview_row() {
   list_runtime_defaults
   status="$(manual_status "$pane_id")"
   IFS="$PANEFIELD_SEP" read -r _pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity <<<"$(preview_pane_record "$pane_id")"
-  capture="$(pane_recent_capture "$pane_id")"
   tool="$(tool_kind "$cmd" "$title")"
+  if [[ "$tool" == "opencode" ]]; then
+    capture="$(pane_visible_capture "$pane_id")"
+  else
+    capture="$(pane_recent_capture "$pane_id")"
+  fi
   agent_status_value="$(agent_status "$pane_id")"
   agent_tool_value="$(agent_tool "$pane_id")"
   agent_updated_at_value="$(agent_updated_at "$pane_id")"
@@ -2571,6 +2796,7 @@ doctor_command() {
   printf 'rg.bin          %s\n' "$rg_bin_path"
   printf 'theme           %s\n' "$THEME_NAME"
   printf 'color.mode      %s\n' "$PANEFLEET_COLOR_MODE_RESOLVED"
+  printf 'adapter.mode    %s\n' "$([[ "$PANEFLEET_ADAPTERS_ENABLED" == "1" ]] && printf 'enabled' || printf 'heuristic-only')"
   printf 'pane.count      %s\n' "$pane_count"
   printf 'done.minutes    %s\n' "$PANEFLEET_DONE_RECENT_MINUTES"
   printf 'stale.minutes   %s\n' "$PANEFLEET_STALE_MINUTES"

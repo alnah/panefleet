@@ -37,7 +37,7 @@ setup_fake_tmux_fixture() {
 
   now="$(date +%s)"
   mkdir -p "$root/globals"
-  mkdir -p "$root/panes/%101/options" "$root/panes/%102/options" "$root/panes/%103/options"
+  mkdir -p "$root/panes/%101/options" "$root/panes/%102/options" "$root/panes/%103/options" "$root/panes/%104/options" "$root/panes/%105/options"
 
   printf '10' >"$root/globals/@panefleet-done-recent-minutes"
   printf '45' >"$root/globals/@panefleet-stale-minutes"
@@ -109,6 +109,67 @@ EOF
   cat >"$root/panes/%103/capture" <<'EOF'
 prompt
 EOF
+
+  cat >"$root/panes/%104/meta" <<EOF
+pane_id='%104'
+session_name='workspace'
+window_index='4'
+window_name='opencode'
+pane_index='0'
+pane_current_command='opencode'
+pane_title='OC | Active'
+pane_current_path='/tmp/workspace'
+pane_dead='0'
+pane_dead_status=''
+window_activity='${now}'
+history_size='1'
+cursor_x='5'
+cursor_y='35'
+client_termfeatures='rgb'
+EOF
+  cat >"$root/panes/%104/capture" <<'EOF'
+┃  Thinking: Setting up a script path
+┃
+┃  # Creates tmp directory in workspace
+┃
+┃  $ mkdir -p "/tmp/workspace"
+
+   ~ Preparing patch...
+   ▣  Build · gpt-5.4 · interrupted
+
+┃  Build  model-x provider-y · high
+╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                                OpenCode active
+EOF
+  printf 'stable:1:5:35:opencode:OC | Active:0:' >"$root/panes/%104/options/@panefleet_auto_signature"
+  printf 'DONE' >"$root/panes/%104/options/@panefleet_auto_raw_status"
+  printf 'opencode' >"$root/panes/%104/options/@panefleet_auto_tool"
+
+  cat >"$root/panes/%105/meta" <<EOF
+pane_id='%105'
+session_name='workspace'
+window_index='5'
+window_name='claude code'
+pane_index='0'
+pane_current_command='2.1.76'
+pane_title='✳ Claude Code'
+pane_current_path='/tmp/workspace'
+pane_dead='0'
+pane_dead_status=''
+window_activity='${now}'
+history_size='50'
+cursor_x='0'
+cursor_y='39'
+client_termfeatures='rgb'
+EOF
+  cat >"$root/panes/%105/capture" <<'EOF'
+Some transcript above
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+  ➜  workspace                                                    31413 tokens
+                                                      current: 2.1.76 · latest: 2.1.76
+EOF
 }
 
 run_list() {
@@ -136,22 +197,77 @@ test_sourced_helpers() {
   assert_eq "$got" "DONE" "effective_status_values keeps recent DONE"
   pass "effective_status_values keeps recent done"
 
+  got="$(effective_status_values DONE "$(date +%s)" "$(( $(date +%s) - 3600 ))" "" 10 45 "$(date +%s)")"
+  assert_eq "$got" "DONE" "effective_status_values refreshes done when recent activity is newer"
+  pass "effective_status_values refreshes done from newer activity"
+
   resolve_uncached_state_values "%102" "opencode" "opencode" "OC | Greeting" 0 "" "$(date +%s)" $'Ask anything...\nctrl+p commands\ntab agents' "" "" "" "" "" "" 10 45 600 "$(date +%s)"
   assert_eq "$PANEFLEET_RESOLVED_STATUS" "DONE" "resolve_uncached_state_values infers opencode done"
   pass "resolve_uncached_state_values infers opencode done"
+
+  got="$(adapter_status "%104" "opencode" "opencode" 0 "" $'Old transcript above\nThinking: earlier step\nfiller\nfiller\nfiller\nfiller\nBuild model-x provider-y · high\n╹▀▀▀▀▀▀\nctrl+t variants\ntab agents\nctrl+p commands\nOpenCode 1.2.26')"
+  assert_eq "$got" "DONE" "adapter_status keeps opencode done when only ready footer remains in focus"
+  pass "adapter_status keeps opencode done when only ready footer remains in focus"
+
+  got="$(adapter_status "%101" "codex" "codex-aarch64-a" 0 "" $'/models\nSelect model\nEnter to confirm · Esc to cancel')"
+  assert_eq "$got" "WAIT" "adapter_status infers codex wait from chooser text"
+  pass "adapter_status infers codex wait from chooser text"
+
+  # shellcheck disable=SC2329
+  codex_process_is_working() { return 0; }
+  got="$(adapter_status "%101" "codex" "codex-aarch64-a" 0 "" $'No chooser\nNo prompt yet')"
+  assert_eq "$got" "RUN" "adapter_status infers codex run from process tree"
+  pass "adapter_status infers codex run from process tree"
+  unset -f codex_process_is_working
+
+  got="$(effective_status_values WAIT "$(date +%s)" "" "" 10 45 "$(date +%s)")"
+  assert_eq "$got" "WAIT" "effective_status_values keeps wait visible"
+  pass "effective_status_values keeps wait visible"
+
+  got="$(adapter_status "%105" "claude" "2.1.76" 0 "" $'Some transcript\n❯\u00a0\ncurrent: 2.1.76 · latest: 2.1.76')"
+  assert_eq "$got" "DONE" "adapter_status infers claude done from prompt"
+  pass "adapter_status infers claude done from prompt"
+
+  got="$(adapter_status "%105" "claude" "2.1.76" 0 "" $'❯ sleep 20s\n\n⏺ Bash(sleep 20)\n  ⎿  (No output)')"
+  assert_eq "$got" "RUN" "adapter_status does not confuse a typed claude command with a done prompt"
+  pass "adapter_status does not confuse a typed claude command with a done prompt"
+
+  got="$(adapter_status "%105" "claude" "2.1.76" 0 "" $'Some transcript without prompt or tool activity')"
+  assert_eq "$got" "IDLE" "adapter_status keeps claude idle when no clear signal exists"
+  pass "adapter_status keeps claude idle when no clear signal exists"
+
+  got="$(adapter_status "%105" "claude" "2.1.76" 0 "" $'Older transcript above\n\n⏺ Je vais créer le fichier maintenant.')"
+  assert_eq "$got" "RUN" "adapter_status infers claude run from active assistant marker in the focus region"
+  pass "adapter_status infers claude run from active assistant marker in the focus region"
+
+  resolve_uncached_state_values "%105" "claude" "2.1.76" "✳ Claude Code" 0 "" "$(date +%s)" $'Some transcript above\n❯\n' "" "RUN" "claude" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "claude-hook"
+  assert_eq "$PANEFLEET_RESOLVED_STATUS" "DONE" "resolve_uncached_state_values lets a bare claude prompt override a fresh adapter run"
+  assert_eq "$PANEFLEET_RESOLVED_SOURCE" "heuristic-live" "resolve_uncached_state_values reports heuristic-live when claude prompt overrides adapter run"
+  pass "resolve_uncached_state_values lets claude prompt override fresh adapter run"
+
+  resolve_uncached_state_values "%105" "claude" "2.1.76" "✳ Claude Code" 0 "" "$(date +%s)" $'Permissions: Allow Ask Deny\n❯ 1. Add a new rule…\nPress ↑↓ to navigate · Enter to select · Type to search · Esc to cancel' "" "RUN" "claude" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "claude-hook"
+  assert_eq "$PANEFLEET_RESOLVED_STATUS" "WAIT" "resolve_uncached_state_values lets a visible claude chooser override a fresh adapter run"
+  assert_eq "$PANEFLEET_RESOLVED_SOURCE" "heuristic-live" "resolve_uncached_state_values reports heuristic-live when claude chooser overrides adapter run"
+  pass "resolve_uncached_state_values lets claude chooser override fresh adapter run"
+
+  got="$(adapter_status "%104" "opencode" "opencode" 0 "" $'┃  Thinking: Setting up a script path\n   ~ Preparing patch...\n   ▣  Build · model-x · interrupted\nctrl+t variants')"
+  assert_eq "$got" "RUN" "adapter_status infers opencode run from active transcript"
+  pass "adapter_status infers opencode run from active transcript"
 }
 
 test_fake_tmux_cli() {
-  local output line101 line102 line103 inspect_output doctor_output
+  local output line101 line102 line103 line104 inspect_output doctor_output
 
   output="$(run_list)"
   line101="$(printf '%s\n' "$output" | rg '^%101')"
   line102="$(printf '%s\n' "$output" | rg '^%102')"
   line103="$(printf '%s\n' "$output" | rg '^%103')"
+  line104="$(printf '%s\n' "$output" | rg '^%104')"
 
   [[ "$line101" == *"WAIT"* ]] || fail "codex pane should be WAIT"
   [[ "$line102" == *"DONE"* ]] || fail "opencode pane should be DONE"
   [[ "$line103" == *"IDLE"* ]] || fail "shell pane should be IDLE"
+  [[ "$line104" == *"RUN"* ]] || fail "recent active opencode pane should bypass stale DONE cache"
   pass "fake tmux list shows expected baseline statuses"
 
   TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-set --pane %103 --status ERROR --tool shell --source test --updated-at "$(date +%s)" >/dev/null

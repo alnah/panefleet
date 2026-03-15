@@ -15,7 +15,7 @@ Current implementation is tmux-first, with adapter ingestion available:
 - popup workboard driven by `fzf`
 - jump directly to a pane
 - adapter-driven pane state via `bin/panefleet state-set`
-- automatic pane states: `RUN`, `WAIT`, `DONE`, `ERROR`, `IDLE`
+- automatic pane states: `RUN`, `WAIT`, `DONE`, `ERROR`, `IDLE`, `STALE`
 - aging states: recent `DONE` expires into `IDLE`, then `STALE`
 - conservative fallback when no adapter state exists
 

@@ -72,20 +72,27 @@ func runClaudeHook(ctx context.Context, args []string) error {
 	if event == "" {
 		event = stringValue(payload["event"])
 	}
-	lowerBlob := strings.ToLower(string(raw))
 
-	switch {
-	case containsString([]string{"PreToolUse", "PostToolUse", "UserPromptSubmit", "SessionStart"}, event):
-		return applyMappedState(ctx, pane, "claude", "claude-hook", eventID, statusRun, "hook lifecycle event")
-	case containsString([]string{"Stop", "SubagentStop", "SessionEnd", "PreCompact"}, event):
-		return applyMappedState(ctx, pane, "claude", "claude-hook", eventID, statusDone, "hook completion event")
-	case event == "Notification":
-		return applyMappedState(ctx, pane, "claude", "claude-hook", eventID, statusWait, "notification event")
-	case containsAny(lowerBlob, "error", "failed"):
-		return applyMappedState(ctx, pane, "claude", "claude-hook", eventID, statusError, "payload contains failure marker")
-	default:
+	state, reason := mapClaudeHookEvent(event, strings.ToLower(string(raw)))
+	if state == "" {
 		logDecision("claude-hook", pane, eventID, "ignored", "", "unmapped hook event", "")
 		return nil
+	}
+	return applyMappedState(ctx, pane, "claude", "claude-hook", eventID, state, reason)
+}
+
+func mapClaudeHookEvent(event, lowerBlob string) (string, string) {
+	switch {
+	case containsString([]string{"PreToolUse", "PostToolUse", "UserPromptSubmit", "SessionStart"}, event):
+		return statusRun, "hook lifecycle event"
+	case event == "PermissionRequest" || event == "Notification":
+		return statusWait, "hook input request event"
+	case containsString([]string{"Stop", "SubagentStop", "SessionEnd", "PreCompact"}, event):
+		return statusDone, "hook completion event"
+	case containsAny(lowerBlob, "error", "failed"):
+		return statusError, "payload contains failure marker"
+	default:
+		return "", ""
 	}
 }
 

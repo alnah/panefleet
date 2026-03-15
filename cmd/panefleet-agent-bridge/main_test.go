@@ -89,6 +89,65 @@ func TestMapCodexStatus(t *testing.T) {
 	}
 }
 
+func TestMapClaudeHookEvent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		event     string
+		lowerBlob string
+		wantState string
+	}{
+		{
+			name:      "user prompt submit is run",
+			event:     "UserPromptSubmit",
+			lowerBlob: "{}",
+			wantState: statusRun,
+		},
+		{
+			name:      "permission request is wait",
+			event:     "PermissionRequest",
+			lowerBlob: "{}",
+			wantState: statusWait,
+		},
+		{
+			name:      "notification is wait",
+			event:     "Notification",
+			lowerBlob: "{}",
+			wantState: statusWait,
+		},
+		{
+			name:      "stop is done",
+			event:     "Stop",
+			lowerBlob: "{}",
+			wantState: statusDone,
+		},
+		{
+			name:      "error blob is error",
+			event:     "Other",
+			lowerBlob: `{"error":"boom"}`,
+			wantState: statusError,
+		},
+		{
+			name:      "unknown event is ignored",
+			event:     "Other",
+			lowerBlob: "{}",
+			wantState: "",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, _ := mapClaudeHookEvent(tc.event, tc.lowerBlob)
+			if got != tc.wantState {
+				t.Fatalf("mapClaudeHookEvent() = %q, want %q", got, tc.wantState)
+			}
+		})
+	}
+}
+
 func TestMapOpenCodeEvent(t *testing.T) {
 	t.Parallel()
 
