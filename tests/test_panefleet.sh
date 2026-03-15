@@ -5,6 +5,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PANEFLEET_BIN="${REPO_ROOT}/bin/panefleet"
 FAKE_TMUX_BIN="${REPO_ROOT}/tests/fake-tmux"
+FAKE_FZF_BIN="${REPO_ROOT}/tests/fake-fzf"
 TEST_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/panefleet-tests.XXXXXX")"
 trap 'rm -rf "${TEST_TMPDIR}"' EXIT
 
@@ -351,10 +352,10 @@ test_setup_command() {
   fi
   [[ "$(cat "$stderr_file")" == *"usage: ${PANEFLEET_BIN} setup core|codex|claude|opencode|all"* ]] || fail "setup should print explicit target usage"
 
-  output="$(PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" setup core)"
+  output="$(TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" setup core)"
   [[ "$output" == *'Load core in tmux with: tmux source-file "'* ]] || fail "setup core outside tmux should print the tmux load hint"
 
-  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" setup opencode >/dev/null
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" setup opencode >/dev/null
   [[ -x "$out_bin" ]] || fail "setup opencode should ensure the bridge binary"
   [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "setup opencode should install the opencode plugin file"
   pass "setup provides explicit core and integration entrypoints"

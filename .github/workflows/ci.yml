@@ -18,8 +18,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: install runtime and lint dependencies
+        run: sudo apt-get update && sudo apt-get install -y shellcheck ripgrep tmux fzf
 
       - name: run test suite
         run: ./scripts/test.sh
