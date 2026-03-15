@@ -53,10 +53,10 @@ preflight:
 	$(PANEFLEET_BIN) preflight
 
 bridge:
-	PANEFLEET_BRIDGE_INSTALL_MODE=build ./scripts/install-bridge.sh
+	PANEFLEET_BRIDGE_INSTALL_MODE=force-build ./scripts/install-bridge.sh
 
 bridge-download:
-	PANEFLEET_BRIDGE_INSTALL_MODE=download ./scripts/install-bridge.sh
+	PANEFLEET_BRIDGE_INSTALL_MODE=force-download ./scripts/install-bridge.sh
 
 release-check:
 	goreleaser release --snapshot --clean

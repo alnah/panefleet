@@ -210,6 +210,7 @@ run_install_target_in_fake_tmux() {
   local plugin_dir="$3"
   local codex_config="$4"
   local claude_settings="$5"
+  local bridge_mode="${6:-build}"
 
   TMUX=1 \
   TMUX_BIN="${FAKE_TMUX_BIN}" \
@@ -219,7 +220,7 @@ run_install_target_in_fake_tmux() {
   PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" \
   PANEFLEET_CODEX_CONFIG="$codex_config" \
   PANEFLEET_CLAUDE_SETTINGS="$claude_settings" \
-  PANEFLEET_BRIDGE_INSTALL_MODE=build \
+  PANEFLEET_BRIDGE_INSTALL_MODE="$bridge_mode" \
   "${PANEFLEET_BIN}" install "$target"
 }
 
@@ -577,11 +578,12 @@ test_runtime_install_contract() {
   [[ "$output" == *"Bridge: built locally with Go"* ]] || fail "install all should report local bridge build on first run"
   [[ "$output" == *"Adapter mode: auto"* ]] || fail "install all should enable adapter mode"
 
-  output="$(run_install_target_in_fake_tmux all "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
+  output="$(run_install_target_in_fake_tmux all "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings" auto)"
   [[ "$output" == *"Integrations installed: codex, claude, opencode"* ]] || fail "install all second run should still report all integrations"
-  if [[ "$output" != *"Bridge: installed"* && "$output" != *"Bridge: built locally with Go"* ]]; then
-    fail "install all second run should report bridge install status"
-  fi
+  [[ "$output" == *"Bridge: already installed"* ]] || fail "install all second run should report already installed bridge"
+
+  output="$(run_install_target_in_fake_tmux all "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings" force-build)"
+  [[ "$output" == *"Bridge: built locally with Go"* ]] || fail "install all force-build should rebuild the bridge"
   [[ "$(rg -F --count '# >>> panefleet codex notify >>>' "$codex_config")" == "1" ]] || fail "install all should keep a single managed codex block after rerun"
   [[ "$(rg -F --count 'notify = [' "$codex_config")" == "1" ]] || fail "install all should keep one codex notify entry after rerun"
   [[ "$(rg -F --count "$claude_wrapper" "$claude_settings")" == "4" ]] || fail "install all should keep one claude hook command per event after rerun"

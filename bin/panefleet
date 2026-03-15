@@ -190,6 +190,9 @@ ensure_bridge_binary() {
   fi
 
   case "$output" in
+    Bridge\ already\ installed*)
+      PANEFLEET_BRIDGE_INSTALL_RESULT="already-installed"
+      ;;
     Installed\ prebuilt\ bridge*)
       PANEFLEET_BRIDGE_INSTALL_RESULT="downloaded-release"
       ;;
@@ -2978,6 +2981,9 @@ print_installed_targets_message() {
 
 print_bridge_install_message() {
   case "$PANEFLEET_BRIDGE_INSTALL_RESULT" in
+    already-installed)
+      printf 'Bridge: already installed\n'
+      ;;
     downloaded-release)
       printf 'Bridge: downloaded from GitHub Releases\n'
       ;;

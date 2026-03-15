@@ -9,6 +9,10 @@ OUTPUT_BIN="${PANEFLEET_AGENT_BRIDGE_BIN:-$STATE_HOME/panefleet/bin/panefleet-ag
 BRIDGE_REPO="${PANEFLEET_BRIDGE_REPO:-alnah/panefleet}"
 INSTALL_MODE="${PANEFLEET_BRIDGE_INSTALL_MODE:-auto}"
 
+bridge_ready() {
+  [[ -x "$OUTPUT_BIN" ]]
+}
+
 normalize_os() {
   case "$(uname -s)" in
     Darwin) printf 'darwin' ;;
@@ -102,7 +106,7 @@ main() {
   local os arch version
 
   case "$INSTALL_MODE" in
-    auto|build|download)
+    auto|build|download|force-build|force-download)
       ;;
     *)
       printf 'unknown PANEFLEET_BRIDGE_INSTALL_MODE: %s\n' "$INSTALL_MODE" >&2
@@ -110,11 +114,34 @@ main() {
       ;;
   esac
 
+  if bridge_ready; then
+    case "$INSTALL_MODE" in
+      auto|build|download)
+        printf 'Bridge already installed %s\n' "$OUTPUT_BIN"
+        return
+        ;;
+    esac
+  fi
+
   os="$(normalize_os)"
   arch="$(normalize_arch)"
   version="${PANEFLEET_BRIDGE_VERSION:-$(exact_checkout_tag)}"
 
   case "$INSTALL_MODE" in
+    force-build)
+      if ! build_bridge; then
+        printf 'panefleet: Go is required to build the bridge from source.\n' >&2
+        exit 1
+      fi
+      return
+      ;;
+    force-download)
+      if ! download_bridge "$version" "$os" "$arch"; then
+        printf 'panefleet: failed to download a prebuilt bridge for %s/%s.\n' "$os" "$arch" >&2
+        exit 1
+      fi
+      return
+      ;;
     build)
       if ! build_bridge; then
         printf 'panefleet: Go is required to build the bridge from source.\n' >&2
