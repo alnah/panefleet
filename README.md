@@ -247,6 +247,8 @@ Provider heuristics are intentionally narrow:
 
 Panefleet works without any adapter bridge. That remains the default and recommended install path.
 
+All provider integrations reuse the same `panefleet-agent-bridge` binary. Provider-specific setup only adds the matching wrapper or plugin layer on top of that shared bridge.
+
 Install integrations explicitly by provider:
 
 ```bash
@@ -261,11 +263,30 @@ bin/panefleet install-integrations opencode
 bin/panefleet install-integrations all
 ```
 
+What each setup command does:
+
+- `setup codex`
+  - installs the shared bridge
+  - prints ready Codex wrapper paths
+  - does not edit Codex config automatically
+- `setup claude`
+  - installs the shared bridge
+  - prints the ready Claude hook wrapper path
+  - does not edit `~/.claude/settings.json` automatically
+- `setup opencode`
+  - installs the shared bridge
+  - writes the OpenCode plugin file
+  - still requires `bun` and the OpenCode plugin host
+- `setup all`
+  - runs all three provider setups above
+
 `install-integrations` resolves the bridge in this order:
 
-1. exact tagged release asset when the checkout is on a release tag
+1. exact GitHub Release asset for the current checkout tag, when the checkout is on a release tag
 2. local source build when `go` is available
-3. latest matching GitHub Release asset for the current OS/arch
+3. latest matching GitHub Release asset from this repo for the current OS/arch
+
+So, in the normal case, you do not need Go installed just to use provider integrations. A local Go toolchain is only the fallback path when no matching prebuilt bridge can be downloaded.
 
 If the command runs inside tmux, it also switches `@panefleet-adapter-mode` to `auto`.
 
