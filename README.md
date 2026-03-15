@@ -29,11 +29,10 @@ Panefleet has two install layers:
 git clone https://github.com/alnah/panefleet.git ~/workspace/panefleet
 cd ~/workspace/panefleet
 ./scripts/install-deps.sh # optional helper
-bin/panefleet preflight
-tmux source-file "$PWD/panefleet.tmux"
+bin/panefleet setup core
 ```
 
-That loads the plugin directly from the checkout. No symlink and no Go toolchain are required for the core mode.
+Outside tmux, `setup core` runs `preflight` and prints the exact `tmux source-file ...` command to load the plugin from the checkout. Inside tmux, it installs the local bindings directly. No symlink and no Go toolchain are required for the core mode.
 
 ### TPM-style path
 
@@ -46,8 +45,14 @@ tmux source-file ~/.tmux/plugins/panefleet/panefleet.tmux
 ### Local lifecycle commands
 
 ```bash
+bin/panefleet setup core
+bin/panefleet setup codex
+bin/panefleet setup claude
+bin/panefleet setup opencode
+bin/panefleet setup all
+
 bin/panefleet install
-bin/panefleet install-integrations all
+bin/panefleet install-integrations codex|claude|opencode|all
 bin/panefleet reconcile
 bin/panefleet uninstall
 bin/panefleet doctor --install
@@ -100,8 +105,8 @@ bin/panefleet preflight
 ## Quick start
 
 ```bash
-bin/panefleet preflight
-tmux source-file ./panefleet.tmux
+bin/panefleet setup core
+bin/panefleet setup codex # or claude, opencode, all
 bin/panefleet popup
 bin/panefleet doctor --verbose
 ```
@@ -159,6 +164,12 @@ bin/panefleet board
 bin/panefleet list
 bin/panefleet preview %1
 bin/panefleet jump %1
+
+bin/panefleet setup core
+bin/panefleet setup codex
+bin/panefleet setup claude
+bin/panefleet setup opencode
+bin/panefleet setup all
 
 bin/panefleet install
 bin/panefleet install-integrations codex
@@ -239,6 +250,11 @@ Panefleet works without any adapter bridge. That remains the default and recomme
 Install integrations explicitly by provider:
 
 ```bash
+bin/panefleet setup codex
+bin/panefleet setup claude
+bin/panefleet setup opencode
+bin/panefleet setup all
+
 bin/panefleet install-integrations codex
 bin/panefleet install-integrations claude
 bin/panefleet install-integrations opencode
@@ -334,7 +350,7 @@ Common checks:
   - verify `tmux` supports `display-popup`
   - verify `fzf` supports `--header-lines-border`
 - `doctor --install` shows `bridge-missing`
-  - run `bin/panefleet install-integrations codex|claude|opencode|all`
+  - run `bin/panefleet setup codex|claude|opencode|all`
   - if release download is unavailable, install `go` and rerun
 - board does not open
   - reload `panefleet.tmux`
@@ -346,7 +362,7 @@ Common checks:
 - OpenCode integration is not active
   - verify `bun` is installed
   - verify `doctor --install` points to the expected `opencode.plugin`
-  - rerun `bin/panefleet install-integrations opencode`
+  - rerun `bin/panefleet setup opencode`
 
 Reset the plugin bindings and hooks:
 

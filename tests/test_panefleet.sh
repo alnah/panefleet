@@ -317,11 +317,18 @@ test_install_integrations_command() {
   local out_bin
   local mode
   local plugin_dir
+  local stderr_file
 
   out_bin="${TEST_TMPDIR}/bin/panefleet-agent-bridge"
   plugin_dir="${TEST_TMPDIR}/opencode-plugins"
+  stderr_file="${TEST_TMPDIR}/install-integrations.stderr"
   mkdir -p "$(dirname "$out_bin")"
-  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install-integrations >/dev/null
+  if TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install-integrations > /dev/null 2>"$stderr_file"; then
+    fail "install-integrations should require an explicit target"
+  fi
+  [[ "$(cat "$stderr_file")" == *"usage: ${PANEFLEET_BIN} install-integrations codex|claude|opencode|all"* ]] || fail "install-integrations should print explicit target usage"
+
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install-integrations all >/dev/null
   [[ -x "$out_bin" ]] || fail "install-integrations should build the bridge binary"
   [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "install-integrations should install the opencode plugin file"
   mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
@@ -329,7 +336,32 @@ test_install_integrations_command() {
   pass "install-integrations builds the bridge binary"
 }
 
+test_setup_command() {
+  local out_bin
+  local plugin_dir
+  local stderr_file
+  local output
+
+  out_bin="${TEST_TMPDIR}/bin/setup-bridge"
+  plugin_dir="${TEST_TMPDIR}/setup-opencode-plugins"
+  stderr_file="${TEST_TMPDIR}/setup.stderr"
+
+  if "${PANEFLEET_BIN}" setup > /dev/null 2>"$stderr_file"; then
+    fail "setup should require an explicit target"
+  fi
+  [[ "$(cat "$stderr_file")" == *"usage: ${PANEFLEET_BIN} setup core|codex|claude|opencode|all"* ]] || fail "setup should print explicit target usage"
+
+  output="$(PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" setup core)"
+  [[ "$output" == *'Load core in tmux with: tmux source-file "'* ]] || fail "setup core outside tmux should print the tmux load hint"
+
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" setup opencode >/dev/null
+  [[ -x "$out_bin" ]] || fail "setup opencode should ensure the bridge binary"
+  [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "setup opencode should install the opencode plugin file"
+  pass "setup provides explicit core and integration entrypoints"
+}
+
 setup_fake_tmux_fixture "${TEST_TMPDIR}/fake-tmux"
 test_sourced_helpers
 test_fake_tmux_cli
 test_install_integrations_command
+test_setup_command

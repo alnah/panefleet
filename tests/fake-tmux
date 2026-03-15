@@ -22,6 +22,17 @@ global_option_path() {
   printf '%s/globals/%s' "$ROOT" "$name"
 }
 
+binding_path() {
+  local table="$1"
+  local key="$2"
+  printf '%s/bindings/%s/%s' "$ROOT" "$table" "$key"
+}
+
+hook_dir_path() {
+  local hook_name="$1"
+  printf '%s/hooks/%s' "$ROOT" "$hook_name"
+}
+
 read_pane_option() {
   local pane_id="$1"
   local name="$2"
@@ -57,6 +68,145 @@ read_global_option() {
   path="$(global_option_path "$name")"
   if [[ -f "$path" ]]; then
     cat "$path"
+  fi
+}
+
+bind_key() {
+  local table="prefix"
+  local key=""
+  local line="bind-key"
+  local path
+
+  while (( $# > 0 )); do
+    case "$1" in
+      -T)
+        table="$2"
+        line+=" -T $2"
+        shift 2
+        ;;
+      *)
+        if [[ -z "$key" ]]; then
+          key="$1"
+        fi
+        line+=" $1"
+        shift
+        ;;
+    esac
+  done
+
+  path="$(binding_path "$table" "$key")"
+  mkdir -p "$(dirname "$path")"
+  printf '%s\n' "$line" >"$path"
+}
+
+unbind_key() {
+  local table="prefix"
+  local key=""
+
+  while (( $# > 0 )); do
+    case "$1" in
+      -T)
+        table="$2"
+        shift 2
+        ;;
+      -q)
+        shift
+        ;;
+      *)
+        key="$1"
+        shift
+        ;;
+    esac
+  done
+
+  rm -f "$(binding_path "$table" "$key")"
+}
+
+list_keys() {
+  local table="prefix"
+  local path
+
+  while (( $# > 0 )); do
+    case "$1" in
+      -T)
+        table="$2"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+
+  path="${ROOT}/bindings/${table}"
+  if [[ -d "$path" ]]; then
+    find "$path" -mindepth 1 -maxdepth 1 -type f | sort | while read -r binding_file; do
+      cat "$binding_file"
+    done
+  fi
+}
+
+set_hook() {
+  local mode=""
+  local hook_name=""
+  local value=""
+  local hook_dir hook_ref hook_id next_index
+
+  while (( $# > 0 )); do
+    case "$1" in
+      -ag|-gu)
+        mode="$1"
+        shift
+        ;;
+      *)
+        if [[ -z "$hook_name" ]]; then
+          hook_name="$1"
+        else
+          value="$1"
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  case "$mode" in
+    -ag)
+      hook_dir="$(hook_dir_path "$hook_name")"
+      mkdir -p "$hook_dir"
+      next_index="$(find "$hook_dir" -mindepth 1 -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+      printf '%s\n' "$value" >"${hook_dir}/${next_index}"
+      ;;
+    -gu)
+      hook_ref="$hook_name"
+      hook_name="${hook_ref%%[*}"
+      hook_id="${hook_ref#*[}"
+      hook_id="${hook_id%]}"
+      rm -f "$(hook_dir_path "$hook_name")/${hook_id}"
+      ;;
+  esac
+}
+
+show_hooks() {
+  local hook_name=""
+  local hook_dir
+
+  while (( $# > 0 )); do
+    case "$1" in
+      -g)
+        shift
+        ;;
+      *)
+        hook_name="$1"
+        shift
+        ;;
+    esac
+  done
+
+  hook_dir="$(hook_dir_path "$hook_name")"
+  if [[ -d "$hook_dir" ]]; then
+    find "$hook_dir" -mindepth 1 -maxdepth 1 -type f | sort | while read -r hook_file; do
+      printf '%s[%s] %s\n' "$hook_name" "$(basename "$hook_file")" "$(cat "$hook_file")"
+    done
   fi
 }
 
@@ -238,6 +388,26 @@ case "${1:-}" in
   set-option)
     shift
     set_option "$@"
+    ;;
+  bind-key)
+    shift
+    bind_key "$@"
+    ;;
+  unbind-key)
+    shift
+    unbind_key "$@"
+    ;;
+  list-keys)
+    shift
+    list_keys "$@"
+    ;;
+  set-hook)
+    shift
+    set_hook "$@"
+    ;;
+  show-hooks)
+    shift
+    show_hooks "$@"
     ;;
   display-message)
     shift

@@ -164,7 +164,9 @@ resolve_integration_targets() {
 
   PANEFLEET_INSTALL_TARGETS=()
   if (( $# == 0 )); then
-    set -- all
+    printf 'missing integration target\n' >&2
+    printf 'usage: %s install-integrations codex|claude|opencode|all\n' "$SELF" >&2
+    exit 1
   fi
 
   for arg in "$@"; do
@@ -184,6 +186,10 @@ resolve_integration_targets() {
         ;;
     esac
   done
+}
+
+print_core_load_hint() {
+  printf 'Load core in tmux with: tmux source-file "%s/panefleet.tmux"\n' "$(self_root)"
 }
 
 integration_status_codex() {
@@ -2628,6 +2634,48 @@ install_integrations_command() {
   fi
 }
 
+setup_command() {
+  local target="${1:-}"
+
+  if [[ -z "$target" ]]; then
+    printf 'missing setup target\n' >&2
+    printf 'usage: %s setup core|codex|claude|opencode|all\n' "$SELF" >&2
+    exit 1
+  fi
+
+  shift
+  if (( $# > 0 )); then
+    printf 'unexpected extra arguments for setup: %s\n' "$*" >&2
+    printf 'usage: %s setup core|codex|claude|opencode|all\n' "$SELF" >&2
+    exit 1
+  fi
+
+  preflight
+
+  case "$target" in
+    core)
+      if [[ -n "${TMUX:-}" ]]; then
+        install_command
+      else
+        print_core_load_hint
+      fi
+      ;;
+    codex|claude|opencode|all)
+      if [[ -n "${TMUX:-}" ]]; then
+        install_command
+      else
+        print_core_load_hint
+      fi
+      install_integrations_command "$target"
+      ;;
+    *)
+      printf 'unknown setup target: %s\n' "$target" >&2
+      printf 'expected one of: core, codex, claude, opencode, all\n' >&2
+      exit 1
+      ;;
+  esac
+}
+
 open_popup() {
   require_tmux
   require_runtime_support
@@ -3116,6 +3164,10 @@ main() {
     install-integrations)
       shift
       install_integrations_command "$@"
+      ;;
+    setup)
+      shift
+      setup_command "$@"
       ;;
     state-set)
       shift
