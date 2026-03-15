@@ -2,6 +2,12 @@
 
 > tmux workboard plugin for agent panes. Provides a popup board, pane preview, theme picker, and state detection for Codex, Claude Code, OpenCode, and shell panes.
 
+Panefleet started as a way to reduce context switching across tmux windows and sessions while running Codex, Claude Code, and OpenCode in parallel. The agents can produce strong code, but I still need to track the production chain around them: implementation, behavior checks, security, testability, refactors, optimization, and portability across several chat sessions and projects at once.
+
+The useful part is not only faster navigation. It is seeing the worker states in one place: `RUN`, `DONE`, `IDLE`, `STALE`, `WAIT`, and the rest. When several workers are active, it is easy to forget that one pane is waiting for approval, that another one finished, or that a third one has gone stale. Keeping those states visible reduces the cognitive load of orchestrating the work and makes parallel sessions much easier to manage.
+
+If those tools expose better hooks later, or if the bridge distribution becomes simpler, I would rather rely on that. Until then, this repo stays focused on a practical tmux workboard with explicit tradeoffs.
+
 ## Table of contents
 
 - [Installation](#installation)
@@ -316,7 +322,7 @@ Important constraints:
 
 - wrappers do not auto-build the bridge
 - missing bridge errors are explicit
-- the core plugin still works when no integration is installed
+- the core plugin still works when no integration is installed, but heuristic-only status detection is less reliable than bridge-assisted mode
 - OpenCode plugin integration requires its plugin host and `bun`
 - these integrations are optional and do not change the default tmux install
 
