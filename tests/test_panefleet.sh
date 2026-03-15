@@ -358,7 +358,7 @@ test_sourced_helpers() {
 }
 
 test_fake_tmux_cli() {
-  local output line101 line102 line103 line104 inspect_output doctor_output install_doctor_output stale_touch
+  local output line101 line102 line103 line104 inspect_output doctor_output install_doctor_output stale_touch manual_103_path manual_102_path
 
   output="$(run_list)"
   line101="$(printf '%s\n' "$output" | rg '^%101')"
@@ -398,6 +398,38 @@ test_fake_tmux_cli() {
   line103="$(printf '%s\n' "$output" | rg '^%103')"
   [[ "$line103" == *"IDLE"* ]] || fail "state-stale should toggle off the manual stale override"
   pass "state-stale toggles manual stale override"
+
+  manual_103_path="${TEST_TMPDIR}/fake-tmux/panes/%103/options/@panefleet_status"
+  manual_102_path="${TEST_TMPDIR}/fake-tmux/panes/%102/options/@panefleet_status"
+
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-stale --pane %103 >/dev/null
+  output="$(run_list)"
+  line103="$(printf '%s\n' "$output" | rg '^%103')"
+  [[ "$line103" == *"STALE"* ]] || fail "manual stale should apply on shell pane"
+  [[ -f "$manual_103_path" ]] || fail "manual stale should persist pane override before activity resumes"
+
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-set --pane %103 --status RUN --tool shell --source test --updated-at "$(date +%s)" >/dev/null
+  output="$(run_list)"
+  line103="$(printf '%s\n' "$output" | rg '^%103')"
+  [[ "$line103" == *"RUN"* ]] || fail "manual stale should be overridden by RUN"
+  [[ ! -f "$manual_103_path" ]] || fail "manual stale should clear once RUN overrides it"
+  pass "manual stale yields to run"
+
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-stale --pane %102 >/dev/null
+  output="$(run_list)"
+  line102="$(printf '%s\n' "$output" | rg '^%102')"
+  [[ "$line102" == *"STALE"* ]] || fail "manual stale should apply on opencode pane"
+  [[ -f "$manual_102_path" ]] || fail "manual stale should persist pane override before wait resumes"
+
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-set --pane %102 --status WAIT --tool opencode --source test --updated-at "$(date +%s)" >/dev/null
+  output="$(run_list)"
+  line102="$(printf '%s\n' "$output" | rg '^%102')"
+  [[ "$line102" == *"WAIT"* ]] || fail "manual stale should be overridden by WAIT"
+  [[ ! -f "$manual_102_path" ]] || fail "manual stale should clear once WAIT overrides it"
+  pass "manual stale yields to wait"
+
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-clear --pane %103 >/dev/null
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-clear --pane %102 >/dev/null
 
   printf '1' >"${TEST_TMPDIR}/fake-tmux/globals/@panefleet-stale-minutes"
   stale_touch="$(( $(date +%s) - 120 ))"

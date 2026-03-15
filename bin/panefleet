@@ -1478,7 +1478,7 @@ resolve_uncached_state_values() {
   local agent_status_max_age="${17}"
   local now="${18}"
   local agent_source_value="${19:-}"
-  local tool raw_status status
+  local tool raw_status status live_override
 
   PANEFLEET_RESOLVED_SOURCE=""
   PANEFLEET_RESOLVED_REASON=""
@@ -1487,10 +1487,41 @@ resolve_uncached_state_values() {
   status=""
 
   if [[ -n "$local_status" ]]; then
-    raw_status="$local_status"
-    status="$local_status"
-    PANEFLEET_RESOLVED_SOURCE="manual"
-    PANEFLEET_RESOLVED_REASON="manual status override"
+    if [[ "$local_status" == "STALE" ]]; then
+      live_override=""
+      if [[ "${PANEFLEET_ADAPTERS_ENABLED:-1}" == "1" ]] && [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$agent_status_max_age" "$now" && agent_state_matches_live_tool "$tool" "$agent_tool_value"; then
+        live_override="$agent_status_value"
+        if [[ -n "$agent_tool_value" ]]; then
+          tool="$agent_tool_value"
+        fi
+      fi
+
+      if [[ "$live_override" != "RUN" && "$live_override" != "WAIT" ]]; then
+        resolve_live_raw_state_values "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "$capture"
+        tool="$PANEFLEET_RESOLVED_TOOL"
+        live_override="$PANEFLEET_RESOLVED_RAW_STATUS"
+      fi
+
+      if [[ "$live_override" == "RUN" || "$live_override" == "WAIT" ]]; then
+        clear_manual_state "$pane_id"
+        raw_status="$live_override"
+        status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
+        if [[ -z "${PANEFLEET_RESOLVED_SOURCE:-}" ]]; then
+          PANEFLEET_RESOLVED_SOURCE="agent"
+        fi
+        PANEFLEET_RESOLVED_REASON="manual stale override cleared by active ${raw_status}"
+      else
+        raw_status="$local_status"
+        status="$local_status"
+        PANEFLEET_RESOLVED_SOURCE="manual"
+        PANEFLEET_RESOLVED_REASON="manual status override"
+      fi
+    else
+      raw_status="$local_status"
+      status="$local_status"
+      PANEFLEET_RESOLVED_SOURCE="manual"
+      PANEFLEET_RESOLVED_REASON="manual status override"
+    fi
   elif [[ "$dead" == "1" ]]; then
     raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
     status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
