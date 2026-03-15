@@ -8,7 +8,9 @@ BRIDGE_BIN="${PANEFLEET_AGENT_BRIDGE_BIN:-$REPO_ROOT/bin/panefleet-agent-bridge}
 export PANEFLEET_EVENT_LOG_DIR="${PANEFLEET_EVENT_LOG_DIR:-$HOME/.local/state/panefleet/events}"
 
 if [[ ! -x "$BRIDGE_BIN" ]]; then
-  "$SCRIPT_DIR/build-agent-bridge.sh" >/dev/null
+  printf 'panefleet: missing compiled bridge %s\n' "$BRIDGE_BIN" >&2
+  printf 'build it explicitly with %s/build-agent-bridge.sh\n' "$SCRIPT_DIR" >&2
+  exit 1
 fi
 
 exec "$BRIDGE_BIN" codex-notify "$@"

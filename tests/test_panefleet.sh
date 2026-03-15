@@ -256,7 +256,7 @@ test_sourced_helpers() {
 }
 
 test_fake_tmux_cli() {
-  local output line101 line102 line103 line104 inspect_output doctor_output
+  local output line101 line102 line103 line104 inspect_output doctor_output install_doctor_output
 
   output="$(run_list)"
   line101="$(printf '%s\n' "$output" | rg '^%101')"
@@ -270,6 +270,7 @@ test_fake_tmux_cli() {
   [[ "$line104" == *"RUN"* ]] || fail "recent active opencode pane should bypass stale DONE cache"
   pass "fake tmux list shows expected baseline statuses"
 
+  printf 'auto' >"${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode"
   TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-set --pane %103 --status ERROR --tool shell --source test --updated-at "$(date +%s)" >/dev/null
   output="$(run_list)"
   line103="$(printf '%s\n' "$output" | rg '^%103')"
@@ -293,8 +294,27 @@ test_fake_tmux_cli() {
   [[ "$doctor_output" == *"state list"* ]] || fail "doctor --verbose should print state list"
   [[ "$doctor_output" == *"heuristic-"* ]] || fail "doctor --verbose should expose state source"
   pass "doctor --verbose exposes runtime diagnostics"
+
+  install_doctor_output="$(TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" doctor --install)"
+  [[ "$install_doctor_output" == *"self.root"* ]] || fail "doctor --install should print install root"
+  [[ "$install_doctor_output" == *"bridge.present"* ]] || fail "doctor --install should print bridge presence"
+  pass "doctor --install exposes install diagnostics"
+}
+
+test_install_integrations_command() {
+  local out_bin
+  local mode
+
+  out_bin="${TEST_TMPDIR}/bin/panefleet-agent-bridge"
+  mkdir -p "$(dirname "$out_bin")"
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" install-integrations >/dev/null
+  [[ -x "$out_bin" ]] || fail "install-integrations should build the bridge binary"
+  mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
+  [[ "$mode" == "auto" ]] || fail "install-integrations should enable adapter mode in tmux"
+  pass "install-integrations builds the bridge binary"
 }
 
 setup_fake_tmux_fixture "${TEST_TMPDIR}/fake-tmux"
 test_sourced_helpers
 test_fake_tmux_cli
+test_install_integrations_command

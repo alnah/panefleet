@@ -55,4 +55,3 @@ out/
 .local/
 .state/
 docs/nocommit-*
-scripts/__pycache__/

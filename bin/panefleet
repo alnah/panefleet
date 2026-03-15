@@ -35,10 +35,33 @@ PANEFLEET_RESOLVED_STATUS=""
 PANEFLEET_RESOLVED_LAST_DONE=""
 PANEFLEET_RESOLVED_SOURCE=""
 PANEFLEET_RESOLVED_REASON=""
-PANEFLEET_ADAPTERS_ENABLED="${PANEFLEET_ADAPTERS_ENABLED:-1}"
+PANEFLEET_ADAPTERS_ENABLED="${PANEFLEET_ADAPTERS_ENABLED:-0}"
 
 now_epoch() {
   date +%s
+}
+
+self_root() {
+  local self_dir
+
+  self_dir="$(CDPATH='' cd -- "$(dirname -- "$SELF")/.." && pwd)"
+  printf '%s' "$self_dir"
+}
+
+install_script_path() {
+  printf '%s/scripts/install-tmux-bindings.sh' "$(self_root)"
+}
+
+build_bridge_script_path() {
+  printf '%s/scripts/build-agent-bridge.sh' "$(self_root)"
+}
+
+bridge_bin_path() {
+  printf '%s/bin/panefleet-agent-bridge' "$(self_root)"
+}
+
+touch_hook_command_value() {
+  printf 'run-shell -b "%s touch \\"#{pane_id}\\""' "$(self_root)/bin/panefleet"
 }
 
 command_exists() {
@@ -285,10 +308,6 @@ runtime_log_dir() {
   printf '%s' "${PANEFLEET_RUNTIME_LOG_DIR:-}"
 }
 
-runtime_log_enabled() {
-  [[ -n "$(runtime_log_dir)" ]]
-}
-
 logfmt_value() {
   printf '%q' "${1:-}"
 }
@@ -422,10 +441,10 @@ adapters_enabled() {
 
   mode="$(tmux_global_option @panefleet-adapter-mode)"
   case "$mode" in
-    ""|auto|on|enabled)
+    auto|on|enabled)
       return 0
       ;;
-    heuristic-only|heuristic|off|disabled)
+    ""|heuristic-only|heuristic|off|disabled)
       return 1
       ;;
     *)
@@ -723,12 +742,6 @@ opencode_is_done() {
   local capture="$1"
 
   contains_line "$capture" 'Ask anything\.\.\.|ctrl\+p.*commands|tab.*agents'
-}
-
-opencode_focus_capture() {
-  local capture="$1"
-
-  printf '%s\n' "$capture" | tail -n 8
 }
 
 claude_focus_capture() {
@@ -1993,28 +2006,6 @@ pretty_age_into() {
   fi
 }
 
-task_label() {
-  local cmd="$1"
-  local title="$2"
-  local window_name="$3"
-  local repo="$4"
-
-  case "$title" in
-    ""|"$cmd"|zsh|bash|fish|sh|tmux|cdx)
-      if [[ -n "$window_name" && "$window_name" != "$repo" ]]; then
-        printf '%s' "$window_name"
-      elif [[ -n "$repo" ]]; then
-        printf '%s' "$repo"
-      else
-        printf '%s' "$cmd"
-      fi
-      ;;
-    *)
-      printf '%s' "$title"
-      ;;
-  esac
-}
-
 task_label_into() {
   local outvar="$1"
   local cmd="$2"
@@ -2308,24 +2299,6 @@ preview_row() {
   printf '%s\n' "$capture" | render_preview_capture
 }
 
-mark_status() {
-  local pane_id="${1:?pane_id is required}"
-  local status="${2:?status is required}"
-
-  case "$status" in
-    RUN|WAIT|DONE|IDLE|ERROR|STALE)
-      set_pane_option "$pane_id" @panefleet_status "$status"
-      ;;
-    CLEAR)
-      unset_pane_option "$pane_id" @panefleet_status
-      ;;
-    *)
-      printf 'unsupported status: %s\n' "$status" >&2
-      exit 1
-      ;;
-  esac
-}
-
 jump_to_pane() {
   local pane_id="${1:?pane_id is required}"
   local target_window="${2:?target_window is required}"
@@ -2391,6 +2364,83 @@ theme_popup_border_style() {
   resolve_theme
   resolve_color_mode
   printf 'fg=%s,bg=%s' "$(tmux_style_color "$THEME_BORDER")" "$(tmux_style_color "$THEME_BG")"
+}
+
+binding_state() {
+  local key="$1"
+  local line
+
+  if [[ -z "${TMUX:-}" ]]; then
+    printf 'outside-tmux'
+    return
+  fi
+
+  line="$("${TMUX_BIN}" list-keys -T prefix 2>/dev/null | awk -v key="$key" '$1 == "bind-key" && $4 == key { print; exit }')"
+  if [[ -n "$line" ]]; then
+    printf '%s' "$line"
+  else
+    printf 'missing'
+  fi
+}
+
+matching_hook_count() {
+  local hook_name="$1"
+  local hook_command="$2"
+  local count
+
+  if [[ -z "${TMUX:-}" ]]; then
+    printf 'n/a'
+    return
+  fi
+
+  count="$("${TMUX_BIN}" show-hooks -g "$hook_name" 2>/dev/null | "${RG_BIN}" -F --count -- "$hook_command" || true)"
+  printf '%s' "${count:-0}"
+}
+
+install_command() {
+  local root
+
+  require_tmux
+  root="$(self_root)"
+  PANEFLEET_ROOT="$root" "$(install_script_path)" install
+}
+
+reconcile_command() {
+  local root
+
+  require_tmux
+  root="$(self_root)"
+  PANEFLEET_ROOT="$root" "$(install_script_path)" reconcile
+}
+
+uninstall_command() {
+  local root
+
+  require_tmux
+  root="$(self_root)"
+  PANEFLEET_ROOT="$root" "$(install_script_path)" uninstall
+}
+
+install_integrations_command() {
+  local root
+  local build_script
+
+  root="$(self_root)"
+  build_script="$(build_bridge_script_path)"
+
+  if [[ ! -x "$build_script" ]]; then
+    printf 'panefleet: missing build script %s\n' "$build_script" >&2
+    exit 1
+  fi
+
+  PANEFLEET_ROOT="$root" "$build_script"
+
+  if [[ -n "${TMUX:-}" ]]; then
+    "${TMUX_BIN}" set-option -gq @panefleet-adapter-mode auto
+    printf 'Enabled adapter mode: auto\n'
+  else
+    printf 'Bridge built. Enable adapters in tmux with: tmux set-option -g @panefleet-adapter-mode auto\n'
+  fi
 }
 
 open_popup() {
@@ -2764,13 +2814,18 @@ print_state_counts_snapshot() {
 
 doctor_command() {
   local verbose="0"
+  local install_view="0"
   local pane_count rows_file
-  local tmux_bin_path fzf_bin_path rg_bin_path
+  local tmux_bin_path fzf_bin_path rg_bin_path root bridge_bin touch_hook adapter_default
 
   while (( $# > 0 )); do
     case "$1" in
       --verbose)
         verbose="1"
+        shift
+        ;;
+      --install)
+        install_view="1"
         shift
         ;;
       *)
@@ -2785,10 +2840,33 @@ doctor_command() {
   resolve_theme
   resolve_color_mode
   list_runtime_defaults
+  root="$(self_root)"
+  bridge_bin="$(bridge_bin_path)"
+  touch_hook="$(touch_hook_command_value)"
 
   tmux_bin_path="$(command -v "${TMUX_BIN}" 2>/dev/null || printf '%s' "${TMUX_BIN}")"
   fzf_bin_path="$(command -v "${FZF_BIN}" 2>/dev/null || printf '%s' "${FZF_BIN}")"
   rg_bin_path="$(command -v "${RG_BIN}" 2>/dev/null || printf '%s' "${RG_BIN}")"
+  if [[ "$install_view" == "1" ]]; then
+    adapter_default="heuristic-only"
+    if adapters_enabled; then
+      adapter_default="auto"
+    fi
+    printf 'self.root        %s\n' "$root"
+    printf 'self.bin         %s\n' "$SELF"
+    printf 'install.script   %s\n' "$(install_script_path)"
+    printf 'bridge.bin       %s\n' "$bridge_bin"
+    printf 'bridge.present   %s\n' "$([[ -x "$bridge_bin" ]] && printf 'yes' || printf 'no')"
+    printf 'adapter.default  %s\n' "$adapter_default"
+    printf 'key.prefix.P     %s\n' "$(binding_state P)"
+    printf 'key.prefix.T     %s\n' "$(binding_state T)"
+    printf 'hook.select-pane %s\n' "$(matching_hook_count after-select-pane "$touch_hook")"
+    printf 'hook.select-win  %s\n' "$(matching_hook_count after-select-window "$touch_hook")"
+    printf 'hook.session     %s\n' "$(matching_hook_count client-session-changed "$touch_hook")"
+    printf 'hook.client      %s\n' "$(matching_hook_count client-active "$touch_hook")"
+    return
+  fi
+
   pane_count="$(pane_records "$(pane_record_format)" | wc -l | tr -d ' ')"
 
   printf 'tmux.bin        %s\n' "$tmux_bin_path"
@@ -2833,14 +2911,21 @@ main() {
       shift
       preview_row "$@"
       ;;
-    mark)
+    install)
       shift
-      mark_status "$@"
+      install_command "$@"
       ;;
-    mark-current)
+    reconcile)
       shift
-      require_tmux
-      mark_status "$("${TMUX_BIN}" display-message -p '#{pane_id}')" "$1"
+      reconcile_command "$@"
+      ;;
+    uninstall)
+      shift
+      uninstall_command "$@"
+      ;;
+    install-integrations)
+      shift
+      install_integrations_command "$@"
       ;;
     state-set)
       shift

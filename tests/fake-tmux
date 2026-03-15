@@ -112,10 +112,14 @@ show_options() {
 }
 
 set_option() {
-  local pane_id="" name="" value="" unset_mode="0"
+  local pane_id="" name="" value="" unset_mode="0" scope="pane"
 
   while (( $# > 0 )); do
     case "$1" in
+      -g|-gq|-gqv)
+        scope="global"
+        shift
+        ;;
       -pt)
         pane_id="$2"
         shift 2
@@ -139,9 +143,18 @@ set_option() {
   done
 
   if [[ "$unset_mode" == "1" ]]; then
-    unset_pane_option_value "$pane_id" "$name"
+    if [[ "$scope" == "global" ]]; then
+      rm -f "$(global_option_path "$name")"
+    else
+      unset_pane_option_value "$pane_id" "$name"
+    fi
   else
-    write_pane_option "$pane_id" "$name" "$value"
+    if [[ "$scope" == "global" ]]; then
+      mkdir -p "$(dirname "$(global_option_path "$name")")"
+      printf '%s' "$value" >"$(global_option_path "$name")"
+    else
+      write_pane_option "$pane_id" "$name" "$value"
+    fi
   fi
 }
 

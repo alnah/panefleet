@@ -1,8 +1,9 @@
 import { Plugin } from "@opencode-ai/plugin"
 
+const defaultBridgePath = new URL("./opencode-event-bridge", import.meta.url).pathname
 const bridgePath =
   process.env.PANEFLEET_OPENCODE_BRIDGE ||
-  `${process.env.HOME}/.tmux/plugins/panefleet/scripts/opencode-event-bridge`
+  defaultBridgePath
 
 export const PanefleetPlugin: Plugin = async () => {
   const pane = process.env.PANEFLEET_PANE || process.env.TMUX_PANE || ""
@@ -17,7 +18,7 @@ export const PanefleetPlugin: Plugin = async () => {
       const proc = Bun.spawn([bridgePath, "--pane", pane], {
         stdin: "pipe",
         stdout: "ignore",
-        stderr: "ignore",
+        stderr: "inherit",
       })
 
       if (proc.stdin) {
