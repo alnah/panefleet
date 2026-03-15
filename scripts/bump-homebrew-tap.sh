@@ -14,7 +14,12 @@ if [[ -z "${RELEASE_TAG}" ]]; then
 fi
 
 if [[ -z "${TAP_TOKEN}" ]]; then
-  printf 'panefleet: HOMEBREW_TAP_TOKEN not set; skipping Homebrew tap bump.\n'
+  if [[ -n "${CI:-}" ]]; then
+    printf 'panefleet: HOMEBREW_TAP_TOKEN is required in CI to bump the Homebrew tap.\n' >&2
+    printf 'panefleet: create/update the Actions secret HOMEBREW_TAP_TOKEN with write access to %s.\n' "$TAP_REPO" >&2
+    exit 1
+  fi
+  printf 'panefleet: HOMEBREW_TAP_TOKEN not set; skipping Homebrew tap bump outside CI.\n'
   exit 0
 fi
 
@@ -29,6 +34,7 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 archive_url="https://github.com/${REPO_SLUG}/archive/refs/tags/${RELEASE_TAG}.tar.gz"
+tap_clone_url="https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/panefleet-homebrew.XXXXXX")"
 archive_path="${tmp_dir}/panefleet.tar.gz"
 tap_dir="${tmp_dir}/tap"
@@ -42,7 +48,16 @@ else
   archive_sha="$(shasum -a 256 "${archive_path}" | awk '{print $1}')"
 fi
 
-git clone "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" "${tap_dir}" >/dev/null 2>&1
+if ! git ls-remote "${tap_clone_url}" >/dev/null 2>&1; then
+  printf 'panefleet: cannot access %s with HOMEBREW_TAP_TOKEN.\n' "$TAP_REPO" >&2
+  printf 'panefleet: ensure token owner has write access to %s and SSO is authorized if required.\n' "$TAP_REPO" >&2
+  exit 1
+fi
+
+if ! git clone "${tap_clone_url}" "${tap_dir}"; then
+  printf 'panefleet: failed to clone %s.\n' "$TAP_REPO" >&2
+  exit 1
+fi
 
 formula_file="${tap_dir}/${FORMULA_PATH}"
 if [[ ! -f "${formula_file}" ]]; then
@@ -69,8 +84,11 @@ end
   git config user.name "${GIT_AUTHOR_NAME:-panefleet-bot}"
   git config user.email "${GIT_AUTHOR_EMAIL:-panefleet-bot@users.noreply.github.com}"
   git add "${FORMULA_PATH}"
-  git commit -m "chore(homebrew): bump panefleet ${RELEASE_TAG}" >/dev/null
-  git push origin HEAD:main >/dev/null
+  git commit -m "chore(homebrew): bump panefleet ${RELEASE_TAG}"
+  if ! git push origin HEAD:main; then
+    printf 'panefleet: failed to push Homebrew formula bump to %s.\n' "$TAP_REPO" >&2
+    exit 1
+  fi
 )
 
 printf 'panefleet: Homebrew tap updated for %s.\n' "${RELEASE_TAG}"
