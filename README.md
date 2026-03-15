@@ -102,7 +102,8 @@ Useful tmux actions:
 - `prefix + P` opens the board
 - `prefix + T` opens the theme picker
 - `enter` jumps to the selected pane
-- `tab` and `shift-tab` page the preview
+- `up` and `down` navigate the list
+- `ctrl-r` reloads the list
 
 ## Features
 
@@ -178,8 +179,7 @@ bin/panefleet theme-apply dracula
 - The list is sorted by state priority and activity recency.
 - The preview shows pane metadata plus the visible tail of the pane.
 - `up` and `down` move in the list.
-- `tab` and `shift-tab` page the preview.
-- `shift-up`, `shift-down`, `shift-home`, and `shift-end` scroll the preview directly.
+- `ctrl-r` reloads the list.
 
 </details>
 
