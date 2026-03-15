@@ -405,47 +405,6 @@ test_fake_tmux_cli() {
   pass "doctor --install exposes install diagnostics"
 }
 
-test_install_integrations_command() {
-  local out_bin
-  local mode
-  local plugin_dir
-  local codex_config
-  local claude_settings
-  local codex_wrapper
-  local claude_wrapper
-  local stderr_file
-  local deprecated_install_integrations
-
-  out_bin="${TEST_TMPDIR}/bin/panefleet-agent-bridge"
-  plugin_dir="${TEST_TMPDIR}/opencode-plugins"
-  codex_config="${TEST_TMPDIR}/codex/config.toml"
-  claude_settings="${TEST_TMPDIR}/claude/settings.json"
-  codex_wrapper="${REPO_ROOT}/scripts/codex-notify-bridge"
-  claude_wrapper="${REPO_ROOT}/scripts/claude-code-hook"
-  stderr_file="${TEST_TMPDIR}/install-integrations.stderr"
-  deprecated_install_integrations="warning: \`install-integrations\` is deprecated; use \`install codex|claude|opencode|all\`"
-  mkdir -p "$(dirname "$out_bin")"
-  if TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install-integrations > /dev/null 2>"$stderr_file"; then
-    fail "install-integrations should require an explicit target"
-  fi
-  [[ "$(cat "$stderr_file")" == *"$deprecated_install_integrations"* ]] || fail "install-integrations should print a deprecation warning"
-  [[ "$(cat "$stderr_file")" == *"usage: ${PANEFLEET_BIN} install-integrations codex|claude|opencode|all"* ]] || fail "install-integrations should print explicit target usage"
-
-  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_CODEX_CONFIG="$codex_config" PANEFLEET_CLAUDE_SETTINGS="$claude_settings" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install-integrations all >/dev/null 2>"$stderr_file"
-  [[ "$(cat "$stderr_file")" == *"$deprecated_install_integrations"* ]] || fail "install-integrations all should print a deprecation warning"
-  [[ -x "$out_bin" ]] || fail "install-integrations should build the bridge binary"
-  [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "install-integrations should install the opencode plugin file"
-  [[ -f "$codex_config" ]] || fail "install-integrations should create the codex config when needed"
-  [[ -f "$claude_settings" ]] || fail "install-integrations should create the claude settings when needed"
-  rg -Fq -- "$codex_wrapper" "$codex_config" || fail "install-integrations should wire codex notify wrapper"
-  rg -Fq -- "$claude_wrapper" "$claude_settings" || fail "install-integrations should wire claude hook wrapper"
-  [[ "$(file_mode_octal "$codex_config")" == "600" ]] || fail "install-integrations should restrict codex config permissions"
-  [[ "$(file_mode_octal "$claude_settings")" == "600" ]] || fail "install-integrations should restrict claude settings permissions"
-  mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
-  [[ "$mode" == "auto" ]] || fail "install-integrations should enable adapter mode in tmux"
-  pass "install-integrations wires provider integrations"
-}
-
 test_wrapper_install_hints() {
   local fake_bin missing_bridge stderr_file fake_panefleet
 
@@ -495,34 +454,6 @@ test_install_command() {
   pass "install provides the public core and provider entrypoints"
 }
 
-test_setup_command() {
-  local out_bin
-  local plugin_dir
-  local stderr_file output_file
-  local deprecated_setup
-  local output
-
-  out_bin="${TEST_TMPDIR}/bin/setup-bridge"
-  plugin_dir="${TEST_TMPDIR}/setup-opencode-plugins"
-  stderr_file="${TEST_TMPDIR}/setup.stderr"
-  output_file="${TEST_TMPDIR}/setup.out"
-  deprecated_setup="warning: \`setup\` is deprecated; use \`install core|codex|claude|opencode|all\`"
-
-  output="$(TMUX='' TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" setup core 2>"$stderr_file")"
-  [[ "$(cat "$stderr_file")" == *"$deprecated_setup"* ]] || fail "setup should print a deprecation warning"
-  [[ "$output" == *'Load core in tmux with: tmux source-file "'* ]] || fail "setup core outside tmux should print the tmux load hint"
-
-  TMUX='' TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" setup >"$output_file" 2>"$stderr_file"
-  [[ "$(cat "$stderr_file")" == *"$deprecated_setup"* ]] || fail "setup default should print a deprecation warning"
-  [[ "$(cat "$output_file")" == *'Load core in tmux with: tmux source-file "'* ]] || fail "setup default should resolve to install core"
-
-  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" setup opencode >/dev/null 2>"$stderr_file"
-  [[ "$(cat "$stderr_file")" == *"$deprecated_setup"* ]] || fail "setup opencode should print a deprecation warning"
-  [[ -x "$out_bin" ]] || fail "setup opencode should ensure the bridge binary"
-  [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "setup opencode should install the opencode plugin file"
-  pass "setup remains a working compatibility alias"
-}
-
 test_cli_surface_contract() {
   local stderr_file
 
@@ -531,6 +462,16 @@ test_cli_surface_contract() {
     fail "reconcile should not be part of the public CLI anymore"
   fi
   [[ "$(cat "$stderr_file")" == *"unknown command: reconcile"* ]] || fail "reconcile should fail as an unknown command"
+
+  if "${PANEFLEET_BIN}" setup >/dev/null 2>"$stderr_file"; then
+    fail "setup should not be part of the public CLI anymore"
+  fi
+  [[ "$(cat "$stderr_file")" == *"unknown command: setup"* ]] || fail "setup should fail as an unknown command"
+
+  if "${PANEFLEET_BIN}" install-integrations >/dev/null 2>"$stderr_file"; then
+    fail "install-integrations should not be part of the public CLI anymore"
+  fi
+  [[ "$(cat "$stderr_file")" == *"unknown command: install-integrations"* ]] || fail "install-integrations should fail as an unknown command"
 
   TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" uninstall >/dev/null
   pass "public CLI surface is install doctor uninstall"
@@ -657,9 +598,7 @@ test_runtime_install_contract() {
 setup_fake_tmux_fixture "${TEST_TMPDIR}/fake-tmux"
 test_sourced_helpers
 test_fake_tmux_cli
-test_install_integrations_command
 test_install_command
-test_setup_command
 test_wrapper_install_hints
 test_cli_surface_contract
 test_runtime_install_contract

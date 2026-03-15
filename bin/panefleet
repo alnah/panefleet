@@ -435,8 +435,8 @@ resolve_integration_targets() {
 
   PANEFLEET_INSTALL_TARGETS=()
   if (( $# == 0 )); then
-    printf 'missing integration target\n' >&2
-    printf 'usage: %s install-integrations codex|claude|opencode|all\n' "$SELF" >&2
+    printf 'missing install target\n' >&2
+    printf 'usage: %s install codex|claude|opencode|all\n' "$SELF" >&2
     exit 1
   fi
 
@@ -451,7 +451,7 @@ resolve_integration_targets() {
         append_unique_target "$arg"
         ;;
       *)
-        printf 'unknown integration target: %s\n' "$arg" >&2
+        printf 'unknown install integration target: %s\n' "$arg" >&2
         printf 'expected one of: codex, claude, opencode, all\n' >&2
         exit 1
         ;;
@@ -2949,41 +2949,34 @@ uninstall_command() {
   PANEFLEET_ROOT="$root" "$(install_script_path)" uninstall
 }
 
-install_integrations_targets() {
-  local target
-  local installed_targets=()
+print_integration_wiring_message() {
+  local target="$1"
 
-  resolve_integration_targets "$@"
-  ensure_bridge_binary
+  case "$target" in
+    codex)
+      printf '  codex config: %s\n' "$(codex_config_path)"
+      ;;
+    claude)
+      printf '  claude settings: %s\n' "$(claude_settings_path)"
+      ;;
+    opencode)
+      printf '  opencode plugin: %s\n' "$(opencode_plugin_path)"
+      if ! command_exists bun; then
+        printf '  warning: bun is missing; OpenCode plugin loading stays unavailable until bun is installed\n'
+      fi
+      ;;
+  esac
+}
 
-  for target in "${PANEFLEET_INSTALL_TARGETS[@]}"; do
-    case "$target" in
-      codex)
-        install_codex_integration
-        installed_targets+=("codex")
-        printf '  codex config: %s\n' "$(codex_config_path)"
-        ;;
-      claude)
-        install_claude_integration
-        installed_targets+=("claude")
-        printf '  claude settings: %s\n' "$(claude_settings_path)"
-        ;;
-      opencode)
-        install_opencode_plugin
-        installed_targets+=("opencode")
-        printf '  opencode plugin: %s\n' "$(opencode_plugin_path)"
-        if ! command_exists bun; then
-          printf '  warning: bun is missing; OpenCode plugin loading stays unavailable until bun is installed\n'
-        fi
-        ;;
-    esac
-  done
-
-  if (( ${#installed_targets[@]} == 1 )); then
-    printf 'Integration installed: %s\n' "${installed_targets[0]}"
+print_installed_targets_message() {
+  if (( ${#PANEFLEET_INSTALL_TARGETS[@]} == 1 )); then
+    printf 'Integration installed: %s\n' "${PANEFLEET_INSTALL_TARGETS[0]}"
   else
-    printf 'Integrations installed: %s\n' "$(join_by_comma_space "${installed_targets[@]}")"
+    printf 'Integrations installed: %s\n' "$(join_by_comma_space "${PANEFLEET_INSTALL_TARGETS[@]}")"
   fi
+}
+
+print_bridge_install_message() {
   case "$PANEFLEET_BRIDGE_INSTALL_RESULT" in
     downloaded-release)
       printf 'Bridge: downloaded from GitHub Releases\n'
@@ -2995,7 +2988,9 @@ install_integrations_targets() {
       printf 'Bridge: installed\n'
       ;;
   esac
+}
 
+set_adapter_mode_auto_with_message() {
   if [[ -n "${TMUX:-}" ]]; then
     "${TMUX_BIN}" set-option -gq @panefleet-adapter-mode auto
     printf 'Adapter mode: auto\n'
@@ -3004,21 +2999,32 @@ install_integrations_targets() {
   fi
 }
 
-print_deprecation_notice() {
-  local old_command="$1"
-  local replacement="$2"
+install_integrations_targets() {
+  local target
 
-  printf "warning: \`%s\` is deprecated; use \`%s\`\n" "$old_command" "$replacement" >&2
-}
+  resolve_integration_targets "$@"
+  ensure_bridge_binary
 
-install_integrations_command() {
-  print_deprecation_notice "install-integrations" "install codex|claude|opencode|all"
-  install_integrations_targets "$@"
-}
+  for target in "${PANEFLEET_INSTALL_TARGETS[@]}"; do
+    case "$target" in
+      codex)
+        install_codex_integration
+        print_integration_wiring_message codex
+        ;;
+      claude)
+        install_claude_integration
+        print_integration_wiring_message claude
+        ;;
+      opencode)
+        install_opencode_plugin
+        print_integration_wiring_message opencode
+        ;;
+    esac
+  done
 
-setup_command() {
-  print_deprecation_notice "setup" "install core|codex|claude|opencode|all"
-  install_command "$@"
+  print_installed_targets_message
+  print_bridge_install_message
+  set_adapter_mode_auto_with_message
 }
 
 open_popup() {
@@ -3503,14 +3509,6 @@ main() {
     uninstall)
       shift
       uninstall_command "$@"
-      ;;
-    install-integrations)
-      shift
-      install_integrations_command "$@"
-      ;;
-    setup)
-      shift
-      setup_command "$@"
       ;;
     state-set)
       shift
