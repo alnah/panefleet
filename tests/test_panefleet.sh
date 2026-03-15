@@ -358,7 +358,7 @@ test_sourced_helpers() {
 }
 
 test_fake_tmux_cli() {
-  local output line101 line102 line103 line104 inspect_output doctor_output install_doctor_output
+  local output line101 line102 line103 line104 inspect_output doctor_output install_doctor_output stale_touch
 
   output="$(run_list)"
   line101="$(printf '%s\n' "$output" | rg '^%101')"
@@ -387,6 +387,27 @@ test_fake_tmux_cli() {
   line103="$(printf '%s\n' "$output" | rg '^%103')"
   [[ "$line103" == *"IDLE"* ]] || fail "state-clear should restore heuristic state"
   pass "state-clear restores heuristic state"
+
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-stale --pane %103 >/dev/null
+  output="$(run_list)"
+  line103="$(printf '%s\n' "$output" | rg '^%103')"
+  [[ "$line103" == *"STALE"* ]] || fail "state-stale should force a manual stale override"
+
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-stale --pane %103 >/dev/null
+  output="$(run_list)"
+  line103="$(printf '%s\n' "$output" | rg '^%103')"
+  [[ "$line103" == *"IDLE"* ]] || fail "state-stale should toggle off the manual stale override"
+  pass "state-stale toggles manual stale override"
+
+  printf '1' >"${TEST_TMPDIR}/fake-tmux/globals/@panefleet-stale-minutes"
+  stale_touch="$(( $(date +%s) - 120 ))"
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${FAKE_TMUX_BIN}" set-option -pt %103 -q @panefleet_last_touch "$stale_touch" >/dev/null
+  output="$(run_list)"
+  line103="$(printf '%s\n' "$output" | rg '^%103')"
+  [[ "$line103" == *"STALE"* ]] || fail "auto stale should still work from stale timing"
+  printf '45' >"${TEST_TMPDIR}/fake-tmux/globals/@panefleet-stale-minutes"
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${FAKE_TMUX_BIN}" set-option -pt %103 -u @panefleet_last_touch >/dev/null
+  pass "auto stale still works"
 
   inspect_output="$(TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-show --pane %101)"
   [[ "$inspect_output" == *"final.status   WAIT"* ]] || fail "state-show should expose final WAIT status"

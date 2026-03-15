@@ -1026,6 +1026,22 @@ set_agent_state() {
     updated_at "$updated_at"
 }
 
+set_manual_state() {
+  local pane_id="$1"
+  local status="$2"
+
+  validate_status_name "$status"
+  set_pane_option "$pane_id" @panefleet_status "$status"
+  runtime_log_event "manual_state_set" pane "$pane_id" status "$status"
+}
+
+clear_manual_state() {
+  local pane_id="$1"
+
+  unset_pane_option "$pane_id" @panefleet_status 2>/dev/null || true
+  runtime_log_event "manual_state_cleared" pane "$pane_id"
+}
+
 clear_agent_state() {
   local pane_id="$1"
 
@@ -2814,14 +2830,15 @@ jump_to_pane() {
 }
 
 board_header_navigation() {
-  local enter_hint list_hint reload_hint sep
+  local enter_hint list_hint stale_hint reload_hint sep
 
   enter_hint="$(paint_fg "[↵]" "$THEME_ACCENT" "1") $(paint_fg "jump" "$THEME_MUTED")"
   list_hint="$(paint_fg "[↑↓]" "$THEME_ACCENT" "1") $(paint_fg "list" "$THEME_MUTED")"
+  stale_hint="$(paint_fg "[ctrl-s]" "$THEME_ACCENT" "1") $(paint_fg "stale" "$THEME_MUTED")"
   reload_hint="$(paint_fg "[ctrl-r]" "$THEME_ACCENT" "1") $(paint_fg "reload" "$THEME_MUTED")"
   sep="$(paint_fg " · " "$THEME_BORDER")"
 
-  printf '%s%s%s%s%s' "$enter_hint" "$sep" "$list_hint" "$sep" "$reload_hint"
+  printf '%s%s%s%s%s%s%s' "$enter_hint" "$sep" "$list_hint" "$sep" "$stale_hint" "$sep" "$reload_hint"
 }
 
 open_board() {
@@ -2848,6 +2865,7 @@ open_board() {
     --preview "${SELF} preview {1}" \
     --preview-window='bottom,55%,border-top,wrap,follow,~9' \
     --bind "enter:execute-silent(${SELF} jump {1} {2})+abort" \
+    --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+reload(${SELF} list)" \
     --bind "ctrl-r:reload(${SELF} list)"
   rc=$?
   set -e
@@ -3231,7 +3249,32 @@ state_clear_command() {
   done
 
   pane_id="$(resolve_target_pane "$pane_id")"
+  clear_manual_state "$pane_id"
   clear_agent_state "$pane_id"
+}
+
+state_stale_command() {
+  local pane_id=""
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --pane)
+        pane_id="${2:-}"
+        shift 2
+        ;;
+      *)
+        printf 'unknown state-stale option: %s\n' "$1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  pane_id="$(resolve_target_pane "$pane_id")"
+  if [[ "$(manual_status "$pane_id")" == "STALE" ]]; then
+    clear_manual_state "$pane_id"
+  else
+    set_manual_state "$pane_id" "STALE"
+  fi
 }
 
 agent_freshness_label() {
@@ -3523,6 +3566,10 @@ main() {
     state-clear)
       shift
       state_clear_command "$@"
+      ;;
+    state-stale)
+      shift
+      state_stale_command "$@"
       ;;
     state-show)
       shift
