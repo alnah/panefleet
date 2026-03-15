@@ -1,31 +1,72 @@
 # panefleet
 
-Experimental repo for a tmux-first agent orchestration/workboard plugin.
+> tmux workboard plugin for agent panes. Provides a popup board, pane preview, theme picker, and heuristics-first state detection for Codex, Claude Code, OpenCode, and shell panes.
 
-## Scope
+## Table of contents
 
-- tmux workboard UX
-- agent state adapters
-- Claude Code, Codex, and OpenCode integration
+- [Installation](#installation)
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Features](#features)
+- [Configuration](#configuration)
+- [CLI reference](#cli-reference)
+- [Status model](#status-model)
+- [Optional integrations](#optional-integrations)
+- [Observability](#observability)
+- [Troubleshooting](#troubleshooting)
+- [Testing](#testing)
 
-## Current state
+## Installation
 
-Current implementation is tmux-first, with adapter ingestion available:
+### Source checkout
 
-- popup workboard driven by `fzf`
-- jump directly to a pane
-- adapter-driven pane state via `bin/panefleet state-set`
-- automatic pane states: `RUN`, `WAIT`, `DONE`, `ERROR`, `IDLE`, `STALE`
-- aging states: recent `DONE` expires into `IDLE`, then `STALE`
-- conservative fallback when no adapter state exists
+```bash
+git clone https://github.com/alnah/panefleet.git ~/workspace/panefleet
+cd ~/workspace/panefleet
+./scripts/install-deps-homebrew.sh
+tmux source-file "$PWD/panefleet.tmux"
+```
 
-Included integration surfaces:
+That loads the plugin directly from the checkout. No symlink is required.
 
-- Compiled adapter bridge: [panefleet-agent-bridge](/Users/alexis/workspace/panefleet/cmd/panefleet-agent-bridge/main.go)
-- Claude Code hook wrapper: [claude-code-hook](/Users/alexis/workspace/panefleet/scripts/claude-code-hook)
-- Codex app-server wrapper: [codex-app-server-bridge](/Users/alexis/workspace/panefleet/scripts/codex-app-server-bridge)
-- OpenCode event wrapper: [opencode-event-bridge](/Users/alexis/workspace/panefleet/scripts/opencode-event-bridge)
-- OpenCode plugin shim: [opencode-panefleet.ts](/Users/alexis/workspace/panefleet/scripts/opencode-panefleet.ts)
+### TPM-style path
+
+```bash
+mkdir -p ~/.tmux/plugins
+ln -sfn "$PWD" ~/.tmux/plugins/panefleet
+tmux source-file ~/.tmux/plugins/panefleet/panefleet.tmux
+```
+
+### Local lifecycle commands
+
+```bash
+bin/panefleet install
+bin/panefleet install-integrations
+bin/panefleet reconcile
+bin/panefleet uninstall
+bin/panefleet doctor --install
+```
+
+`install` and `reconcile` bind:
+
+- `prefix + P` for the board
+- `prefix + T` for the theme picker
+
+<details>
+<summary>Optional build dependency</summary>
+
+The heuristics-first core does not require Go.
+
+Build the optional adapter bridge only if you want adapter integrations:
+
+```bash
+./scripts/install-deps-homebrew.sh --with-go
+bin/panefleet install-integrations
+```
+
+Inside tmux, `install-integrations` also switches `@panefleet-adapter-mode` to `auto`.
+
+</details>
 
 ## Requirements
 
@@ -36,130 +77,201 @@ Core runtime:
 - `ripgrep`
 - `bash`
 
-Source build:
+Optional runtime:
 
-- `go`
+- `go` to build `bin/panefleet-agent-bridge` from source
+- `bun` and the OpenCode plugin host only for the OpenCode plugin integration
 
-Adapter runtime:
-
-- no Python runtime dependency
-- OpenCode plugin integration runs inside the OpenCode plugin host
-
-Check your runtime with:
+Check the local runtime with:
 
 ```bash
 bin/panefleet preflight
 ```
 
-Run the current non-regression suite with:
+## Quick start
 
 ```bash
-./scripts/test.sh
+bin/panefleet preflight
+tmux source-file ./panefleet.tmux
+bin/panefleet popup
+bin/panefleet doctor --verbose
 ```
 
-## Install
+Useful tmux actions:
 
-### Local development
-
-On macOS with Homebrew:
-
-```bash
-./scripts/install-deps-homebrew.sh
-```
-
-Build the compiled adapter bridge:
-
-```bash
-./scripts/build-agent-bridge.sh
-```
-
-Link the repo into the standard tmux plugin path:
-
-```bash
-mkdir -p ~/.tmux/plugins
-ln -sfn "$PWD" ~/.tmux/plugins/panefleet
-```
-
-Then source the plugin in a running tmux session:
-
-```bash
-~/.tmux/plugins/panefleet/scripts/dev-source.sh
-```
-
-Default binding:
-
-- `prefix + P` opens the panefleet workboard
+- `prefix + P` opens the board
 - `prefix + T` opens the theme picker
+- `enter` jumps to the selected pane
+- `tab` and `shift-tab` page the preview
 
-### TPM-style plugin path
+## Features
 
-The repo exposes a standard `panefleet.tmux` entrypoint at the repo root.
+- Popup board built on `tmux` and `fzf`
+- Heuristics-first pane states for Codex, Claude Code, OpenCode, and shell panes
+- Pane jump, preview, theme preview, and theme apply commands
+- Install, reconcile, uninstall, and install diagnostics commands
+- State inspection with `state-show`, `state-list`, and `doctor --verbose`
+- Theme palettes with truecolor, 256-color, and ANSI fallback
+- Optional adapter bridge kept outside the default install path
 
-## CLI
+## Configuration
 
-The main binary is:
+Panefleet uses tmux global options.
+
+```tmux
+set -g @panefleet-theme panefleet-dark
+set -g @panefleet-done-recent-minutes 10
+set -g @panefleet-stale-minutes 45
+set -g @panefleet-agent-status-max-age-seconds 600
+set -g @panefleet-adapter-mode heuristic-only
+```
+
+Supported options:
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `@panefleet-theme` | `panefleet-dark` | Active board theme |
+| `@panefleet-done-recent-minutes` | `10` | How long `DONE` stays visible before aging into `IDLE` |
+| `@panefleet-stale-minutes` | `45` | When `IDLE` ages into `STALE` |
+| `@panefleet-agent-status-max-age-seconds` | `600` | Freshness window for adapter-provided states |
+| `@panefleet-adapter-mode` | `heuristic-only` | `heuristic-only` or `auto` |
+
+Color portability:
+
+- automatic fallback: truecolor -> 256 colors -> ANSI
+- optional override: `PANEFLEET_COLOR_MODE=truecolor|256|ansi`
+
+## CLI reference
 
 ```bash
-bin/panefleet
+bin/panefleet popup
+bin/panefleet board
+bin/panefleet list
+bin/panefleet preview %1
+bin/panefleet jump %1
+
+bin/panefleet install
+bin/panefleet install-integrations
+bin/panefleet reconcile
+bin/panefleet uninstall
+
+bin/panefleet preflight
+bin/panefleet doctor --install
+bin/panefleet doctor --verbose
+
+bin/panefleet state-show --pane %1
+bin/panefleet inspect --pane %1
+bin/panefleet state-list
+bin/panefleet state-set --pane %1 --status RUN --tool codex --source test
+bin/panefleet state-clear --pane %1
+
+bin/panefleet themes
+bin/panefleet theme-select
+bin/panefleet theme-popup
+bin/panefleet theme-preview dracula
+bin/panefleet theme-apply dracula
 ```
+
+<details>
+<summary>Board and preview behavior</summary>
+
+- The list is sorted by state priority and activity recency.
+- The preview shows pane metadata plus the visible tail of the pane.
+- `up` and `down` move in the list.
+- `tab` and `shift-tab` page the preview.
+- `shift-up`, `shift-down`, `shift-home`, and `shift-end` scroll the preview directly.
+
+</details>
+
+## Status model
+
+Panefleet displays these states:
+
+| State | Meaning |
+| --- | --- |
+| `RUN` | Active work in progress |
+| `WAIT` | Clear chooser or approval prompt |
+| `DONE` | Work appears finished and the pane is back at a ready prompt |
+| `IDLE` | No strong sign of active work |
+| `STALE` | Left open beyond the configured stale threshold |
+| `ERROR` | Dead pane with a non-zero exit status |
+
+Status resolution order:
+
+1. Manual override
+2. Fresh adapter state when `@panefleet-adapter-mode=auto`
+3. Provider heuristics
+4. Generic shell and dead-process fallback
+
+Provider heuristics are intentionally narrow:
+
+- `Codex`
+  - `WAIT` from visible choosers and approval prompts
+  - `RUN` from process-tree activity and visible work markers
+  - `DONE` from the prompt returning
+- `Claude Code`
+  - `WAIT` from visible chooser or approval prompts
+  - `RUN` from visible active work markers
+  - `DONE` from a ready prompt returning
+- `OpenCode`
+  - `WAIT` from visible chooser or approval prompts
+  - `RUN` from visible activity markers in the active pane area
+  - `DONE` from the ready footer and prompt area
+
+`WAIT` is less reliable than the other states. Expect the most stable results from `RUN`, `DONE`, `IDLE`, and `STALE`.
+
+## Optional integrations
+
+Panefleet works without any adapter bridge. That is the default install path.
+
+Optional integration files in this repo:
+
+- `scripts/claude-code-hook`
+- `scripts/codex-app-server-bridge`
+- `scripts/codex-notify-bridge`
+- `scripts/opencode-event-bridge`
+- `scripts/opencode-panefleet.ts`
+- `bin/panefleet-agent-bridge`
+
+Build the bridge explicitly:
+
+```bash
+bin/panefleet install-integrations
+```
+
+If the command is run inside tmux, it also enables adapter mode for that session.
+
+Important constraints:
+
+- wrappers do not auto-build the bridge
+- missing bridge errors are explicit
+- OpenCode plugin integration requires its plugin host and `bun`
+- these integrations are optional and do not change the default tmux install
+
+## Observability
 
 Useful commands:
 
 ```bash
-bin/panefleet preflight
-bin/panefleet list
-bin/panefleet board
-bin/panefleet popup
-bin/panefleet preview %1
-bin/panefleet state-set --pane %1 --status RUN --tool codex --source test
 bin/panefleet state-show --pane %1
 bin/panefleet inspect --pane %1
 bin/panefleet state-list
 bin/panefleet doctor --verbose
-bin/panefleet state-clear --pane %1
-bin/panefleet-agent-bridge claude-hook
-bin/panefleet-agent-bridge codex-app-server --pane %1
-bin/panefleet-agent-bridge opencode-event --pane %1
-bin/panefleet themes
-bin/panefleet theme-apply dracula
-./scripts/test.sh
-```
-
-## Observability
-
-Useful runtime commands:
-
-```bash
-bin/panefleet state-show --pane %1
-bin/panefleet inspect --pane %1
-bin/panefleet state-list
-bin/panefleet doctor --verbose
+bin/panefleet doctor --install
 ```
 
 What they expose:
 
-- `state-show` / `inspect`
-  - final displayed status
-  - raw underlying status
-  - source of truth used: `manual`, `agent`, `heuristic-live`, `heuristic-cache`, `process`, `default`
-  - resolution reason
-  - agent freshness and timestamps
-  - cache signature and cached heuristic state
-- `state-list`
-  - one line per pane with final state, raw state, source, tool, freshness, and reason
-- `doctor --verbose`
-  - preflight result
-  - resolved runtime binaries and theme/color mode
-  - timing options
-  - state counts
-  - full `state-list`
+- final displayed state, raw state, source, and reason
+- adapter freshness and timestamps
+- cached heuristic signature and live signature
+- install status, bindings, and hook counts
+- state counts across all panes
 
-Optional runtime logs:
+Optional logs:
 
-- `PANEFLEET_RUNTIME_LOG_DIR`
-  - logs pane touch, heuristic refresh scheduling, heuristic cache refresh, and explicit state writes
-- `PANEFLEET_EVENT_LOG_DIR`
-  - bridge JSONL logs with correlated `payload` and `decision` records sharing the same `event_id`
+- `PANEFLEET_RUNTIME_LOG_DIR` for runtime events
+- `PANEFLEET_EVENT_LOG_DIR` for adapter bridge payload and decision logs
 
 Example:
 
@@ -168,281 +280,52 @@ export PANEFLEET_RUNTIME_LOG_DIR=~/.local/state/panefleet/runtime
 export PANEFLEET_EVENT_LOG_DIR=~/.local/state/panefleet/events
 bin/panefleet doctor --verbose
 tail -n +1 ~/.local/state/panefleet/runtime/runtime.log
-tail -n +1 ~/.local/state/panefleet/events/claude-hook.jsonl
 ```
 
-Incident runbook:
+## Troubleshooting
 
-1. Run `bin/panefleet state-show --pane %pane` on the suspicious pane.
-2. Check `final.source` and `final.reason` first.
-3. If `final.source=agent`, compare `agent.status`, `agent.source`, `agent.at`, and `agent.fresh`.
-4. If `final.source=heuristic-*`, inspect `cache.*` and `live.sig`.
-5. Run `bin/panefleet doctor --verbose` to see whether the problem is isolated or systemic.
-6. If bridges are involved, inspect `PANEFLEET_EVENT_LOG_DIR/*.jsonl` for matching `event_id` payload/decision pairs.
-
-## Themes
-
-Panefleet ships with 11 built-in themes:
-
-- `panefleet-dark`
-- `panefleet-light`
-- `dracula`
-- `catppuccin-mocha`
-- `tokyo-night`
-- `gruvbox-dark`
-- `nord`
-- `solarized-dark`
-- `rose-pine`
-- `monokai`
-- `github-dark`
-
-Default:
-
-- `@panefleet-theme = panefleet-dark`
-
-Color portability:
-
-- automatic fallback from truecolor to 256 colors, then ANSI
-- optional override with `PANEFLEET_COLOR_MODE=truecolor|256|ansi`
-
-Theme surfaces:
-
-- popup background and border
-- `fzf` prompt, header, separator, preview, selection, and borders
-- board status colors
-- preview body block rendering
-- diff colors in preview blocks
-
-You can switch themes with:
+Start with:
 
 ```bash
-tmux set-option -g @panefleet-theme panefleet-light
+bin/panefleet preflight
+bin/panefleet doctor --install
+bin/panefleet doctor --verbose
 ```
 
-Or interactively with:
+Common checks:
 
-- `prefix + T`
+- `preflight` fails
+  - verify `tmux`, `fzf`, and `rg` are installed
+  - verify `tmux` supports `display-popup`
+  - verify `fzf` supports `--header-lines-border`
+- board does not open
+  - reload `panefleet.tmux`
+  - run `bin/panefleet doctor --install`
+  - verify `prefix + P` is bound
+- status looks wrong for one pane
+  - run `bin/panefleet state-show --pane %pane`
+  - inspect `final.source` and `final.reason`
+- optional bridge wrapper fails
+  - build `bin/panefleet-agent-bridge` explicitly with `bin/panefleet install-integrations`
 
-## Status model
-
-- `RUN`: active work in progress
-- `WAIT`: blocked or intentionally waiting
-- `DONE`: finished enough to revisit later
-- `IDLE`: shell is alive but no strong sign of active work
-- `STALE`: left open without interaction beyond the configured threshold
-- `ERROR`: pane process exited non-zero
-
-Manual status overrides take precedence over inferred status.
-Manual overrides exist only as a temporary fallback. The intended end state is fully automatic state detection.
-
-Current fallback behavior when no adapter state exists:
-
-- Codex:
-  - recent approval prompt -> `WAIT`
-  - recent strong error text -> `ERROR`
-  - recent working footer/activity hint -> `RUN`
-  - recent input prompt -> `DONE`
-  - otherwise -> `IDLE`
-- Claude Code:
-  - recent approval or chooser prompt -> `WAIT`
-  - recent strong error text -> `ERROR`
-  - recent ready prompt / assistant-ready copy -> `DONE`
-  - otherwise -> `RUN`
-- OpenCode:
-  - recent approval/permission prompt -> `WAIT`
-  - recent strong error text -> `ERROR`
-  - recent build/footer chrome -> `RUN`
-  - recent ready/help prompt -> `DONE`
-  - otherwise -> `IDLE`
-- shell panes -> `IDLE`
-- non-agent live processes -> `RUN`
-- dead pane + zero exit -> `DONE`
-- dead pane + non-zero exit -> `ERROR`
-
-Limitation:
-
-- All provider fallbacks are heuristic and based on recent pane text.
-- Adapter state still wins whenever a fresh provider event exists.
-- `DONE` and `ERROR` inferred from pane text are best effort only and can be wrong if the provider UI changes or if matching text appears in normal output.
-
-State aging:
-
-- `DONE` is only a recent-completion state
-- after `@panefleet-done-recent-minutes`, `DONE` decays to `IDLE`
-- after `@panefleet-stale-minutes` without interaction, `IDLE` decays to `STALE`
-
-Default timing:
-
-- `@panefleet-done-recent-minutes = 10`
-- `@panefleet-stale-minutes = 45`
-
-## Adapter roadmap
-
-The preferred model is agent-aware adapters. Heuristic pane-text fallback exists as a backup for all providers.
-
-### Claude Code
-
-Included bridge:
-
-- [claude-code-hook](/Users/alexis/workspace/panefleet/scripts/claude-code-hook)
-
-Usage shape:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.tmux/plugins/panefleet/scripts/claude-code-hook"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.tmux/plugins/panefleet/scripts/claude-code-hook"
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.tmux/plugins/panefleet/scripts/claude-code-hook"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.tmux/plugins/panefleet/scripts/claude-code-hook"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Important:
-
-- Claude loads hooks from the settings schema above; each event entry uses `matcher + hooks`, with `""` meaning match all.
-- Existing Claude sessions may need a restart before new hooks apply.
-
-Current bridge mapping:
-
-- `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart` -> `RUN`
-- `Notification` -> `WAIT`
-- `Stop`, `SubagentStop`, `SessionEnd`, `PreCompact` -> `DONE`
-- payloads containing explicit failure markers still promote `ERROR`
-
-Smoke test:
+Reset the plugin bindings and hooks:
 
 ```bash
-rm -f ~/.local/state/panefleet/events/claude-hook.jsonl
-claude -p 'Run pwd, then answer with the directory only.'
-tail -n +1 ~/.local/state/panefleet/events/claude-hook.jsonl
+bin/panefleet uninstall
+bin/panefleet install
 ```
 
-Expected events:
+## Testing
 
-- `PreToolUse`
-- `PostToolUse`
-- `Stop`
-
-### Codex
-
-Preferred path:
-
-- [codex-app-server-bridge](/Users/alexis/workspace/panefleet/scripts/codex-app-server-bridge)
-- map `thread/status/changed` notifications into pane-local state
-
-Usage shape:
+Run the full local regression suite with:
 
 ```bash
-<codex app-server notification stream> | ~/.tmux/plugins/panefleet/scripts/codex-app-server-bridge --pane "$TMUX_PANE"
+./scripts/test.sh
 ```
 
-State mapping target:
+That runs:
 
-- thread active -> `RUN`
-- waiting on approval or blocked interaction -> `WAIT`
-- completed turn with no active follow-up -> `DONE`
-- app-server/system failure -> `ERROR`
-- remove manual marking once app-server coverage is sufficient
-
-### OpenCode
-
-Included bridge:
-
-- [opencode-event-bridge](/Users/alexis/workspace/panefleet/scripts/opencode-event-bridge)
-- [opencode-panefleet.ts](/Users/alexis/workspace/panefleet/scripts/opencode-panefleet.ts)
-
-Expected plugin wiring:
-
-- plugin subscribes to session/tool lifecycle events
-- plugin shim forwards event JSON into `opencode-event-bridge --pane "$TMUX_PANE"`
-- `panefleet` stores authoritative pane state from those events
-
-Current bridge mapping:
-
-- `session.idle` -> `DONE`
-- `session.error` -> `ERROR`
-- `session.status` with `busy|running|active` -> `RUN`
-- `tool.execute.before*` -> `RUN`
-- `tool.execute.after*` -> `RUN`, or `ERROR` on explicit failed/error status
-- `permission.asked` -> `WAIT`
-- `permission.replied` -> `RUN` on explicit approval, `ERROR` on explicit denial
-
-## Error detection
-
-`ERROR` should not be guessed from generic inactivity. It should be promoted only from a strong signal.
-
-Strong signals:
-
-- pane process exited non-zero
-- adapter event reports failure, abort, or system error
-- tool lifecycle indicates command/tool execution failure
-
-Weak signals that should not alone become `ERROR`:
-
-- no recent output
-- user stopped looking at the pane
-- shell prompt is visible
-
-Current behavior:
-
-- dead pane + non-zero exit status -> `ERROR`
-- dead pane + zero exit status -> `DONE`
-
-Future adapter behavior:
-
-- Claude Code hook failures can explicitly mark `ERROR`
-- Codex app-server `systemError`-style states should map to `ERROR`
-- OpenCode tool/session failure events should map to `ERROR`
-
-## Target end state
-
-The final product should not depend on manual `RUN`, `WAIT`, `DONE`, or `ERROR` shortcuts for normal operation.
-
-Desired model:
-
-- adapters emit authoritative lifecycle state
-- tmux only renders and navigates
-- manual overrides remain optional emergency controls, not primary workflow
-- conservative liveness fallback remains only when no adapter state is present
+- `go test ./...`
+- `go test -race ./cmd/panefleet-agent-bridge`
+- `shellcheck`
+- the shell regression harness in `tests/test_panefleet.sh`
