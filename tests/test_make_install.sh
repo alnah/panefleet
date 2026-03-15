@@ -100,13 +100,11 @@ missing_out="${TEST_TMPDIR}/install-missing.out"
 missing_err="${TEST_TMPDIR}/install-missing.err"
 : >"$DEPS_LOG"
 : >"$PF_LOG"
-if make_with_stubs "$missing_out" "$missing_err" install; then
-  fail "make install without target should fail"
-fi
-assert_contains "$missing_err" "usage: make install core|codex|claude|opencode|all" "make install without target should print usage"
-[[ ! -s "$DEPS_LOG" ]] || fail "make install without target should not run deps installer"
-[[ ! -s "$PF_LOG" ]] || fail "make install without target should not call panefleet"
-pass "make install rejects missing target"
+make_with_stubs "$missing_out" "$missing_err" install
+[[ ! -s "$missing_err" ]] || fail "make install without target should not write stderr"
+assert_contains "$DEPS_LOG" "deps" "make install without target should run deps installer"
+assert_contains "$PF_LOG" "install core" "make install without target should default to install core"
+pass "make install defaults to core"
 
 bad_out="${TEST_TMPDIR}/install-bad.out"
 bad_err="${TEST_TMPDIR}/install-bad.err"

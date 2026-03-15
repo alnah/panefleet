@@ -19,8 +19,7 @@ help:
 install:
 	@target='$(word 2,$(MAKECMDGOALS))'; \
 	if [ -z "$$target" ]; then \
-	  printf '%s\n' 'usage: make install core|codex|claude|opencode|all' >&2; \
-	  exit 1; \
+	  target='core'; \
 	fi; \
 	case "$$target" in \
 	  core|codex|claude|opencode|all) ;; \

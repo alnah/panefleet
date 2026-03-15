@@ -36,6 +36,8 @@ Canonical command:
 make install <core|codex|claude|opencode|all>
 ```
 
+`make install` without a target defaults to `core`.
+
 From source checkout, run inside `tmux`:
 
 ```bash
