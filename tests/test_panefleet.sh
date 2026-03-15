@@ -295,6 +295,9 @@ test_fake_tmux_cli() {
   [[ "$line102" == *"DONE"* ]] || fail "opencode pane should be DONE"
   [[ "$line103" == *"IDLE"* ]] || fail "shell pane should be IDLE"
   [[ "$line104" == *"RUN"* ]] || fail "recent active opencode pane should bypass stale DONE cache"
+  [[ "$line101" == *"workspace"* ]] || fail "list should expose the session column"
+  [[ "$line101" == *"codex"* ]] || fail "list should expose the window column"
+  [[ "$line101" != *"cdx resume panefleet"* ]] || fail "list should no longer expose the task column"
   pass "fake tmux list shows expected baseline statuses"
 
   printf 'auto' >"${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode"

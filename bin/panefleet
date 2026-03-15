@@ -2396,39 +2396,41 @@ build_list_row() {
   local activity="$6"
   local tool="$7"
   local status="$8"
-  local cmd="$9"
-  local title="${10}"
-  local window_name="${11}"
-  local repo task target_window target_pane short_path age tool_cell target_cell repo_cell colored_status display rank sep
+  local window_name="$9"
+  local repo target_window target_pane short_path age
+  local tool_cell target_cell session_cell window_cell repo_cell colored_status display rank sep
 
   repo="${path##*/}"
   if [[ -z "$repo" ]]; then
     repo="$path"
   fi
-  task_label_into task "$cmd" "$title" "$window_name" "$repo"
   target_window="${session_name}:${window_index}"
-  target_pane="${target_window}.${pane_index}"
+  target_pane="${window_index}.${pane_index}"
   short_path="${path/#$HOME/\~}"
   pretty_age_into age "${activity:-0}" "$PANEFLEET_NOW"
   fit_cell_into tool_cell "$tool" 8
-  fit_cell_into target_cell "$target_pane" 18
+  fit_cell_into target_cell "$target_pane" 8
+  fit_cell_into session_cell "$session_name" 14
+  fit_cell_into window_cell "$window_name" 18
   fit_cell_into repo_cell "$repo" 14
   colored_status="$(colored_status_cell "$status")"
   status_rank_value "$status"
   rank="$REPLY"
   sep="$(separator_cell)"
-  display="$(printf '%b%s%s%s%s%s%s%s%4s%s%s' \
+  display="$(printf '%b%s%s%s%s%s%s%s%s%s%s%s%4s' \
     "$colored_status" \
     "$sep" \
     "$tool_cell" \
     "$sep" \
     "$target_cell" \
     "$sep" \
+    "$session_cell" \
+    "$sep" \
+    "$window_cell" \
+    "$sep" \
     "$repo_cell" \
     "$sep" \
-    "$age" \
-    "$sep" \
-    "$task")"
+    "$age")"
 
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$pane_id" \
@@ -2440,30 +2442,36 @@ build_list_row() {
 }
 
 list_header() {
-  local status_text tool_text target_text repo_text
-  local status_cell tool_cell target_cell repo_cell display sep
+  local status_text tool_text target_text session_text window_text repo_text
+  local status_cell tool_cell target_cell session_cell window_cell repo_cell display sep
 
   fit_cell_into status_text "STATE" 5
   fit_cell_into tool_text "TOOL" 8
-  fit_cell_into target_text "TARGET" 18
+  fit_cell_into target_text "TARGET" 8
+  fit_cell_into session_text "SESSION" 14
+  fit_cell_into window_text "WINDOW" 18
   fit_cell_into repo_text "REPO" 14
   status_cell="$(header_cell "$status_text")"
   tool_cell="$(header_cell "$tool_text")"
   target_cell="$(header_cell "$target_text")"
+  session_cell="$(header_cell "$session_text")"
+  window_cell="$(header_cell "$window_text")"
   repo_cell="$(header_cell "$repo_text")"
   sep="$(separator_cell)"
-  display="$(printf '%s%s%s%s%s%s%s%s%4s%s%s' \
+  display="$(printf '%s%s%s%s%s%s%s%s%s%s%s%s%4s' \
     "$status_cell" \
     "$sep" \
     "$tool_cell" \
     "$sep" \
     "$target_cell" \
     "$sep" \
+    "$session_cell" \
+    "$sep" \
+    "$window_cell" \
+    "$sep" \
     "$repo_cell" \
     "$sep" \
-    "$(header_cell "AGE")" \
-    "$sep" \
-    "$(header_cell "TASK")")"
+    "$(header_cell "AGE")")"
 
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
     "__header__" \
@@ -2492,7 +2500,7 @@ list_rows() {
     resolve_list_row_values "$pane_id" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$signature" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$cached_signature" "$cached_raw_status" "$cached_tool"
     tool="$PANEFLEET_RESOLVED_TOOL"
     status="$PANEFLEET_RESOLVED_STATUS"
-    build_list_row "$pane_id" "$session_name" "$window_index" "$pane_index" "$path" "${activity:-0}" "$tool" "$status" "$cmd" "$title" "$window_name" >>"$rows_file"
+    build_list_row "$pane_id" "$session_name" "$window_index" "$pane_index" "$path" "${activity:-0}" "$tool" "$status" "$window_name" >>"$rows_file"
   done < <(pane_records "$(list_pane_record_format)")
 
   sort -t $'\t' -k3,3n -k4,4nr "$rows_file"
