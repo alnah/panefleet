@@ -2941,14 +2941,6 @@ install_command() {
   esac
 }
 
-reconcile_command() {
-  local root
-
-  require_tmux
-  root="$(self_root)"
-  PANEFLEET_ROOT="$root" "$(install_script_path)" reconcile
-}
-
 uninstall_command() {
   local root
 
@@ -3507,10 +3499,6 @@ main() {
     install)
       shift
       install_command "$@"
-      ;;
-    reconcile)
-      shift
-      reconcile_command "$@"
       ;;
     uninstall)
       shift

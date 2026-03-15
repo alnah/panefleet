@@ -64,7 +64,7 @@ if ! "${PANEFLEET_BIN}" preflight --quiet; then
 fi
 
 case "$ACTION" in
-  install|reconcile)
+  install)
     "${TMUX_BIN}" bind-key -T prefix P run-shell -b "${PANEFLEET_BIN} popup"
     "${TMUX_BIN}" bind-key -T prefix T run-shell -b "${PANEFLEET_BIN} theme-popup"
     ensure_hook after-select-pane "$(touch_hook_command)"

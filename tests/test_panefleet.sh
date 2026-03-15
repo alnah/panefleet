@@ -465,7 +465,20 @@ test_setup_command() {
   [[ "$(cat "$stderr_file")" == *"$deprecated_setup"* ]] || fail "setup opencode should print a deprecation warning"
   [[ -x "$out_bin" ]] || fail "setup opencode should ensure the bridge binary"
   [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "setup opencode should install the opencode plugin file"
-  pass "setup provides explicit core and integration entrypoints"
+  pass "setup remains a working compatibility alias"
+}
+
+test_cli_surface_contract() {
+  local stderr_file
+
+  stderr_file="${TEST_TMPDIR}/cli-surface.stderr"
+  if "${PANEFLEET_BIN}" reconcile >/dev/null 2>"$stderr_file"; then
+    fail "reconcile should not be part of the public CLI anymore"
+  fi
+  [[ "$(cat "$stderr_file")" == *"unknown command: reconcile"* ]] || fail "reconcile should fail as an unknown command"
+
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" uninstall >/dev/null
+  pass "public CLI surface is install doctor uninstall"
 }
 
 setup_fake_tmux_fixture "${TEST_TMPDIR}/fake-tmux"
@@ -475,3 +488,4 @@ test_install_integrations_command
 test_install_command
 test_setup_command
 test_wrapper_install_hints
+test_cli_surface_contract
