@@ -229,6 +229,7 @@ That runs:
 - `go test -race ./cmd/panefleet-agent-bridge`
 - `shellcheck`
 - the shell regression harness in `tests/test_panefleet.sh`
+- the make-install contract harness in `tests/test_make_install.sh`
 
 Maintainer release helpers:
 
@@ -237,3 +238,9 @@ make bridge
 make bridge-download
 make release-check
 ```
+
+Release readiness checklist (maintainers):
+
+1. Run `./scripts/test.sh`.
+2. Run `make release-check`.
+3. Confirm install contract manually in tmux with one target (`make install all`) then `make doctor`.
