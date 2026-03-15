@@ -2331,7 +2331,14 @@ jump_to_pane() {
 }
 
 board_header_navigation() {
-  printf 'enter: jump | ↑/↓: list | ctrl-r: reload'
+  local enter_hint list_hint reload_hint sep
+
+  enter_hint="$(paint_fg "[↵]" "$THEME_ACCENT" "1") $(paint_fg "jump" "$THEME_MUTED")"
+  list_hint="$(paint_fg "[↑↓]" "$THEME_ACCENT" "1") $(paint_fg "list" "$THEME_MUTED")"
+  reload_hint="$(paint_fg "[ctrl-r]" "$THEME_ACCENT" "1") $(paint_fg "reload" "$THEME_MUTED")"
+  sep="$(paint_fg " · " "$THEME_BORDER")"
+
+  printf '%s%s%s%s%s' "$enter_hint" "$sep" "$list_hint" "$sep" "$reload_hint"
 }
 
 open_board() {
@@ -2351,6 +2358,7 @@ open_board() {
     --layout=reverse \
     --height=100% \
     --border=none \
+    --info=inline-right \
     --prompt='panefleet> ' \
     --header="$(board_header_navigation)" \
     --separator='─' \
