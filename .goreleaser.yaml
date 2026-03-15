@@ -1,0 +1,32 @@
+version: 2
+
+project_name: panefleet-agent-bridge
+
+builds:
+  - id: panefleet-agent-bridge
+    main: ./cmd/panefleet-agent-bridge
+    binary: panefleet-agent-bridge
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: panefleet-agent-bridge
+    builds:
+      - panefleet-agent-bridge
+    formats:
+      - tar.gz
+    name_template: "panefleet-agent-bridge_{{ .Os }}_{{ .Arch }}"
+    files: []
+    wrap_in_directory: false
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
