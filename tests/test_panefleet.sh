@@ -359,6 +359,7 @@ test_install_integrations_command() {
   local codex_wrapper
   local claude_wrapper
   local stderr_file
+  local deprecated_install_integrations
 
   out_bin="${TEST_TMPDIR}/bin/panefleet-agent-bridge"
   plugin_dir="${TEST_TMPDIR}/opencode-plugins"
@@ -367,13 +368,16 @@ test_install_integrations_command() {
   codex_wrapper="${REPO_ROOT}/scripts/codex-notify-bridge"
   claude_wrapper="${REPO_ROOT}/scripts/claude-code-hook"
   stderr_file="${TEST_TMPDIR}/install-integrations.stderr"
+  deprecated_install_integrations="warning: \`install-integrations\` is deprecated; use \`install codex|claude|opencode|all\`"
   mkdir -p "$(dirname "$out_bin")"
   if TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install-integrations > /dev/null 2>"$stderr_file"; then
     fail "install-integrations should require an explicit target"
   fi
+  [[ "$(cat "$stderr_file")" == *"$deprecated_install_integrations"* ]] || fail "install-integrations should print a deprecation warning"
   [[ "$(cat "$stderr_file")" == *"usage: ${PANEFLEET_BIN} install-integrations codex|claude|opencode|all"* ]] || fail "install-integrations should print explicit target usage"
 
-  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_CODEX_CONFIG="$codex_config" PANEFLEET_CLAUDE_SETTINGS="$claude_settings" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install-integrations all >/dev/null
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_CODEX_CONFIG="$codex_config" PANEFLEET_CLAUDE_SETTINGS="$claude_settings" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install-integrations all >/dev/null 2>"$stderr_file"
+  [[ "$(cat "$stderr_file")" == *"$deprecated_install_integrations"* ]] || fail "install-integrations all should print a deprecation warning"
   [[ -x "$out_bin" ]] || fail "install-integrations should build the bridge binary"
   [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "install-integrations should install the opencode plugin file"
   [[ -f "$codex_config" ]] || fail "install-integrations should create the codex config when needed"
@@ -439,22 +443,26 @@ test_install_command() {
 test_setup_command() {
   local out_bin
   local plugin_dir
-  local stderr_file
+  local stderr_file output_file
+  local deprecated_setup
   local output
 
   out_bin="${TEST_TMPDIR}/bin/setup-bridge"
   plugin_dir="${TEST_TMPDIR}/setup-opencode-plugins"
   stderr_file="${TEST_TMPDIR}/setup.stderr"
+  output_file="${TEST_TMPDIR}/setup.out"
+  deprecated_setup="warning: \`setup\` is deprecated; use \`install core|codex|claude|opencode|all\`"
 
-  if "${PANEFLEET_BIN}" setup > /dev/null 2>"$stderr_file"; then
-    fail "setup should require an explicit target"
-  fi
-  [[ "$(cat "$stderr_file")" == *"usage: ${PANEFLEET_BIN} setup core|codex|claude|opencode|all"* ]] || fail "setup should print explicit target usage"
-
-  output="$(TMUX='' TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" setup core)"
+  output="$(TMUX='' TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" setup core 2>"$stderr_file")"
+  [[ "$(cat "$stderr_file")" == *"$deprecated_setup"* ]] || fail "setup should print a deprecation warning"
   [[ "$output" == *'Load core in tmux with: tmux source-file "'* ]] || fail "setup core outside tmux should print the tmux load hint"
 
-  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" setup opencode >/dev/null
+  TMUX='' TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" setup >"$output_file" 2>"$stderr_file"
+  [[ "$(cat "$stderr_file")" == *"$deprecated_setup"* ]] || fail "setup default should print a deprecation warning"
+  [[ "$(cat "$output_file")" == *'Load core in tmux with: tmux source-file "'* ]] || fail "setup default should resolve to install core"
+
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" setup opencode >/dev/null 2>"$stderr_file"
+  [[ "$(cat "$stderr_file")" == *"$deprecated_setup"* ]] || fail "setup opencode should print a deprecation warning"
   [[ -x "$out_bin" ]] || fail "setup opencode should ensure the bridge binary"
   [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "setup opencode should install the opencode plugin file"
   pass "setup provides explicit core and integration entrypoints"

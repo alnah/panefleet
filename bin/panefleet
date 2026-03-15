@@ -2936,7 +2936,7 @@ install_command() {
         :
       fi
       print_core_installed_message
-      install_integrations_command "$target"
+      install_integrations_targets "$target"
       ;;
   esac
 }
@@ -2957,7 +2957,7 @@ uninstall_command() {
   PANEFLEET_ROOT="$root" "$(install_script_path)" uninstall
 }
 
-install_integrations_command() {
+install_integrations_targets() {
   local target
   local installed_targets=()
 
@@ -3012,29 +3012,21 @@ install_integrations_command() {
   fi
 }
 
+print_deprecation_notice() {
+  local old_command="$1"
+  local replacement="$2"
+
+  printf "warning: \`%s\` is deprecated; use \`%s\`\n" "$old_command" "$replacement" >&2
+}
+
+install_integrations_command() {
+  print_deprecation_notice "install-integrations" "install codex|claude|opencode|all"
+  install_integrations_targets "$@"
+}
+
 setup_command() {
-  local target="${1:-}"
-
-  if [[ -z "$target" ]]; then
-    printf 'missing setup target\n' >&2
-    printf 'usage: %s setup core|codex|claude|opencode|all\n' "$SELF" >&2
-    exit 1
-  fi
-
-  shift
-  if (( $# > 0 )); then
-    printf 'unexpected extra arguments for setup: %s\n' "$*" >&2
-    printf 'usage: %s setup core|codex|claude|opencode|all\n' "$SELF" >&2
-    exit 1
-  fi
-
-  if ! is_provider_target "$target"; then
-    printf 'unknown setup target: %s\n' "$target" >&2
-    printf 'expected one of: core, codex, claude, opencode, all\n' >&2
-    exit 1
-  fi
-
-  install_command "$target"
+  print_deprecation_notice "setup" "install core|codex|claude|opencode|all"
+  install_command "$@"
 }
 
 open_popup() {

@@ -1,6 +1,8 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install core codex claude opencode all doctor uninstall deps test preflight bridge bridge-download release-check
+INSTALL_TARGETS := core codex claude opencode all
+
+.PHONY: help install $(INSTALL_TARGETS) doctor uninstall deps test preflight bridge bridge-download release-check
 
 help:
 	@printf '%s\n' \
@@ -13,30 +15,28 @@ help:
 	  'make uninstall         # remove tmux bindings and hooks'
 
 install:
-	@:
+	@target='$(word 2,$(MAKECMDGOALS))'; \
+	if [ -z "$$target" ]; then \
+	  printf '%s\n' 'usage: make install core|codex|claude|opencode|all' >&2; \
+	  exit 1; \
+	fi; \
+	case "$$target" in \
+	  core|codex|claude|opencode|all) ;; \
+	  *) printf 'unknown install target: %s\n' "$$target" >&2; exit 1 ;; \
+	esac; \
+	./scripts/install-deps.sh; \
+	bin/panefleet install "$$target"
 
 deps:
 	@./scripts/install-deps.sh
 
-core:
-	@./scripts/install-deps.sh
-	@bin/panefleet install core
-
-codex:
-	@./scripts/install-deps.sh
-	@bin/panefleet install codex
-
-claude:
-	@./scripts/install-deps.sh
-	@bin/panefleet install claude
-
-opencode:
-	@./scripts/install-deps.sh
-	@bin/panefleet install opencode
-
-all:
-	@./scripts/install-deps.sh
-	@bin/panefleet install all
+$(INSTALL_TARGETS):
+	@if [ "$(firstword $(MAKECMDGOALS))" = "install" ]; then \
+	  :; \
+	else \
+	  ./scripts/install-deps.sh; \
+	  bin/panefleet install "$@"; \
+	fi
 
 doctor:
 	@bin/panefleet doctor --install
