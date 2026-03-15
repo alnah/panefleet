@@ -30,6 +30,12 @@ Install is target-based. Use exactly one provider target:
 - `opencode`: core + OpenCode integration
 - `all`: core + Codex + Claude + OpenCode
 
+Canonical command:
+
+```bash
+make install <core|codex|claude|opencode|all>
+```
+
 From source checkout, run inside `tmux`:
 
 ```bash
