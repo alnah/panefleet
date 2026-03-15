@@ -3,6 +3,8 @@
 set -euo pipefail
 
 with_go="0"
+missing_packages=()
+package_manager=""
 
 while (( $# > 0 )); do
   case "$1" in
@@ -31,23 +33,63 @@ run_install() {
   "$@"
 }
 
-packages=(tmux fzf ripgrep)
+append_missing_package() {
+  local command_name="$1"
+  local package_name="$2"
+
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    missing_packages+=("$package_name")
+  fi
+}
+
+detect_package_manager() {
+  if command -v brew >/dev/null 2>&1; then
+    package_manager="brew"
+  elif command -v apt-get >/dev/null 2>&1; then
+    package_manager="apt-get"
+  elif command -v dnf >/dev/null 2>&1; then
+    package_manager="dnf"
+  elif command -v pacman >/dev/null 2>&1; then
+    package_manager="pacman"
+  else
+    package_manager=""
+  fi
+}
+
+append_missing_package tmux tmux
+append_missing_package fzf fzf
+append_missing_package rg ripgrep
 if [[ "$with_go" == "1" ]]; then
-  packages+=(go)
+  append_missing_package go go
 fi
 
-if command -v brew >/dev/null 2>&1; then
-  brew install "${packages[@]}"
-elif command -v apt-get >/dev/null 2>&1; then
-  run_install apt-get update
-  run_install apt-get install -y "${packages[@]}"
-elif command -v dnf >/dev/null 2>&1; then
-  run_install dnf install -y "${packages[@]}"
-elif command -v pacman >/dev/null 2>&1; then
-  run_install pacman -Sy --noconfirm "${packages[@]}"
-else
-  printf 'unsupported package manager. install manually: %s\n' "${packages[*]}" >&2
+if (( ${#missing_packages[@]} == 0 )); then
+  printf 'Core dependencies already present: tmux, fzf, ripgrep\n'
+  if [[ "$with_go" == "1" ]]; then
+    printf 'Optional build dependency already present: go\n'
+  else
+    printf 'Optional build dependency not installed: go (use --with-go)\n'
+  fi
+  exit 0
+fi
+
+detect_package_manager
+if [[ -z "$package_manager" ]]; then
+  printf 'unsupported package manager. install manually: %s\n' "${missing_packages[*]}" >&2
   exit 1
+fi
+
+printf 'Installing missing system packages with %s: %s\n' "$package_manager" "${missing_packages[*]}"
+
+if [[ "$package_manager" == "brew" ]]; then
+  brew install "${missing_packages[@]}"
+elif [[ "$package_manager" == "apt-get" ]]; then
+  run_install apt-get update
+  run_install apt-get install -y "${missing_packages[@]}"
+elif [[ "$package_manager" == "dnf" ]]; then
+  run_install dnf install -y "${missing_packages[@]}"
+elif [[ "$package_manager" == "pacman" ]]; then
+  run_install pacman -Sy --noconfirm "${missing_packages[@]}"
 fi
 
 printf 'Installed core dependencies: tmux, fzf, ripgrep\n'

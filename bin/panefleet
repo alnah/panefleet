@@ -36,6 +36,7 @@ PANEFLEET_RESOLVED_LAST_DONE=""
 PANEFLEET_RESOLVED_SOURCE=""
 PANEFLEET_RESOLVED_REASON=""
 PANEFLEET_ADAPTERS_ENABLED="${PANEFLEET_ADAPTERS_ENABLED:-0}"
+PANEFLEET_BRIDGE_INSTALL_RESULT=""
 
 now_epoch() {
   date +%s
@@ -61,6 +62,11 @@ install_bridge_script_path() {
 }
 
 bridge_bin_path() {
+  if [[ -n "${PANEFLEET_AGENT_BRIDGE_BIN:-}" ]]; then
+    printf '%s' "$PANEFLEET_AGENT_BRIDGE_BIN"
+    return
+  fi
+
   printf '%s/bin/panefleet-agent-bridge' "$(self_root)"
 }
 
@@ -93,7 +99,7 @@ js_escape_string() {
 }
 
 ensure_bridge_binary() {
-  local root install_script
+  local root install_script output
 
   root="$(self_root)"
   install_script="$(install_bridge_script_path)"
@@ -102,7 +108,22 @@ ensure_bridge_binary() {
     exit 1
   fi
 
-  PANEFLEET_ROOT="$root" "$install_script"
+  if ! output="$(PANEFLEET_ROOT="$root" "$install_script" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    exit 1
+  fi
+
+  case "$output" in
+    Installed\ prebuilt\ bridge*)
+      PANEFLEET_BRIDGE_INSTALL_RESULT="downloaded-release"
+      ;;
+    Built\ *)
+      PANEFLEET_BRIDGE_INSTALL_RESULT="built-local"
+      ;;
+    *)
+      PANEFLEET_BRIDGE_INSTALL_RESULT="installed"
+      ;;
+  esac
 }
 
 install_opencode_plugin() {
@@ -188,8 +209,38 @@ resolve_integration_targets() {
   done
 }
 
+is_provider_target() {
+  case "${1:-}" in
+    core|codex|claude|opencode|all) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 print_core_load_hint() {
   printf 'Load core in tmux with: tmux source-file "%s/panefleet.tmux"\n' "$(self_root)"
+}
+
+print_core_installed_message() {
+  if [[ -n "${TMUX:-}" ]]; then
+    printf 'Core installed\n'
+    printf 'Bindings: prefix+P, prefix+T\n'
+  else
+    print_core_load_hint
+  fi
+}
+
+join_by_comma_space() {
+  local joined=""
+  local item
+
+  for item in "$@"; do
+    if [[ -n "$joined" ]]; then
+      joined+=", "
+    fi
+    joined+="$item"
+  done
+
+  printf '%s' "$joined"
 }
 
 integration_status_codex() {
@@ -1173,9 +1224,24 @@ resolve_uncached_state_values() {
     PANEFLEET_RESOLVED_SOURCE="process"
     PANEFLEET_RESOLVED_REASON="dead pane exit=${dead_status:-unknown}"
   elif [[ "${PANEFLEET_ADAPTERS_ENABLED:-1}" == "1" ]] && [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$agent_status_max_age" "$now" && agent_state_matches_live_tool "$tool" "$agent_tool_value"; then
+    local live_override=""
+
     raw_status="$agent_status_value"
     if [[ -n "$agent_tool_value" ]]; then
       tool="$agent_tool_value"
+    fi
+    if [[ "$tool" == "codex" && "$raw_status" != "WAIT" ]]; then
+      if [[ -z "$capture" ]]; then
+        capture="$(pane_recent_capture "$pane_id")"
+      fi
+      if [[ -n "$capture" ]]; then
+        live_override="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
+        if [[ "$live_override" == "RUN" || "$live_override" == "WAIT" ]]; then
+          raw_status="$live_override"
+          PANEFLEET_RESOLVED_SOURCE="heuristic-live"
+          PANEFLEET_RESOLVED_REASON="codex live state overrides adapter ${agent_status_value}"
+        fi
+      fi
     fi
     if [[ "$tool" == "claude" && "$raw_status" != "WAIT" ]]; then
       if [[ -z "$capture" ]]; then
@@ -2575,11 +2641,42 @@ matching_hook_count() {
 }
 
 install_command() {
-  local root
+  local root target="${1:-core}"
 
-  require_tmux
+  if ! is_provider_target "$target"; then
+    printf 'unknown install target: %s\n' "$target" >&2
+    printf 'usage: %s install core|codex|claude|opencode|all\n' "$SELF" >&2
+    exit 1
+  fi
+
+  if (( $# > 1 )); then
+    printf 'unexpected extra arguments for install: %s\n' "${*:2}" >&2
+    printf 'usage: %s install core|codex|claude|opencode|all\n' "$SELF" >&2
+    exit 1
+  fi
+
+  preflight
   root="$(self_root)"
-  PANEFLEET_ROOT="$root" "$(install_script_path)" install
+
+  case "$target" in
+    core)
+      if [[ -n "${TMUX:-}" ]]; then
+        PANEFLEET_ROOT="$root" "$(install_script_path)" install >/dev/null
+      else
+        :
+      fi
+      print_core_installed_message
+      ;;
+    codex|claude|opencode|all)
+      if [[ -n "${TMUX:-}" ]]; then
+        PANEFLEET_ROOT="$root" "$(install_script_path)" install >/dev/null
+      else
+        :
+      fi
+      print_core_installed_message
+      install_integrations_command "$target"
+      ;;
+  esac
 }
 
 reconcile_command() {
@@ -2600,6 +2697,7 @@ uninstall_command() {
 
 install_integrations_command() {
   local target
+  local installed_targets=()
 
   resolve_integration_targets "$@"
   ensure_bridge_binary
@@ -2607,18 +2705,14 @@ install_integrations_command() {
   for target in "${PANEFLEET_INSTALL_TARGETS[@]}"; do
     case "$target" in
       codex)
-        printf 'codex bridge ready\n'
-        printf '  notify wrapper: %s\n' "$(self_root)/scripts/codex-notify-bridge"
-        printf '  app-server wrapper: %s\n' "$(self_root)/scripts/codex-app-server-bridge"
+        installed_targets+=("codex")
         ;;
       claude)
-        printf 'claude bridge ready\n'
-        printf '  hook wrapper: %s\n' "$(self_root)/scripts/claude-code-hook"
+        installed_targets+=("claude")
         ;;
       opencode)
         install_opencode_plugin
-        printf 'opencode bridge ready\n'
-        printf '  plugin file: %s\n' "$(opencode_plugin_path)"
+        installed_targets+=("opencode")
         if ! command_exists bun; then
           printf '  warning: bun is missing; OpenCode plugin loading stays unavailable until bun is installed\n'
         fi
@@ -2626,11 +2720,28 @@ install_integrations_command() {
     esac
   done
 
+  if (( ${#installed_targets[@]} == 1 )); then
+    printf 'Integration installed: %s\n' "${installed_targets[0]}"
+  else
+    printf 'Integrations installed: %s\n' "$(join_by_comma_space "${installed_targets[@]}")"
+  fi
+  case "$PANEFLEET_BRIDGE_INSTALL_RESULT" in
+    downloaded-release)
+      printf 'Bridge: downloaded from GitHub Releases\n'
+      ;;
+    built-local)
+      printf 'Bridge: built locally with Go\n'
+      ;;
+    *)
+      printf 'Bridge: installed\n'
+      ;;
+  esac
+
   if [[ -n "${TMUX:-}" ]]; then
     "${TMUX_BIN}" set-option -gq @panefleet-adapter-mode auto
-    printf 'Enabled adapter mode: auto\n'
+    printf 'Adapter mode: auto\n'
   else
-    printf 'Enable adapters in tmux with: tmux set-option -g @panefleet-adapter-mode auto\n'
+    printf 'Adapter mode will switch to auto the next time you run install inside tmux.\n'
   fi
 }
 
@@ -2650,30 +2761,13 @@ setup_command() {
     exit 1
   fi
 
-  preflight
+  if ! is_provider_target "$target"; then
+    printf 'unknown setup target: %s\n' "$target" >&2
+    printf 'expected one of: core, codex, claude, opencode, all\n' >&2
+    exit 1
+  fi
 
-  case "$target" in
-    core)
-      if [[ -n "${TMUX:-}" ]]; then
-        install_command
-      else
-        print_core_load_hint
-      fi
-      ;;
-    codex|claude|opencode|all)
-      if [[ -n "${TMUX:-}" ]]; then
-        install_command
-      else
-        print_core_load_hint
-      fi
-      install_integrations_command "$target"
-      ;;
-    *)
-      printf 'unknown setup target: %s\n' "$target" >&2
-      printf 'expected one of: core, codex, claude, opencode, all\n' >&2
-      exit 1
-      ;;
-  esac
+  install_command "$target"
 }
 
 open_popup() {

@@ -186,6 +186,7 @@ run_list() {
 
 test_sourced_helpers() {
   local got
+  local original_codex_process_is_working
 
   # shellcheck disable=SC1090
   PANEFLEET_SOURCE_ONLY=1 source "${PANEFLEET_BIN}"
@@ -216,12 +217,13 @@ test_sourced_helpers() {
   assert_eq "$got" "WAIT" "adapter_status infers codex wait from chooser text"
   pass "adapter_status infers codex wait from chooser text"
 
+  original_codex_process_is_working="$(declare -f codex_process_is_working)"
   # shellcheck disable=SC2317,SC2329
   codex_process_is_working() { return 0; }
   got="$(adapter_status "%101" "codex" "codex-aarch64-a" 0 "" $'No chooser\nNo prompt yet')"
   assert_eq "$got" "RUN" "adapter_status infers codex run from process tree"
   pass "adapter_status infers codex run from process tree"
-  unset -f codex_process_is_working
+  eval "$original_codex_process_is_working"
 
   got="$(effective_status_values WAIT "$(date +%s)" "" "" 10 45 "$(date +%s)")"
   assert_eq "$got" "WAIT" "effective_status_values keeps wait visible"
@@ -259,6 +261,15 @@ test_sourced_helpers() {
   assert_eq "$PANEFLEET_RESOLVED_STATUS" "WAIT" "resolve_uncached_state_values lets claude chooser override adapter done"
   pass "resolve_uncached_state_values lets claude chooser override adapter done"
 
+  resolve_uncached_state_values "%101" "codex" "codex-aarch64-a" "cdx" 0 "" "$(date +%s)" $'Working (2m)\nesc to interrupt' "" "DONE" "codex" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "codex-notify"
+  assert_eq "$PANEFLEET_RESOLVED_STATUS" "RUN" "resolve_uncached_state_values lets codex live run override adapter done"
+  assert_eq "$PANEFLEET_RESOLVED_SOURCE" "heuristic-live" "resolve_uncached_state_values reports heuristic source for codex live run override"
+  pass "resolve_uncached_state_values lets codex live run override adapter done"
+
+  resolve_uncached_state_values "%101" "codex" "codex-aarch64-a" "cdx" 0 "" "$(date +%s)" $'/permissions\nSelect permission\nEnter to confirm · Esc to cancel' "" "DONE" "codex" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "codex-notify"
+  assert_eq "$PANEFLEET_RESOLVED_STATUS" "WAIT" "resolve_uncached_state_values lets codex live wait override adapter done"
+  pass "resolve_uncached_state_values lets codex live wait override adapter done"
+
   resolve_uncached_state_values "%103" "shell" "zsh" "$HOME/workspace" 0 "" "$(date +%s)" $'prompt' "" "RUN" "claude" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "claude-hook"
   assert_eq "$PANEFLEET_RESOLVED_STATUS" "IDLE" "resolve_uncached_state_values ignores fresh claude adapter state on shell pane"
   pass "resolve_uncached_state_values ignores stale claude adapter state on shell pane"
@@ -268,6 +279,7 @@ test_sourced_helpers() {
   got="$(adapter_status "%104" "opencode" "opencode" 0 "" $'┃  Thinking: Setting up a script path\n   ~ Preparing patch...\n   ▣  Build · model-x · interrupted\nctrl+t variants')"
   assert_eq "$got" "RUN" "adapter_status infers opencode run from active transcript"
   pass "adapter_status infers opencode run from active transcript"
+
 }
 
 test_fake_tmux_cli() {
@@ -339,6 +351,30 @@ test_install_integrations_command() {
   pass "install-integrations builds the bridge binary"
 }
 
+test_install_command() {
+  local out_bin
+  local plugin_dir
+  local output
+  local mode
+
+  out_bin="${TEST_TMPDIR}/bin/install-bridge"
+  plugin_dir="${TEST_TMPDIR}/install-opencode-plugins"
+
+  output="$(TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" install core)"
+  [[ "$output" == *'Load core in tmux with: tmux source-file "'* ]] || fail "install core outside tmux should print the tmux load hint"
+
+  output="$(TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install opencode)"
+  [[ "$output" == *'Bridge: built locally with Go'* ]] || fail "install opencode should report how the bridge was installed"
+  [[ "$output" == *'Adapter mode will switch to auto the next time you run install inside tmux.'* ]] || fail "install opencode outside tmux should explain deferred adapter mode"
+
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install opencode >/dev/null
+  [[ -x "$out_bin" ]] || fail "install opencode should ensure the bridge binary"
+  [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "install opencode should install the opencode plugin file"
+  mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
+  [[ "$mode" == "auto" ]] || fail "install opencode should enable adapter mode in tmux"
+  pass "install provides the public core and provider entrypoints"
+}
+
 test_setup_command() {
   local out_bin
   local plugin_dir
@@ -367,4 +403,5 @@ setup_fake_tmux_fixture "${TEST_TMPDIR}/fake-tmux"
 test_sourced_helpers
 test_fake_tmux_cli
 test_install_integrations_command
+test_install_command
 test_setup_command

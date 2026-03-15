@@ -6,16 +6,14 @@ Panefleet started as a way to reduce context switching across tmux windows and s
 
 The useful part is not only faster navigation. It is seeing the worker states in one place: `RUN`, `DONE`, `IDLE`, `STALE`, `WAIT`, and the rest. When several workers are active, it is easy to forget that one pane is waiting for approval, that another one finished, or that a third one has gone stale. Keeping those states visible reduces the cognitive load of orchestrating the work and makes parallel sessions much easier to manage.
 
-If those tools expose better hooks later, or if the bridge distribution becomes simpler, I would rather rely on that. Until then, this repo stays focused on a practical tmux workboard with explicit tradeoffs.
+If better hooks become available later, or if bridge distribution gets simpler, panefleet can use them. For now, it stays focused on a practical tmux workboard with portable defaults and known limitations.
 
 ## Table of contents
 
 - [Installation](#installation)
 - [Requirements](#requirements)
-- [Quick start](#quick-start)
 - [Features](#features)
 - [Configuration](#configuration)
-- [CLI reference](#cli-reference)
 - [Status model](#status-model)
 - [Optional integrations](#optional-integrations)
 - [Observability](#observability)
@@ -24,68 +22,30 @@ If those tools expose better hooks later, or if the bridge distribution becomes 
 
 ## Installation
 
-Panefleet has two install layers:
-
-- `core`: the portable tmux plugin, heuristic-first
-- `integrations`: optional provider bridges for Codex, Claude Code, and OpenCode
-
-### Core from a checkout
+Clone the repo, then use the Makefile:
 
 ```bash
 git clone https://github.com/alnah/panefleet.git ~/workspace/panefleet
 cd ~/workspace/panefleet
-./scripts/install-deps.sh # optional helper
-bin/panefleet setup core
+make install core      # core only, heuristic-first
+make install codex     # core + codex
+make install claude    # core + claude
+make install opencode  # core + opencode
+make install all       # core + codex + claude + opencode
 ```
 
-Outside tmux, `setup core` runs `preflight` and prints the exact `tmux source-file ...` command to load the plugin from the checkout. Inside tmux, it installs the local bindings directly. No symlink and no Go toolchain are required for the core mode.
+`make install core` is the heuristic-only path. It works without integrations, but status detection is less reliable than the provider-assisted modes.
 
-### TPM-style path
+`make install codex`, `make install claude`, `make install opencode`, and `make install all` can automatically download a prebuilt `panefleet-agent-bridge` binary from this repo's GitHub Releases.
 
-```bash
-mkdir -p ~/.tmux/plugins
-ln -sfn "$PWD" ~/.tmux/plugins/panefleet
-tmux source-file ~/.tmux/plugins/panefleet/panefleet.tmux
-```
+`make install ...` first checks the core system dependencies and installs missing ones through the detected package manager. That step is explicit in the command output and may prompt for `sudo` on Linux.
 
-### Local lifecycle commands
+Outside tmux, `make install ...` then runs preflight checks and prints the exact `tmux source-file ...` command to load the plugin from the checkout. Inside tmux, it also installs the local bindings directly.
 
-```bash
-bin/panefleet setup core
-bin/panefleet setup codex
-bin/panefleet setup claude
-bin/panefleet setup opencode
-bin/panefleet setup all
-
-bin/panefleet install
-bin/panefleet install-integrations codex|claude|opencode|all
-bin/panefleet reconcile
-bin/panefleet uninstall
-bin/panefleet doctor --install
-```
-
-`install` and `reconcile` bind:
+The install targets also bind:
 
 - `prefix + P` for the board
 - `prefix + T` for the theme picker
-
-<details>
-<summary>Package manager helpers</summary>
-
-Use the generic helper when possible:
-
-```bash
-./scripts/install-deps.sh
-./scripts/install-deps.sh --with-go
-```
-
-If you already standardize on Homebrew, the Homebrew-specific helper is available:
-
-```bash
-./scripts/install-deps-homebrew.sh --with-go
-```
-
-</details>
 
 ## Requirements
 
@@ -99,38 +59,22 @@ Core runtime:
 Optional runtime:
 
 - `curl` and `tar` to download a prebuilt bridge from GitHub Releases
-- `go` only if you want or need to build `bin/panefleet-agent-bridge` from source
 - `bun` and the OpenCode plugin host only for the OpenCode plugin integration
 
-Check the local runtime with:
+`make install ...` handles missing core dependencies automatically through the detected package manager. Run `make doctor` inside tmux to inspect the installed state:
 
 ```bash
-bin/panefleet preflight
+make doctor
 ```
-
-## Quick start
-
-```bash
-bin/panefleet setup core
-bin/panefleet setup codex # or claude, opencode, all
-bin/panefleet popup
-bin/panefleet doctor --verbose
-```
-
-Useful tmux actions:
-
-- `prefix + P` opens the board
-- `prefix + T` opens the theme picker
-- `enter` jumps to the selected pane
-- `up` and `down` navigate the list
-- `ctrl-r` reloads the list
 
 ## Features
 
 - Popup board built on `tmux` and `fzf`
 - Heuristics-first pane states for Codex, Claude Code, OpenCode, and shell panes
 - Pane jump, preview, theme preview, and theme apply commands
-- Install, reconcile, uninstall, and install diagnostics commands
+- Install, uninstall, and install diagnostics commands
+- Simple `make install <provider>` workflow
+- `make doctor` and `make uninstall`
 - State inspection with `state-show`, `state-list`, and `doctor --verbose`
 - Theme palettes with truecolor, 256-color, and ANSI fallback
 - Optional adapter bridge kept outside the default install path
@@ -159,58 +103,18 @@ Supported options:
 
 Color portability:
 
-- automatic fallback: truecolor -> 256 colors -> ANSI
+- automatic fallback: truecolor > 256 colors > ANSI
 - optional override: `PANEFLEET_COLOR_MODE=truecolor|256|ansi`
 
-## CLI reference
+Board and preview behavior:
 
-```bash
-bin/panefleet popup
-bin/panefleet board
-bin/panefleet list
-bin/panefleet preview %1
-bin/panefleet jump %1
-
-bin/panefleet setup core
-bin/panefleet setup codex
-bin/panefleet setup claude
-bin/panefleet setup opencode
-bin/panefleet setup all
-
-bin/panefleet install
-bin/panefleet install-integrations codex
-bin/panefleet install-integrations claude
-bin/panefleet install-integrations opencode
-bin/panefleet install-integrations all
-bin/panefleet reconcile
-bin/panefleet uninstall
-
-bin/panefleet preflight
-bin/panefleet doctor --install
-bin/panefleet doctor --verbose
-
-bin/panefleet state-show --pane %1
-bin/panefleet inspect --pane %1
-bin/panefleet state-list
-bin/panefleet state-set --pane %1 --status RUN --tool codex --source test
-bin/panefleet state-clear --pane %1
-
-bin/panefleet themes
-bin/panefleet theme-select
-bin/panefleet theme-popup
-bin/panefleet theme-preview dracula
-bin/panefleet theme-apply dracula
-```
-
-<details>
-<summary>Board and preview behavior</summary>
-
-- The list is sorted by state priority and activity recency.
-- The preview shows pane metadata plus the visible tail of the pane.
-- `up` and `down` move in the list.
-- `ctrl-r` reloads the list.
-
-</details>
+- Open the board with `prefix + P`.
+- Open the theme picker with `prefix + T`.
+- The board list is sorted first by state priority, then by recent activity.
+- `enter` jumps to the selected pane.
+- `up` and `down` move the selection in the list.
+- The preview pane shows the selected pane metadata plus as many visible trailing lines as fit.
+- `ctrl-r` reloads the board content without leaving the popup.
 
 ## Status model
 
@@ -258,69 +162,41 @@ All provider integrations reuse the same `panefleet-agent-bridge` binary. Provid
 Install integrations explicitly by provider:
 
 ```bash
-bin/panefleet setup codex
-bin/panefleet setup claude
-bin/panefleet setup opencode
-bin/panefleet setup all
-
-bin/panefleet install-integrations codex
-bin/panefleet install-integrations claude
-bin/panefleet install-integrations opencode
-bin/panefleet install-integrations all
+make install codex
+make install claude
+make install opencode
+make install all
 ```
 
-What each setup command does:
+All provider installs:
 
-- `setup codex`
-  - installs the shared bridge
-  - prints ready Codex wrapper paths
-  - does not edit Codex config automatically
-- `setup claude`
-  - installs the shared bridge
-  - prints the ready Claude hook wrapper path
-  - does not edit `~/.claude/settings.json` automatically
-- `setup opencode`
-  - installs the shared bridge
-  - writes the OpenCode plugin file
-  - still requires `bun` and the OpenCode plugin host
-- `setup all`
-  - runs all three provider setups above
+- install the shared `panefleet-agent-bridge`
+- switch `@panefleet-adapter-mode` to `auto` when run inside tmux
+- keep the core plugin usable even without integrations
 
-`install-integrations` resolves the bridge in this order:
+The bridge resolves in this order:
 
 1. exact GitHub Release asset for the current checkout tag, when the checkout is on a release tag
 2. local source build when `go` is available
 3. latest matching GitHub Release asset from this repo for the current OS/arch
 
-So, in the normal case, you do not need Go installed just to use provider integrations. A local Go toolchain is only the fallback path when no matching prebuilt bridge can be downloaded.
+The provider install commands use that order automatically. So, in the normal case, you do not need Go installed just to use provider integrations. A local Go toolchain is only the fallback path when no matching prebuilt bridge can be downloaded.
 
-If the command runs inside tmux, it also switches `@panefleet-adapter-mode` to `auto`.
+Provider-specific behavior:
 
-Provider notes:
-
-- `Codex`
-  - installs the shared bridge
-  - exposes ready wrapper paths for `notify` and app-server integration
-  - does not overwrite user Codex config automatically
-- `Claude Code`
-  - installs the shared bridge
-  - exposes the ready hook wrapper path
-  - does not overwrite `~/.claude/settings.json` automatically
-- `OpenCode`
-  - installs the shared bridge
-  - writes a plugin file to `~/.config/opencode/plugins/panefleet.ts` by default
+- `make install codex`
+  - keeps live Codex heuristics available for `RUN` and `WAIT`
+  - uses bridge events when available
+- `make install claude`
+  - installs and uses the Claude hook wrapper
+- `make install opencode`
+  - writes `~/.config/opencode/plugins/panefleet.ts` by default
   - still requires `bun` and the OpenCode plugin host
-
-Wrapper paths in this repo:
-
-- `scripts/claude-code-hook`
-- `scripts/codex-app-server-bridge`
-- `scripts/codex-notify-bridge`
-- `scripts/opencode-event-bridge`
+- `make install all`
+  - runs the three provider installs above
 
 Important constraints:
 
-- wrappers do not auto-build the bridge
 - missing bridge errors are explicit
 - the core plugin still works when no integration is installed, but heuristic-only status detection is less reliable than bridge-assisted mode
 - OpenCode plugin integration requires its plugin host and `bun`
@@ -331,11 +207,7 @@ Important constraints:
 Useful commands:
 
 ```bash
-bin/panefleet state-show --pane %1
-bin/panefleet inspect --pane %1
-bin/panefleet state-list
-bin/panefleet doctor --verbose
-bin/panefleet doctor --install
+make doctor
 ```
 
 What they expose:
@@ -365,9 +237,7 @@ tail -n +1 ~/.local/state/panefleet/runtime/runtime.log
 Start with:
 
 ```bash
-bin/panefleet preflight
-bin/panefleet doctor --install
-bin/panefleet doctor --verbose
+make doctor
 ```
 
 Common checks:
@@ -377,26 +247,27 @@ Common checks:
   - verify `tmux` supports `display-popup`
   - verify `fzf` supports `--header-lines-border`
 - `doctor --install` shows `bridge-missing`
-  - run `bin/panefleet setup codex|claude|opencode|all`
+  - run `make install codex`, `make install claude`, `make install opencode`, or `make install all`
   - if release download is unavailable, install `go` and rerun
 - board does not open
   - reload `panefleet.tmux`
-  - run `bin/panefleet doctor --install`
+  - run `make doctor`
   - verify `prefix + P` is bound
 - status looks wrong for one pane
   - run `bin/panefleet state-show --pane %pane`
   - inspect `final.source` and `final.reason`
 - OpenCode integration is not active
   - verify `bun` is installed
-  - verify `doctor --install` points to the expected `opencode.plugin`
-  - rerun `bin/panefleet setup opencode`
+  - verify `make doctor` points to the expected `opencode.plugin`
+  - rerun `make install opencode`
 
 Reset the plugin bindings and hooks:
 
 ```bash
-bin/panefleet uninstall
-bin/panefleet install
+make uninstall
 ```
+
+Use `make uninstall` to remove the tmux bindings and hooks installed by panefleet.
 
 ## Testing
 
