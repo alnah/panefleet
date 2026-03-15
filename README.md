@@ -13,58 +13,44 @@ If better hooks become available later, or if bridge distribution gets simpler, 
 ## Table of contents
 
 - [Installation](#installation)
-- [Requirements](#requirements)
 - [Features](#features)
+- [Usage](#usage)
 - [Configuration](#configuration)
 - [Status model](#status-model)
-- [Optional integrations](#optional-integrations)
 - [Observability](#observability)
 - [Troubleshooting](#troubleshooting)
 - [Testing](#testing)
 
 ## Installation
 
-Clone the repo, then **from `tmux`**, use the Makefile:
+Install is target-based. Use exactly one provider target:
+- `core`: heuristic-only runtime (no bridge)
+- `codex`: core + Codex integration
+- `claude`: core + Claude integration
+- `opencode`: core + OpenCode integration
+- `all`: core + Codex + Claude + OpenCode
+
+From source checkout, run inside `tmux`:
 
 ```bash
 git clone https://github.com/alnah/panefleet.git
 cd panefleet
-make install core      # core only, heuristic-first, less reliable
-make install codex     # core, codex bridge
-make install claude    # core, claude bridge
-make install opencode  # core, opencode bridge
-make install all       # core, codex, claude, opencode
-```
-
-## About the installation process
-
-The installers first check the core system dependencies:
-
-- `fzf` with `--header-lines-border`
-- `ripgrep`
-- `bash`
-
-If you install a bridge, it checks for:
-
-- `curl` and `tar` to download a prebuilt bridge from GitHub Releases
-- `bun` and the OpenCode plugin host only for the OpenCode plugin integration
-
-If it detects missing ones, it installs them through the detected package manager. That step is explicit in the command output and may prompt for `sudo` on Linux.
-
-It also installs the local bindings directly:
-
-- `prefix + P` for the board
-- `prefix + T` for the theme picker
-
-## Verifying installation
-
-Once installation is complete, **from `tmux`** inspect the installed state:
-
-```bash
+make install all
 make doctor
 ```
 
-If something is wrong, it provides useful information for you, or your agent, to help.
+Direct CLI entrypoint (same behavior):
+
+```bash
+bin/panefleet install all
+bin/panefleet doctor --install
+```
+
+What install does:
+- checks and installs missing runtime dependencies with the detected package manager
+- installs tmux bindings (`prefix + P`, `prefix + T`)
+- for provider targets, downloads a prebuilt Go bridge from GitHub Releases when available
+- falls back to local bridge build only if release download is unavailable and Go is present
 
 ## Features
 
@@ -75,7 +61,7 @@ If something is wrong, it provides useful information for you, or your agent, to
 
 ## Usage
 
-Board and preview behavior:
+Board behavior:
 
 - Open the board with `prefix + P`.
 - Open the theme picker with `prefix + T`.
@@ -155,6 +141,7 @@ Useful commands:
 
 ```bash
 make doctor
+bin/panefleet doctor --verbose
 ```
 
 What they expose:
@@ -216,7 +203,7 @@ make uninstall
 
 Use `make uninstall` to remove the tmux bindings and hooks installed by panefleet.
 
-## Development
+## Testing
 
 Run the full local regression suite with:
 
