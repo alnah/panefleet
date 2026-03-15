@@ -9,6 +9,8 @@ FAKE_FZF_BIN="${REPO_ROOT}/tests/fake-fzf"
 TEST_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/panefleet-tests.XXXXXX")"
 trap 'rm -rf "${TEST_TMPDIR}"' EXIT
 
+export FZF_BIN="${FAKE_FZF_BIN}"
+
 pass() {
   printf 'ok - %s\n' "$1"
 }
