@@ -199,6 +199,61 @@ run_list() {
   "${PANEFLEET_BIN}" list | strip_ansi
 }
 
+reset_fake_tmux_fixture() {
+  rm -rf "${TEST_TMPDIR}/fake-tmux"
+  setup_fake_tmux_fixture "${TEST_TMPDIR}/fake-tmux"
+}
+
+run_install_target_in_fake_tmux() {
+  local target="$1"
+  local bridge_bin="$2"
+  local plugin_dir="$3"
+  local codex_config="$4"
+  local claude_settings="$5"
+
+  TMUX=1 \
+  TMUX_BIN="${FAKE_TMUX_BIN}" \
+  FZF_BIN="${FAKE_FZF_BIN}" \
+  PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" \
+  PANEFLEET_AGENT_BRIDGE_BIN="$bridge_bin" \
+  PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" \
+  PANEFLEET_CODEX_CONFIG="$codex_config" \
+  PANEFLEET_CLAUDE_SETTINGS="$claude_settings" \
+  PANEFLEET_BRIDGE_INSTALL_MODE=build \
+  "${PANEFLEET_BIN}" install "$target"
+}
+
+run_doctor_install_in_fake_tmux() {
+  local bridge_bin="$1"
+  local plugin_dir="$2"
+  local codex_config="$3"
+  local claude_settings="$4"
+
+  TMUX=1 \
+  TMUX_BIN="${FAKE_TMUX_BIN}" \
+  FZF_BIN="${FAKE_FZF_BIN}" \
+  PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" \
+  PANEFLEET_AGENT_BRIDGE_BIN="$bridge_bin" \
+  PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" \
+  PANEFLEET_CODEX_CONFIG="$codex_config" \
+  PANEFLEET_CLAUDE_SETTINGS="$claude_settings" \
+  "${PANEFLEET_BIN}" doctor --install
+}
+
+assert_opencode_readyish() {
+  local doctor_output="$1"
+  local msg="$2"
+
+  if [[ "$doctor_output" == *"integration.opencode ready"* ]]; then
+    return
+  fi
+  if [[ "$doctor_output" == *"integration.opencode plugin-ready bun-missing"* ]]; then
+    return
+  fi
+
+  fail "$msg"
+}
+
 test_sourced_helpers() {
   local got
   local original_codex_process_is_working
@@ -481,6 +536,124 @@ test_cli_surface_contract() {
   pass "public CLI surface is install doctor uninstall"
 }
 
+test_runtime_install_contract() {
+  local contract_root
+  local case_root bridge_bin plugin_dir codex_config claude_settings
+  local output doctor_output mode
+  local codex_wrapper claude_wrapper
+
+  contract_root="${TEST_TMPDIR}/runtime-contract"
+  codex_wrapper="${REPO_ROOT}/scripts/codex-notify-bridge"
+  claude_wrapper="${REPO_ROOT}/scripts/claude-code-hook"
+
+  # core
+  reset_fake_tmux_fixture
+  case_root="${contract_root}/core"
+  bridge_bin="${case_root}/bin/panefleet-agent-bridge"
+  plugin_dir="${case_root}/opencode/plugins"
+  codex_config="${case_root}/codex/config.toml"
+  claude_settings="${case_root}/claude/settings.json"
+  output="$(run_install_target_in_fake_tmux core "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
+  [[ "$output" == *"Core installed"* ]] || fail "install core should confirm core install"
+  [[ "$output" != *"Bridge:"* ]] || fail "install core should not install bridge"
+  mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
+  [[ "$mode" == "heuristic-only" ]] || fail "install core should keep adapter mode heuristic-only"
+  doctor_output="$(run_doctor_install_in_fake_tmux "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
+  [[ "$doctor_output" == *"integration.codex   bridge-missing"* ]] || fail "install core should keep codex integration missing"
+  [[ "$doctor_output" == *"integration.claude  bridge-missing"* ]] || fail "install core should keep claude integration missing"
+  [[ "$doctor_output" == *"integration.opencode bridge-missing"* ]] || fail "install core should keep opencode integration missing"
+  pass "install core runtime contract"
+
+  # codex
+  reset_fake_tmux_fixture
+  case_root="${contract_root}/codex"
+  bridge_bin="${case_root}/bin/panefleet-agent-bridge"
+  plugin_dir="${case_root}/opencode/plugins"
+  codex_config="${case_root}/codex/config.toml"
+  claude_settings="${case_root}/claude/settings.json"
+  output="$(run_install_target_in_fake_tmux codex "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
+  [[ "$output" == *"Integration installed: codex"* ]] || fail "install codex should report codex integration"
+  [[ "$output" == *"Bridge: built locally with Go"* ]] || fail "install codex should report local bridge build in tests"
+  [[ "$output" == *"Adapter mode: auto"* ]] || fail "install codex should enable adapter mode"
+  rg -Fq -- "$codex_wrapper" "$codex_config" || fail "install codex should wire codex config"
+  mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
+  [[ "$mode" == "auto" ]] || fail "install codex should set adapter mode auto"
+  doctor_output="$(run_doctor_install_in_fake_tmux "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
+  [[ "$doctor_output" == *"integration.codex   ready"* ]] || fail "install codex should be ready in doctor output"
+  [[ "$doctor_output" == *"integration.claude  config-missing"* ]] || fail "install codex should leave claude config missing"
+  [[ "$doctor_output" == *"integration.opencode plugin-missing"* ]] || fail "install codex should leave opencode plugin missing"
+  pass "install codex runtime contract"
+
+  # claude
+  reset_fake_tmux_fixture
+  case_root="${contract_root}/claude"
+  bridge_bin="${case_root}/bin/panefleet-agent-bridge"
+  plugin_dir="${case_root}/opencode/plugins"
+  codex_config="${case_root}/codex/config.toml"
+  claude_settings="${case_root}/claude/settings.json"
+  output="$(run_install_target_in_fake_tmux claude "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
+  [[ "$output" == *"Integration installed: claude"* ]] || fail "install claude should report claude integration"
+  [[ "$output" == *"Bridge: built locally with Go"* ]] || fail "install claude should report local bridge build in tests"
+  [[ "$output" == *"Adapter mode: auto"* ]] || fail "install claude should enable adapter mode"
+  rg -Fq -- "$claude_wrapper" "$claude_settings" || fail "install claude should wire claude settings"
+  mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
+  [[ "$mode" == "auto" ]] || fail "install claude should set adapter mode auto"
+  doctor_output="$(run_doctor_install_in_fake_tmux "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
+  [[ "$doctor_output" == *"integration.codex   config-missing"* ]] || fail "install claude should leave codex config missing"
+  [[ "$doctor_output" == *"integration.claude  ready"* ]] || fail "install claude should be ready in doctor output"
+  [[ "$doctor_output" == *"integration.opencode plugin-missing"* ]] || fail "install claude should leave opencode plugin missing"
+  pass "install claude runtime contract"
+
+  # opencode
+  reset_fake_tmux_fixture
+  case_root="${contract_root}/opencode"
+  bridge_bin="${case_root}/bin/panefleet-agent-bridge"
+  plugin_dir="${case_root}/opencode/plugins"
+  codex_config="${case_root}/codex/config.toml"
+  claude_settings="${case_root}/claude/settings.json"
+  output="$(run_install_target_in_fake_tmux opencode "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
+  [[ "$output" == *"Integration installed: opencode"* ]] || fail "install opencode should report opencode integration"
+  [[ "$output" == *"Bridge: built locally with Go"* ]] || fail "install opencode should report local bridge build in tests"
+  [[ "$output" == *"Adapter mode: auto"* ]] || fail "install opencode should enable adapter mode"
+  [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "install opencode should install plugin file"
+  mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
+  [[ "$mode" == "auto" ]] || fail "install opencode should set adapter mode auto"
+  doctor_output="$(run_doctor_install_in_fake_tmux "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
+  [[ "$doctor_output" == *"integration.codex   config-missing"* ]] || fail "install opencode should leave codex config missing"
+  [[ "$doctor_output" == *"integration.claude  config-missing"* ]] || fail "install opencode should leave claude config missing"
+  assert_opencode_readyish "$doctor_output" "install opencode should be plugin-ready in doctor output"
+  pass "install opencode runtime contract"
+
+  # all + idempotence
+  reset_fake_tmux_fixture
+  case_root="${contract_root}/all"
+  bridge_bin="${case_root}/bin/panefleet-agent-bridge"
+  plugin_dir="${case_root}/opencode/plugins"
+  codex_config="${case_root}/codex/config.toml"
+  claude_settings="${case_root}/claude/settings.json"
+  output="$(run_install_target_in_fake_tmux all "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
+  [[ "$output" == *"Integrations installed: codex, claude, opencode"* ]] || fail "install all should report all integrations"
+  [[ "$output" == *"Bridge: built locally with Go"* ]] || fail "install all should report local bridge build on first run"
+  [[ "$output" == *"Adapter mode: auto"* ]] || fail "install all should enable adapter mode"
+
+  output="$(run_install_target_in_fake_tmux all "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
+  [[ "$output" == *"Integrations installed: codex, claude, opencode"* ]] || fail "install all second run should still report all integrations"
+  if [[ "$output" != *"Bridge: installed"* && "$output" != *"Bridge: built locally with Go"* ]]; then
+    fail "install all second run should report bridge install status"
+  fi
+  [[ "$(rg -F --count '# >>> panefleet codex notify >>>' "$codex_config")" == "1" ]] || fail "install all should keep a single managed codex block after rerun"
+  [[ "$(rg -F --count 'notify = [' "$codex_config")" == "1" ]] || fail "install all should keep one codex notify entry after rerun"
+  [[ "$(rg -F --count "$claude_wrapper" "$claude_settings")" == "4" ]] || fail "install all should keep one claude hook command per event after rerun"
+  [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "install all should keep opencode plugin installed"
+  mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
+  [[ "$mode" == "auto" ]] || fail "install all should keep adapter mode auto"
+  doctor_output="$(run_doctor_install_in_fake_tmux "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
+  [[ "$doctor_output" == *"integration.codex   ready"* ]] || fail "install all should make codex ready"
+  [[ "$doctor_output" == *"integration.claude  ready"* ]] || fail "install all should make claude ready"
+  assert_opencode_readyish "$doctor_output" "install all should make opencode plugin-ready"
+  pass "install all runtime contract and idempotence"
+}
+
 setup_fake_tmux_fixture "${TEST_TMPDIR}/fake-tmux"
 test_sourced_helpers
 test_fake_tmux_cli
@@ -489,3 +662,4 @@ test_install_command
 test_setup_command
 test_wrapper_install_hints
 test_cli_surface_contract
+test_runtime_install_contract
