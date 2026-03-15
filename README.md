@@ -25,8 +25,8 @@ If better hooks become available later, or if bridge distribution gets simpler, 
 Clone the repo, then use the Makefile:
 
 ```bash
-git clone https://github.com/alnah/panefleet.git ~/workspace/panefleet
-cd ~/workspace/panefleet
+git clone https://github.com/alnah/panefleet.git
+cd panefleet
 make install core      # core only, heuristic-first
 make install codex     # core + codex
 make install claude    # core + claude
