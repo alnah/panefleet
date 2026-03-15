@@ -58,6 +58,11 @@ What install does:
 - for provider targets, downloads a prebuilt Go bridge from GitHub Releases when available
 - falls back to local bridge build only if release download is unavailable and Go is present
 
+Install output contract:
+- `install core` prints `Core installed` and keeps adapter mode `heuristic-only`
+- provider installs print integration result + `Bridge: ...` + `Adapter mode: auto`
+- re-running `install all` is idempotent (no duplicate wiring in config files)
+
 ## Features
 
 - Popup board built on `tmux` and `fzf`
