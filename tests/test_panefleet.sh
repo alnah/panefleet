@@ -191,6 +191,10 @@ test_sourced_helpers() {
   # shellcheck disable=SC1090
   PANEFLEET_SOURCE_ONLY=1 source "${PANEFLEET_BIN}"
 
+  got="$(XDG_STATE_HOME="${TEST_TMPDIR}/state" PANEFLEET_AGENT_BRIDGE_BIN='' bridge_bin_path)"
+  assert_eq "$got" "${TEST_TMPDIR}/state/panefleet/bin/panefleet-agent-bridge" "bridge_bin_path should default to user state home"
+  pass "bridge_bin_path defaults to user state home"
+
   if agent_status_is_fresh "$(date +%s)" 600 "$(date +%s)"; then
     pass "agent_status_is_fresh accepts current timestamp"
   else
@@ -335,10 +339,18 @@ test_install_integrations_command() {
   local out_bin
   local mode
   local plugin_dir
+  local codex_config
+  local claude_settings
+  local codex_wrapper
+  local claude_wrapper
   local stderr_file
 
   out_bin="${TEST_TMPDIR}/bin/panefleet-agent-bridge"
   plugin_dir="${TEST_TMPDIR}/opencode-plugins"
+  codex_config="${TEST_TMPDIR}/codex/config.toml"
+  claude_settings="${TEST_TMPDIR}/claude/settings.json"
+  codex_wrapper="${REPO_ROOT}/scripts/codex-notify-bridge"
+  claude_wrapper="${REPO_ROOT}/scripts/claude-code-hook"
   stderr_file="${TEST_TMPDIR}/install-integrations.stderr"
   mkdir -p "$(dirname "$out_bin")"
   if TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install-integrations > /dev/null 2>"$stderr_file"; then
@@ -346,12 +358,16 @@ test_install_integrations_command() {
   fi
   [[ "$(cat "$stderr_file")" == *"usage: ${PANEFLEET_BIN} install-integrations codex|claude|opencode|all"* ]] || fail "install-integrations should print explicit target usage"
 
-  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install-integrations all >/dev/null
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_CODEX_CONFIG="$codex_config" PANEFLEET_CLAUDE_SETTINGS="$claude_settings" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install-integrations all >/dev/null
   [[ -x "$out_bin" ]] || fail "install-integrations should build the bridge binary"
   [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "install-integrations should install the opencode plugin file"
+  [[ -f "$codex_config" ]] || fail "install-integrations should create the codex config when needed"
+  [[ -f "$claude_settings" ]] || fail "install-integrations should create the claude settings when needed"
+  rg -Fq -- "$codex_wrapper" "$codex_config" || fail "install-integrations should wire codex notify wrapper"
+  rg -Fq -- "$claude_wrapper" "$claude_settings" || fail "install-integrations should wire claude hook wrapper"
   mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
   [[ "$mode" == "auto" ]] || fail "install-integrations should enable adapter mode in tmux"
-  pass "install-integrations builds the bridge binary"
+  pass "install-integrations wires provider integrations"
 }
 
 test_install_command() {
@@ -363,10 +379,10 @@ test_install_command() {
   out_bin="${TEST_TMPDIR}/bin/install-bridge"
   plugin_dir="${TEST_TMPDIR}/install-opencode-plugins"
 
-  output="$(TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" install core)"
+  output="$(TMUX='' TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" install core)"
   [[ "$output" == *'Load core in tmux with: tmux source-file "'* ]] || fail "install core outside tmux should print the tmux load hint"
 
-  output="$(TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install opencode)"
+  output="$(TMUX='' TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install opencode)"
   [[ "$output" == *'Bridge: built locally with Go'* ]] || fail "install opencode should report how the bridge was installed"
   [[ "$output" == *'Adapter mode will switch to auto the next time you run install inside tmux.'* ]] || fail "install opencode outside tmux should explain deferred adapter mode"
 
@@ -393,7 +409,7 @@ test_setup_command() {
   fi
   [[ "$(cat "$stderr_file")" == *"usage: ${PANEFLEET_BIN} setup core|codex|claude|opencode|all"* ]] || fail "setup should print explicit target usage"
 
-  output="$(TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" setup core)"
+  output="$(TMUX='' TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" "${PANEFLEET_BIN}" setup core)"
   [[ "$output" == *'Load core in tmux with: tmux source-file "'* ]] || fail "setup core outside tmux should print the tmux load hint"
 
   TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" setup opencode >/dev/null

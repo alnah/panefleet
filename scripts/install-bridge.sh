@@ -4,7 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${PANEFLEET_ROOT:-$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)}"
-OUTPUT_BIN="${PANEFLEET_AGENT_BRIDGE_BIN:-$REPO_ROOT/bin/panefleet-agent-bridge}"
+STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+OUTPUT_BIN="${PANEFLEET_AGENT_BRIDGE_BIN:-$STATE_HOME/panefleet/bin/panefleet-agent-bridge}"
 BRIDGE_REPO="${PANEFLEET_BRIDGE_REPO:-alnah/panefleet}"
 INSTALL_MODE="${PANEFLEET_BRIDGE_INSTALL_MODE:-auto}"
 
@@ -94,7 +95,7 @@ build_bridge() {
     return 1
   fi
 
-  PANEFLEET_ROOT="$REPO_ROOT" "${SCRIPT_DIR}/build-agent-bridge.sh"
+  PANEFLEET_ROOT="$REPO_ROOT" PANEFLEET_AGENT_BRIDGE_BIN="$OUTPUT_BIN" "${SCRIPT_DIR}/build-agent-bridge.sh"
 }
 
 main() {

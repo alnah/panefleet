@@ -49,6 +49,26 @@ self_root() {
   printf '%s' "$self_dir"
 }
 
+user_config_home() {
+  if [[ -n "${XDG_CONFIG_HOME:-}" ]]; then
+    printf '%s' "$XDG_CONFIG_HOME"
+  else
+    printf '%s/.config' "$HOME"
+  fi
+}
+
+user_state_home() {
+  if [[ -n "${XDG_STATE_HOME:-}" ]]; then
+    printf '%s' "$XDG_STATE_HOME"
+  else
+    printf '%s/.local/state' "$HOME"
+  fi
+}
+
+default_bridge_bin_path() {
+  printf '%s/panefleet/bin/panefleet-agent-bridge' "$(user_state_home)"
+}
+
 install_script_path() {
   printf '%s/scripts/install-tmux-bindings.sh' "$(self_root)"
 }
@@ -67,7 +87,7 @@ bridge_bin_path() {
     return
   fi
 
-  printf '%s/bin/panefleet-agent-bridge' "$(self_root)"
+  printf '%s' "$(default_bridge_bin_path)"
 }
 
 touch_hook_command_value() {
@@ -90,6 +110,61 @@ opencode_plugin_path() {
   printf '%s/panefleet.ts' "$(opencode_plugin_dir)"
 }
 
+codex_notify_wrapper_path() {
+  printf '%s/scripts/codex-notify-bridge' "$(self_root)"
+}
+
+codex_app_server_wrapper_path() {
+  printf '%s/scripts/codex-app-server-bridge' "$(self_root)"
+}
+
+claude_hook_wrapper_path() {
+  printf '%s/scripts/claude-code-hook' "$(self_root)"
+}
+
+opencode_event_bridge_path() {
+  printf '%s/scripts/opencode-event-bridge' "$(self_root)"
+}
+
+codex_config_path() {
+  local candidate
+
+  if [[ -n "${PANEFLEET_CODEX_CONFIG:-}" ]]; then
+    printf '%s' "$PANEFLEET_CODEX_CONFIG"
+    return
+  fi
+  if [[ -n "${CODEX_CONFIG:-}" ]]; then
+    printf '%s' "$CODEX_CONFIG"
+    return
+  fi
+
+  for candidate in "$HOME/.codex/config.toml" "$HOME/.config/codex/config.toml"; do
+    if [[ -f "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return
+    fi
+  done
+
+  printf '%s/.codex/config.toml' "$HOME"
+}
+
+claude_settings_path() {
+  if [[ -n "${PANEFLEET_CLAUDE_SETTINGS:-}" ]]; then
+    printf '%s' "$PANEFLEET_CLAUDE_SETTINGS"
+    return
+  fi
+
+  printf '%s/.claude/settings.json' "$HOME"
+}
+
+toml_escape_string() {
+  local value="$1"
+
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '%s' "$value"
+}
+
 js_escape_string() {
   local value="$1"
 
@@ -99,16 +174,17 @@ js_escape_string() {
 }
 
 ensure_bridge_binary() {
-  local root install_script output
+  local root install_script output bridge_out
 
   root="$(self_root)"
   install_script="$(install_bridge_script_path)"
+  bridge_out="$(bridge_bin_path)"
   if [[ ! -x "$install_script" ]]; then
     printf 'panefleet: missing bridge install script %s\n' "$install_script" >&2
     exit 1
   fi
 
-  if ! output="$(PANEFLEET_ROOT="$root" "$install_script" 2>&1)"; then
+  if ! output="$(PANEFLEET_ROOT="$root" PANEFLEET_AGENT_BRIDGE_BIN="$bridge_out" "$install_script" 2>&1)"; then
     printf '%s\n' "$output" >&2
     exit 1
   fi
@@ -131,7 +207,7 @@ install_opencode_plugin() {
 
   plugin_dir="$(opencode_plugin_dir)"
   plugin_path="$(opencode_plugin_path)"
-  bridge_path="$(self_root)/scripts/opencode-event-bridge"
+  bridge_path="$(opencode_event_bridge_path)"
   escaped_bridge="$(js_escape_string "$bridge_path")"
 
   mkdir -p "$plugin_dir"
@@ -165,6 +241,178 @@ export const PanefleetPlugin: Plugin = async () => {
   }
 }
 EOF
+}
+
+install_codex_integration() {
+  local config_path wrapper_path escaped_wrapper tmp_path
+
+  config_path="$(codex_config_path)"
+  wrapper_path="$(codex_notify_wrapper_path)"
+  escaped_wrapper="$(toml_escape_string "$wrapper_path")"
+  mkdir -p "$(dirname "$config_path")"
+  if [[ ! -f "$config_path" ]]; then
+    : >"$config_path"
+  fi
+
+  tmp_path="$(mktemp "${TMPDIR:-/tmp}/panefleet-codex-config.XXXXXX")"
+
+  if "${RG_BIN}" -Fq -- '# >>> panefleet codex notify >>>' "$config_path"; then
+    awk -v wrapper="$escaped_wrapper" '
+      BEGIN {
+        start = "# >>> panefleet codex notify >>>"
+        finish = "# <<< panefleet codex notify <<<"
+        in_block = 0
+      }
+      $0 == start {
+        print start
+        print "notify = [\"" wrapper "\"]"
+        print finish
+        in_block = 1
+        next
+      }
+      $0 == finish && in_block == 1 {
+        in_block = 0
+        next
+      }
+      in_block == 0 {
+        print
+      }
+    ' "$config_path" >"$tmp_path"
+  elif "${RG_BIN}" -q -e '^[[:space:]]*notify[[:space:]]*=' "$config_path"; then
+    awk -v wrapper="$escaped_wrapper" '
+      BEGIN {
+        replaced = 0
+      }
+      {
+        if (replaced == 0 && $0 ~ /^[[:space:]]*notify[[:space:]]*=/) {
+          print "notify = [\"" wrapper "\"] # managed by panefleet"
+          replaced = 1
+          next
+        }
+        print
+      }
+      END {
+        if (replaced == 0) {
+          print ""
+          print "# >>> panefleet codex notify >>>"
+          print "notify = [\"" wrapper "\"]"
+          print "# <<< panefleet codex notify <<<"
+        }
+      }
+    ' "$config_path" >"$tmp_path"
+  else
+    cat "$config_path" >"$tmp_path"
+    {
+      if [[ -s "$config_path" ]]; then
+        printf '\n'
+      fi
+      printf '# >>> panefleet codex notify >>>\n'
+      printf 'notify = ["%s"]\n' "$escaped_wrapper"
+      printf '# <<< panefleet codex notify <<<\n'
+    } >>"$tmp_path"
+  fi
+
+  mv "$tmp_path" "$config_path"
+}
+
+install_claude_integration() {
+  local settings_path wrapper_path
+
+  settings_path="$(claude_settings_path)"
+  wrapper_path="$(claude_hook_wrapper_path)"
+  mkdir -p "$(dirname "$settings_path")"
+
+  perl - "$settings_path" "$wrapper_path" <<'PERL'
+use strict;
+use warnings;
+use JSON::PP;
+
+my ($path, $command) = @ARGV;
+my $raw = q{};
+
+if (-e $path) {
+  local $/ = undef;
+  open my $fh, '<', $path or die "failed to read $path: $!";
+  $raw = <$fh> // q{};
+  close $fh;
+}
+
+my $doc = {};
+if ($raw =~ /\S/) {
+  eval { $doc = decode_json($raw); 1 } or die "invalid JSON in $path\n";
+}
+$doc = {} if ref($doc) ne 'HASH';
+
+my $hooks = $doc->{hooks};
+$hooks = {} if ref($hooks) ne 'HASH';
+$doc->{hooks} = $hooks;
+
+sub ensure_event {
+  my ($hooks_ref, $event_name, $command_path, $with_matcher) = @_;
+  my $entries = $hooks_ref->{$event_name};
+  $entries = [] if ref($entries) ne 'ARRAY';
+
+  my $exists = 0;
+  ENTRY: for my $entry (@{$entries}) {
+    next ENTRY if ref($entry) ne 'HASH';
+    my $hook_items = $entry->{hooks};
+    next ENTRY if ref($hook_items) ne 'ARRAY';
+    for my $hook (@{$hook_items}) {
+      next if ref($hook) ne 'HASH';
+      if (($hook->{type} // q{}) eq 'command' && ($hook->{command} // q{}) eq $command_path) {
+        $exists = 1;
+        last ENTRY;
+      }
+    }
+  }
+
+  if (!$exists) {
+    my %new_entry = (
+      hooks => [ { type => 'command', command => $command_path } ],
+    );
+    if ($with_matcher) {
+      $new_entry{matcher} = q{};
+    }
+    push @{$entries}, \%new_entry;
+  }
+
+  $hooks_ref->{$event_name} = $entries;
+}
+
+ensure_event($hooks, 'UserPromptSubmit', $command, 0);
+ensure_event($hooks, 'PreToolUse',      $command, 1);
+ensure_event($hooks, 'PermissionRequest', $command, 1);
+ensure_event($hooks, 'Stop',            $command, 0);
+
+my $json = JSON::PP->new->ascii->pretty->canonical->encode($doc);
+open my $out, '>', $path or die "failed to write $path: $!";
+print {$out} $json;
+close $out;
+PERL
+}
+
+codex_notify_is_wired() {
+  local config_path wrapper_path
+
+  config_path="$(codex_config_path)"
+  wrapper_path="$(codex_notify_wrapper_path)"
+  if [[ ! -f "$config_path" ]]; then
+    return 1
+  fi
+
+  "${RG_BIN}" -Fq -- "$wrapper_path" "$config_path"
+}
+
+claude_hook_is_wired() {
+  local settings_path wrapper_path
+
+  settings_path="$(claude_settings_path)"
+  wrapper_path="$(claude_hook_wrapper_path)"
+  if [[ ! -f "$settings_path" ]]; then
+    return 1
+  fi
+
+  "${RG_BIN}" -Fq -- "$wrapper_path" "$settings_path"
 }
 
 append_unique_target() {
@@ -244,18 +492,22 @@ join_by_comma_space() {
 }
 
 integration_status_codex() {
-  if bridge_present; then
-    printf 'bridge-ready'
-  else
+  if ! bridge_present; then
     printf 'bridge-missing'
+  elif ! codex_notify_is_wired; then
+    printf 'config-missing'
+  else
+    printf 'ready'
   fi
 }
 
 integration_status_claude() {
-  if bridge_present; then
-    printf 'bridge-ready'
-  else
+  if ! bridge_present; then
     printf 'bridge-missing'
+  elif ! claude_hook_is_wired; then
+    printf 'config-missing'
+  else
+    printf 'ready'
   fi
 }
 
@@ -2713,14 +2965,19 @@ install_integrations_command() {
   for target in "${PANEFLEET_INSTALL_TARGETS[@]}"; do
     case "$target" in
       codex)
+        install_codex_integration
         installed_targets+=("codex")
+        printf '  codex config: %s\n' "$(codex_config_path)"
         ;;
       claude)
+        install_claude_integration
         installed_targets+=("claude")
+        printf '  claude settings: %s\n' "$(claude_settings_path)"
         ;;
       opencode)
         install_opencode_plugin
         installed_targets+=("opencode")
+        printf '  opencode plugin: %s\n' "$(opencode_plugin_path)"
         if ! command_exists bun; then
           printf '  warning: bun is missing; OpenCode plugin loading stays unavailable until bun is installed\n'
         fi
@@ -3196,6 +3453,8 @@ doctor_command() {
     printf 'integration.codex   %s\n' "$(integration_status_codex)"
     printf 'integration.claude  %s\n' "$(integration_status_claude)"
     printf 'integration.opencode %s\n' "$(integration_status_opencode)"
+    printf 'codex.config    %s\n' "$(codex_config_path)"
+    printf 'claude.settings %s\n' "$(claude_settings_path)"
     printf 'opencode.plugin  %s\n' "$(opencode_plugin_path)"
     printf 'adapter.default  %s\n' "$adapter_default"
     printf 'key.prefix.P     %s\n' "$(binding_state P)"
