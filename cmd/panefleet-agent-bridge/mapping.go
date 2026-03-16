@@ -54,6 +54,8 @@ func mapOpenCodeEvent(payload map[string]any, lowerBlob string) string {
 		return statusError
 	case eventType == "session.status" && containsString([]string{"busy", "running", "active"}, status):
 		return statusRun
+	case eventType == "message.part.delta":
+		return statusRun
 	case strings.HasPrefix(eventType, "tool.execute.before"):
 		return statusRun
 	case strings.HasPrefix(eventType, "tool.execute.after"):
@@ -80,9 +82,14 @@ func openCodeEventType(payload map[string]any) string {
 
 func openCodeStatus(payload map[string]any) string {
 	event := mapValue(payload["event"])
+	properties := mapValue(event["properties"])
+	nestedStatus := mapValue(properties["status"])
 	status := stringValue(payload["status"])
 	if status == "" {
 		status = stringValue(event["status"])
+	}
+	if status == "" {
+		status = stringValue(nestedStatus["type"])
 	}
 	return strings.ToLower(status)
 }

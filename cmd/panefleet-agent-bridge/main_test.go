@@ -188,6 +188,34 @@ func TestMapOpenCodeEvent(t *testing.T) {
 			want:      statusRun,
 		},
 		{
+			name: "nested busy session status is run",
+			payload: map[string]any{
+				"event": map[string]any{
+					"type": "session.status",
+					"properties": map[string]any{
+						"status": map[string]any{
+							"type": "busy",
+						},
+					},
+				},
+			},
+			lowerBlob: "{}",
+			want:      statusRun,
+		},
+		{
+			name: "message delta is run",
+			payload: map[string]any{
+				"event": map[string]any{
+					"type": "message.part.delta",
+					"properties": map[string]any{
+						"delta": "hello",
+					},
+				},
+			},
+			lowerBlob: "{}",
+			want:      statusRun,
+		},
+		{
 			name:      "tool execute before is run",
 			payload:   map[string]any{"type": "tool.execute.before"},
 			lowerBlob: "{}",
