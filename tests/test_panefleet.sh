@@ -336,6 +336,11 @@ test_sourced_helpers() {
   assert_eq "$PANEFLEET_RESOLVED_STATUS" "WAIT" "resolve_uncached_state_values lets claude chooser override adapter done"
   pass "resolve_uncached_state_values lets claude chooser override adapter done"
 
+  resolve_uncached_state_values "%105" "claude" "2.1.76" "✳ Claude Code" 0 "" "$(date +%s)" $'  - permissionDecision: fallback strategy notes\n  - activeFlags: []any → []string\n\n❯' "" "DONE" "claude" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "claude-hook"
+  assert_eq "$PANEFLEET_RESOLVED_STATUS" "DONE" "resolve_uncached_state_values keeps claude done when generic permission text appears in prose"
+  assert_eq "$PANEFLEET_RESOLVED_SOURCE" "agent" "resolve_uncached_state_values keeps adapter source when claude wait heuristic does not match chooser prompt"
+  pass "resolve_uncached_state_values ignores claude wait false positive from prose text"
+
   resolve_uncached_state_values "%101" "codex" "codex-aarch64-a" "cdx" 0 "" "$(date +%s)" $'Working (2m)\nesc to interrupt' "" "DONE" "codex" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "codex-notify"
   assert_eq "$PANEFLEET_RESOLVED_STATUS" "RUN" "resolve_uncached_state_values lets codex live run override adapter done"
   assert_eq "$PANEFLEET_RESOLVED_SOURCE" "heuristic-live" "resolve_uncached_state_values reports heuristic source for codex live run override"
@@ -344,6 +349,16 @@ test_sourced_helpers() {
   resolve_uncached_state_values "%101" "codex" "codex-aarch64-a" "cdx" 0 "" "$(date +%s)" $'/permissions\nSelect permission\nEnter to confirm · Esc to cancel' "" "DONE" "codex" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "codex-notify"
   assert_eq "$PANEFLEET_RESOLVED_STATUS" "WAIT" "resolve_uncached_state_values lets codex live wait override adapter done"
   pass "resolve_uncached_state_values lets codex live wait override adapter done"
+
+  resolve_uncached_state_values "%102" "opencode" "opencode" "OC | Greeting" 0 "" "$(date +%s)" $'filler\nfiller\nAsk anything...\nctrl+p commands\ntab agents' "" "RUN" "opencode" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "opencode-plugin"
+  assert_eq "$PANEFLEET_RESOLVED_STATUS" "DONE" "resolve_uncached_state_values lets opencode live done override adapter run"
+  assert_eq "$PANEFLEET_RESOLVED_SOURCE" "heuristic-live" "resolve_uncached_state_values reports heuristic source for opencode run override"
+  pass "resolve_uncached_state_values lets opencode live done override adapter run"
+
+  resolve_uncached_state_values "%102" "opencode" "opencode" "OC | Greeting" 0 "" "$(date +%s)" $'filler\nfiller\nAsk anything...\nctrl+p commands\ntab agents' "" "WAIT" "opencode" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "opencode-plugin"
+  assert_eq "$PANEFLEET_RESOLVED_STATUS" "DONE" "resolve_uncached_state_values clears opencode wait when no visible wait prompt exists"
+  assert_eq "$PANEFLEET_RESOLVED_SOURCE" "heuristic-live" "resolve_uncached_state_values reports heuristic source when opencode wait is cleared"
+  pass "resolve_uncached_state_values clears stale opencode wait without visible chooser prompt"
 
   resolve_uncached_state_values "%103" "shell" "zsh" "$HOME/workspace" 0 "" "$(date +%s)" $'prompt' "" "RUN" "claude" "$(date +%s)" "" "" 10 45 600 "$(date +%s)" "claude-hook"
   assert_eq "$PANEFLEET_RESOLVED_STATUS" "IDLE" "resolve_uncached_state_values ignores fresh claude adapter state on shell pane"

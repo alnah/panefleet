@@ -1223,7 +1223,7 @@ claude_is_working() {
 claude_is_waiting() {
   local capture="$1"
 
-  contains_line "$capture" 'Enter to confirm|Esc to cancel|Do you want to|approval|required|choose an option|select an option|Yes, proceed|No, cancel|Permission|/permissions|Allow Ask Deny|Press .*navigate|allow all edits|allow once|deny'
+  contains_line "$capture" 'Enter to confirm|Esc to cancel|Do you want to|approval required|waiting on approval|choose an option|select an option|Yes, proceed|No, cancel|/permissions|Allow Ask Deny|Press .*navigate|allow all edits|allow once|deny once|deny all'
 }
 
 claude_is_done() {

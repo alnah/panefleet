@@ -291,6 +291,27 @@ resolve_uncached_state_values() {
         fi
       fi
     fi
+    if [[ "$tool" == "opencode" ]]; then
+      if [[ -z "$capture" ]]; then
+        capture="$(pane_visible_capture "$pane_id")"
+      fi
+      if [[ -n "$capture" ]]; then
+        live_override="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
+        if [[ "$raw_status" == "RUN" ]]; then
+          if [[ "$live_override" == "WAIT" || "$live_override" == "DONE" || "$live_override" == "IDLE" || "$live_override" == "ERROR" ]]; then
+            raw_status="$live_override"
+            source="heuristic-live"
+            reason="opencode live state overrides adapter RUN"
+          fi
+        elif [[ "$raw_status" == "WAIT" ]]; then
+          if [[ "$live_override" == "RUN" || "$live_override" == "DONE" || "$live_override" == "IDLE" || "$live_override" == "ERROR" ]]; then
+            raw_status="$live_override"
+            source="heuristic-live"
+            reason="opencode live state overrides adapter WAIT"
+          fi
+        fi
+      fi
+    fi
     status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
     if [[ -z "$source" ]]; then
       source="agent"
