@@ -1400,6 +1400,34 @@ refresh_panes_cache() {
   done < <(pane_records "$(cache_refresh_record_format)")
 }
 
+refresh_generation_file() {
+  printf '%s/panefleet/refresh-cache.generation' "$(user_state_home)"
+}
+
+current_refresh_generation() {
+  local generation_file value
+
+  generation_file="$(refresh_generation_file)"
+  value="$(cat "$generation_file" 2>/dev/null || printf '0')"
+  if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+    value="0"
+  fi
+  printf '%s' "$value"
+}
+
+advance_refresh_generation() {
+  local generation_file generation_dir current next tmp
+
+  generation_file="$(refresh_generation_file)"
+  generation_dir="$(dirname "$generation_file")"
+  mkdir -p "$generation_dir" 2>/dev/null || return
+  current="$(current_refresh_generation)"
+  next=$(( current + 1 ))
+  tmp="$(mktemp "${TMPDIR:-/tmp}/panefleet-refresh-generation.XXXXXX")"
+  printf '%s\n' "$next" >"$tmp"
+  mv "$tmp" "$generation_file"
+}
+
 run_refresh_request() {
   local scope="$1"
   shift
@@ -1407,10 +1435,12 @@ run_refresh_request() {
 
   if [[ "$scope" == "panes" && ${#pane_ids[@]} -gt 0 ]]; then
     "$SELF" refresh-panes-cache "${pane_ids[@]}" >/dev/null 2>&1
+    advance_refresh_generation
     return
   fi
 
   "$SELF" refresh-panes-cache >/dev/null 2>&1
+  advance_refresh_generation
 }
 
 write_pending_refresh_request() {
@@ -1526,6 +1556,57 @@ queue_refresh_command() {
 
   runtime_log_event "heuristic_refresh_queued" scope "$scope" count "${#pane_ids[@]}"
   queue_refresh_request "$scope" "${pane_ids[@]}"
+}
+
+board_repaint_cache_command() {
+  local cache_file=""
+  local state_file=""
+  local current_generation last_generation tmp
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --cache-file)
+        cache_file="${2:-}"
+        shift 2
+        ;;
+      --state-file)
+        state_file="${2:-}"
+        shift 2
+        ;;
+      *)
+        printf 'unknown board-repaint-cache option: %s\n' "$1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  if [[ -z "$cache_file" || -z "$state_file" ]]; then
+    printf 'board-repaint-cache requires --cache-file and --state-file\n' >&2
+    exit 1
+  fi
+
+  current_generation="$(current_refresh_generation)"
+  last_generation="$(cat "$state_file" 2>/dev/null || printf '')"
+  if [[ ! "$last_generation" =~ ^[0-9]+$ ]]; then
+    last_generation=""
+  fi
+
+  if [[ ! -s "$cache_file" || "$current_generation" != "$last_generation" ]]; then
+    tmp="$(mktemp "${TMPDIR:-/tmp}/panefleet-board-cache.XXXXXX")"
+    if ! PANEFLEET_LIST_FAST=1 list_rows >"$tmp"; then
+      rm -f "$tmp"
+      if [[ -s "$cache_file" ]]; then
+        cat "$cache_file"
+        return
+      fi
+      PANEFLEET_LIST_FAST=1 list_rows
+      return
+    fi
+    mv "$tmp" "$cache_file"
+    printf '%s\n' "$current_generation" >"$state_file"
+  fi
+
+  cat "$cache_file"
 }
 
 schedule_refresh_panes() {
@@ -2690,7 +2771,9 @@ list_rows() {
 
   sort -t $'\t' -k3,3n -k4,4nr "$rows_file"
   rm -f "$rows_file"
-  schedule_refresh_panes "$PANEFLEET_REFRESH_QUEUE"
+  if ! list_fast_mode_enabled; then
+    schedule_refresh_panes "$PANEFLEET_REFRESH_QUEUE"
+  fi
 }
 
 preview_row() {
@@ -2744,15 +2827,14 @@ jump_to_pane() {
 }
 
 board_header_navigation() {
-  local enter_hint list_hint stale_hint reload_hint sep
+  local enter_hint list_hint stale_hint sep
 
   enter_hint="$(paint_fg "[↵]" "$THEME_ACCENT" "1") $(paint_fg "jump" "$THEME_MUTED")"
   list_hint="$(paint_fg "[↑↓]" "$THEME_ACCENT" "1") $(paint_fg "list" "$THEME_MUTED")"
   stale_hint="$(paint_fg "[ctrl-s]" "$THEME_ACCENT" "1") $(paint_fg "stale" "$THEME_MUTED")"
-  reload_hint="$(paint_fg "[ctrl-r]" "$THEME_ACCENT" "1") $(paint_fg "reload" "$THEME_MUTED")"
   sep="$(paint_fg " · " "$THEME_BORDER")"
 
-  printf '%s%s%s%s%s%s%s' "$enter_hint" "$sep" "$list_hint" "$sep" "$stale_hint" "$sep" "$reload_hint"
+  printf '%s%s%s%s%s' "$enter_hint" "$sep" "$list_hint" "$sep" "$stale_hint"
 }
 
 open_board() {
@@ -2760,7 +2842,19 @@ open_board() {
   require_runtime_support
   resolve_theme
   local rc
+  local cache_dir cache_file state_file board_token
+  local initial_generation repaint_command
   local -a fzf_args
+
+  cache_dir="$(user_state_home)/panefleet/board-cache"
+  mkdir -p "$cache_dir" 2>/dev/null || true
+  board_token="${$}-$(now_epoch)"
+  cache_file="${cache_dir}/rows-${board_token}.tsv"
+  state_file="${cache_dir}/state-${board_token}.txt"
+  initial_generation="$(current_refresh_generation)"
+  PANEFLEET_LIST_FAST=1 list_rows >"$cache_file"
+  printf '%s\n' "$initial_generation" >"$state_file"
+  repaint_command="sleep 0.8; \"${SELF}\" board-repaint-cache --cache-file \"${cache_file}\" --state-file \"${state_file}\""
 
   fzf_args=(
     --ansi
@@ -2783,15 +2877,16 @@ open_board() {
     --bind "up:up+execute-silent(${SELF} queue-refresh --pane {1})"
     --bind "down:down+execute-silent(${SELF} queue-refresh --pane {1})"
     --bind "change:execute-silent(${SELF} queue-refresh --all)"
-    --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+execute-silent(${SELF} queue-refresh --pane {1})+reload(${SELF} list-fast)"
-    --bind "ctrl-r:execute-silent(${SELF} queue-refresh --all)+reload(${SELF} list-fast)"
+    --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+execute-silent(${SELF} queue-refresh --pane {1})"
+    --bind "load:reload(${repaint_command})"
   )
   "$SELF" queue-refresh --all >/dev/null 2>&1 || true
 
   set +e
-  PANEFLEET_LIST_FAST=1 list_rows | "${FZF_BIN}" "${fzf_args[@]}"
+  "${FZF_BIN}" "${fzf_args[@]}" <"$cache_file"
   rc=$?
   set -e
+  rm -f "$cache_file" "$state_file"
 
   case "$rc" in
     0|1|130)
@@ -3555,6 +3650,10 @@ main() {
     queue-refresh)
       shift
       queue_refresh_command "$@"
+      ;;
+    board-repaint-cache)
+      shift
+      board_repaint_cache_command "$@"
       ;;
     touch)
       shift
