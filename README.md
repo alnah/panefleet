@@ -56,8 +56,7 @@ What install does:
 
 - checks and installs missing runtime dependencies with the detected package manager
 - installs tmux bindings (`prefix + P`, `prefix + T`)
-- for provider targets, downloads a prebuilt Go bridge from GitHub Releases when available
-- falls back to local bridge build only if release download is unavailable and Go is present
+- for provider targets, downloads a prebuilt Go bridge from GitHub Releases
 
 Install output contract:
 
