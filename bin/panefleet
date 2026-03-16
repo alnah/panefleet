@@ -1400,6 +1400,134 @@ refresh_panes_cache() {
   done < <(pane_records "$(cache_refresh_record_format)")
 }
 
+run_refresh_request() {
+  local scope="$1"
+  shift
+  local -a pane_ids=("$@")
+
+  if [[ "$scope" == "panes" && ${#pane_ids[@]} -gt 0 ]]; then
+    "$SELF" refresh-panes-cache "${pane_ids[@]}" >/dev/null 2>&1
+    return
+  fi
+
+  "$SELF" refresh-panes-cache >/dev/null 2>&1
+}
+
+write_pending_refresh_request() {
+  local pending_file="$1"
+  local scope="$2"
+  shift 2
+  local pending_tmp pane_id
+
+  pending_tmp="$(mktemp "${TMPDIR:-/tmp}/panefleet-refresh-pending.XXXXXX")"
+  {
+    printf '%s\n' "$scope"
+    for pane_id in "$@"; do
+      printf '%s\n' "$pane_id"
+    done
+  } >"$pending_tmp"
+  mv "$pending_tmp" "$pending_file"
+}
+
+load_pending_refresh_request() {
+  local pending_file="$1"
+  local line
+  local first_line="1"
+
+  PANEFLEET_PENDING_SCOPE="all"
+  PANEFLEET_PENDING_ARGS=()
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$first_line" == "1" ]]; then
+      if [[ "$line" == "panes" ]]; then
+        PANEFLEET_PENDING_SCOPE="panes"
+      else
+        PANEFLEET_PENDING_SCOPE="all"
+      fi
+      first_line="0"
+      continue
+    fi
+
+    if [[ -n "$line" ]]; then
+      PANEFLEET_PENDING_ARGS+=("$line")
+    fi
+  done <"$pending_file"
+}
+
+queue_refresh_request() {
+  local scope="$1"
+  shift
+  local queue_root lock_dir lock_parent pending_file
+  local -a pane_ids=("$@")
+  local pending_scope="all"
+  local -a pending_args=()
+
+  queue_root="$(user_state_home)/panefleet"
+  lock_dir="${queue_root}/refresh-cache.lock"
+  pending_file="${queue_root}/refresh-cache.pending"
+  lock_parent="$(dirname "$lock_dir")"
+
+  if ! mkdir -p "$lock_parent" 2>/dev/null; then
+    (run_refresh_request "$scope" "${pane_ids[@]}") &
+    return
+  fi
+
+  if ! mkdir "$lock_dir" 2>/dev/null; then
+    write_pending_refresh_request "$pending_file" "$scope" "${pane_ids[@]}"
+    return
+  fi
+
+  (
+    trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
+
+    run_refresh_request "$scope" "${pane_ids[@]}"
+    while [[ -s "$pending_file" ]]; do
+      load_pending_refresh_request "$pending_file"
+      pending_scope="$PANEFLEET_PENDING_SCOPE"
+      pending_args=("${PANEFLEET_PENDING_ARGS[@]}")
+      rm -f "$pending_file"
+      run_refresh_request "$pending_scope" "${pending_args[@]}"
+    done
+  ) &
+}
+
+queue_refresh_command() {
+  local scope="all"
+  local pane_id
+  local -a pane_ids=()
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --all)
+        scope="all"
+        pane_ids=()
+        shift
+        ;;
+      --pane)
+        if (( $# < 2 )); then
+          printf 'queue-refresh requires value after --pane\n' >&2
+          exit 1
+        fi
+        pane_id="${2:-}"
+        if [[ -z "$pane_id" || "$pane_id" == "__header__" ]]; then
+          shift 2
+          continue
+        fi
+        scope="panes"
+        pane_ids+=("$pane_id")
+        shift 2
+        ;;
+      *)
+        printf 'unknown queue-refresh option: %s\n' "$1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  runtime_log_event "heuristic_refresh_queued" scope "$scope" count "${#pane_ids[@]}"
+  queue_refresh_request "$scope" "${pane_ids[@]}"
+}
+
 schedule_refresh_panes() {
   local panes="$1"
   local pane_id
@@ -1420,8 +1548,7 @@ schedule_refresh_panes() {
   fi
 
   runtime_log_event "heuristic_refresh_scheduled" count "${#args[@]}"
-
-  ("$SELF" refresh-panes-cache "${args[@]}" >/dev/null 2>&1 &)
+  queue_refresh_request "panes" "${args[@]}"
 }
 
 should_sync_refresh_now() {
@@ -1430,6 +1557,10 @@ should_sync_refresh_now() {
   local cached_raw_status="$3"
   local sync_refresh_count="$4"
   local age
+
+  if [[ "${PANEFLEET_FORCE_SYNC_REFRESH:-0}" == "1" ]]; then
+    return 0
+  fi
 
   if (( sync_refresh_count >= 6 )); then
     return 1
@@ -2331,6 +2462,10 @@ list_runtime_defaults() {
   fi
 }
 
+list_fast_mode_enabled() {
+  [[ "${PANEFLEET_LIST_FAST:-0}" == "1" ]]
+}
+
 resolve_list_row_values() {
   local pane_id="$1"
   local cmd="$2"
@@ -2377,7 +2512,17 @@ resolve_list_row_values() {
   fi
 
   if [[ "$force_live_refresh" == "1" ]] || cache_refresh_needed "$local_status" "$cached_signature" "$signature" "$cached_raw_status"; then
-    if should_sync_refresh_now "$PANEFLEET_NOW" "${activity:-0}" "$cached_raw_status" "$PANEFLEET_SYNC_REFRESH_COUNT"; then
+    if list_fast_mode_enabled; then
+      PANEFLEET_REFRESH_QUEUE+="$pane_id"$'\n'
+      raw_status="$(fallback_raw_status "$cached_raw_status" "$tool" "$cmd" "$dead" "$dead_status")"
+      if [[ -n "$cached_raw_status" ]]; then
+        source="heuristic-cache"
+        reason="deferred refresh in fast mode"
+      else
+        source="default"
+        reason="fast mode without cache"
+      fi
+    elif should_sync_refresh_now "$PANEFLEET_NOW" "${activity:-0}" "$cached_raw_status" "$PANEFLEET_SYNC_REFRESH_COUNT"; then
       refresh_record="$(refresh_pane_cache_record "$pane_id" "${activity:-0}" "$signature" "$cmd" "$title" "$dead" "$dead_status" "$last_done")"
       IFS="$PANEFIELD_SEP" read -r tool raw_status last_done <<<"$refresh_record"
       PANEFLEET_SYNC_REFRESH_COUNT=$(( PANEFLEET_SYNC_REFRESH_COUNT + 1 ))
@@ -2615,27 +2760,36 @@ open_board() {
   require_runtime_support
   resolve_theme
   local rc
+  local -a fzf_args
+
+  fzf_args=(
+    --ansi
+    --color="$(fzf_color_spec)"
+    --delimiter=$'\t'
+    --with-nth=6
+    --header-lines=1
+    --header-lines-border=line
+    --no-sort
+    --layout=reverse
+    --height=100%
+    --border=none
+    --info=inline-right
+    --prompt='panefleet> '
+    --header="$(board_header_navigation)"
+    --separator='─'
+    --preview "${SELF} preview {1}"
+    --preview-window='bottom,55%,border-top,wrap,follow,~9'
+    --bind "enter:execute-silent(${SELF} jump {1} {2})+abort"
+    --bind "up:up+execute-silent(${SELF} queue-refresh --pane {1})"
+    --bind "down:down+execute-silent(${SELF} queue-refresh --pane {1})"
+    --bind "change:execute-silent(${SELF} queue-refresh --all)"
+    --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+execute-silent(${SELF} queue-refresh --pane {1})+reload(${SELF} list-fast)"
+    --bind "ctrl-r:execute-silent(${SELF} queue-refresh --all)+reload(${SELF} list-fast)"
+  )
+  "$SELF" queue-refresh --all >/dev/null 2>&1 || true
+
   set +e
-  list_rows | "${FZF_BIN}" \
-    --ansi \
-    --color="$(fzf_color_spec)" \
-    --delimiter=$'\t' \
-    --with-nth=6 \
-    --header-lines=1 \
-    --header-lines-border=line \
-    --no-sort \
-    --layout=reverse \
-    --height=100% \
-    --border=none \
-    --info=inline-right \
-    --prompt='panefleet> ' \
-    --header="$(board_header_navigation)" \
-    --separator='─' \
-    --preview "${SELF} preview {1}" \
-    --preview-window='bottom,55%,border-top,wrap,follow,~9' \
-    --bind "enter:execute-silent(${SELF} jump {1} {2})+abort" \
-    --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+reload(${SELF} list)" \
-    --bind "ctrl-r:reload(${SELF} list)"
+  PANEFLEET_LIST_FAST=1 list_rows | "${FZF_BIN}" "${fzf_args[@]}"
   rc=$?
   set -e
 
@@ -3326,6 +3480,9 @@ main() {
     list)
       list_rows
       ;;
+    list-fast)
+      PANEFLEET_LIST_FAST=1 list_rows
+      ;;
     preview)
       shift
       preview_row "$@"
@@ -3395,12 +3552,16 @@ main() {
       shift
       refresh_panes_cache "$@"
       ;;
+    queue-refresh)
+      shift
+      queue_refresh_command "$@"
+      ;;
     touch)
       shift
       target_pane="${1:-$("${TMUX_BIN}" display-message -p '#{pane_id}')}"
       set_pane_option "$target_pane" @panefleet_last_touch "$(now_epoch)"
       runtime_log_event "pane_touch" pane "$target_pane"
-      ("$SELF" refresh-panes-cache "$target_pane" >/dev/null 2>&1 &)
+      queue_refresh_request "panes" "$target_pane"
       ;;
     *)
       printf 'unknown command: %s\n' "$command" >&2
