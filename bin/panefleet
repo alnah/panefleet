@@ -237,6 +237,9 @@ install_opencode_plugin() {
     printf 'panefleet: missing opencode plugin template %s\n' "$template_path" >&2
     exit 1
   fi
+  if [[ -L "$plugin_path" ]]; then
+    rm -f "$plugin_path"
+  fi
   sed "s|__PANEFLEET_BRIDGE_PATH__|$sed_bridge|g" "$template_path" >"$plugin_path"
 }
 
