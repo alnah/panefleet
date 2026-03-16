@@ -1428,9 +1428,10 @@ resolve_live_raw_state_values() {
   local dead="$5"
   local dead_status="$6"
   local capture="${7:-}"
-  local tool capture_tool raw_status
+  local tool capture_tool raw_status source reason live_reason
 
-  PANEFLEET_RESOLVED_SOURCE=""
+  source="heuristic-live"
+  reason=""
   PANEFLEET_RESOLVED_REASON=""
   tool="$initial_tool"
   if [[ -z "$tool" ]]; then
@@ -1440,9 +1441,9 @@ resolve_live_raw_state_values() {
   if [[ "$dead" == "1" || "$tool" == "shell" ]]; then
     raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
     if [[ "$dead" == "1" ]]; then
-      PANEFLEET_RESOLVED_REASON="dead pane exit=${dead_status:-unknown}"
+      reason="dead pane exit=${dead_status:-unknown}"
     else
-      PANEFLEET_RESOLVED_REASON="shell inferred from process"
+      reason="shell inferred from process"
     fi
   else
     if [[ -z "$capture" ]]; then
@@ -1458,12 +1459,30 @@ resolve_live_raw_state_values() {
         tool="$capture_tool"
       fi
     fi
+    PANEFLEET_RESOLVED_REASON=""
     raw_status="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
+    live_reason="${PANEFLEET_RESOLVED_REASON:-}"
+    if [[ -n "$live_reason" ]]; then
+      reason="$live_reason"
+    fi
   fi
 
   PANEFLEET_RESOLVED_TOOL="$tool"
   PANEFLEET_RESOLVED_RAW_STATUS="$raw_status"
-  PANEFLEET_RESOLVED_SOURCE="heuristic-live"
+  PANEFLEET_RESOLVED_SOURCE="$source"
+  PANEFLEET_RESOLVED_REASON="$reason"
+}
+
+resolve_live_raw_state_record() {
+  resolve_live_raw_state_values "$@"
+  printf '%s%s%s%s%s%s%s\n' \
+    "$PANEFLEET_RESOLVED_TOOL" \
+    "$PANEFIELD_SEP" \
+    "$PANEFLEET_RESOLVED_RAW_STATUS" \
+    "$PANEFIELD_SEP" \
+    "$PANEFLEET_RESOLVED_SOURCE" \
+    "$PANEFIELD_SEP" \
+    "$PANEFLEET_RESOLVED_REASON"
 }
 
 # resolve_uncached_state_values is the authority for merging manual override,
@@ -1488,10 +1507,11 @@ resolve_uncached_state_values() {
   local agent_status_max_age="${17}"
   local now="${18}"
   local agent_source_value="${19:-}"
-  local tool raw_status status live_override
+  local tool raw_status status live_override source reason
+  local live_record live_tool live_raw live_source live_reason
 
-  PANEFLEET_RESOLVED_SOURCE=""
-  PANEFLEET_RESOLVED_REASON=""
+  source=""
+  reason=""
   tool="$initial_tool"
   raw_status=""
   status=""
@@ -1507,36 +1527,39 @@ resolve_uncached_state_values() {
       fi
 
       if [[ "$live_override" != "RUN" && "$live_override" != "WAIT" ]]; then
-        resolve_live_raw_state_values "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "$capture"
-        tool="$PANEFLEET_RESOLVED_TOOL"
-        live_override="$PANEFLEET_RESOLVED_RAW_STATUS"
+        live_record="$(resolve_live_raw_state_record "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "$capture")"
+        IFS="$PANEFIELD_SEP" read -r live_tool live_raw live_source live_reason <<<"$live_record"
+        tool="$live_tool"
+        live_override="$live_raw"
+        source="$live_source"
+        reason="$live_reason"
       fi
 
       if [[ "$live_override" == "RUN" || "$live_override" == "WAIT" ]]; then
         clear_manual_state "$pane_id"
         raw_status="$live_override"
         status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
-        if [[ -z "${PANEFLEET_RESOLVED_SOURCE:-}" ]]; then
-          PANEFLEET_RESOLVED_SOURCE="agent"
+        if [[ -z "$source" ]]; then
+          source="agent"
         fi
-        PANEFLEET_RESOLVED_REASON="manual stale override cleared by active ${raw_status}"
+        reason="manual stale override cleared by active ${raw_status}"
       else
         raw_status="$local_status"
         status="$local_status"
-        PANEFLEET_RESOLVED_SOURCE="manual"
-        PANEFLEET_RESOLVED_REASON="manual status override"
+        source="manual"
+        reason="manual status override"
       fi
     else
       raw_status="$local_status"
       status="$local_status"
-      PANEFLEET_RESOLVED_SOURCE="manual"
-      PANEFLEET_RESOLVED_REASON="manual status override"
+      source="manual"
+      reason="manual status override"
     fi
   elif [[ "$dead" == "1" ]]; then
     raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
     status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
-    PANEFLEET_RESOLVED_SOURCE="process"
-    PANEFLEET_RESOLVED_REASON="dead pane exit=${dead_status:-unknown}"
+    source="process"
+    reason="dead pane exit=${dead_status:-unknown}"
   elif [[ "${PANEFLEET_ADAPTERS_ENABLED:-1}" == "1" ]] && [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$agent_status_max_age" "$now" && agent_state_matches_live_tool "$tool" "$agent_tool_value"; then
     local live_override=""
 
@@ -1552,8 +1575,8 @@ resolve_uncached_state_values() {
         live_override="$(adapter_status "$pane_id" "$tool" "$cmd" "$dead" "$dead_status" "$capture")"
         if [[ "$live_override" == "RUN" || "$live_override" == "WAIT" ]]; then
           raw_status="$live_override"
-          PANEFLEET_RESOLVED_SOURCE="heuristic-live"
-          PANEFLEET_RESOLVED_REASON="codex live state overrides adapter ${agent_status_value}"
+          source="heuristic-live"
+          reason="codex live state overrides adapter ${agent_status_value}"
         fi
       fi
     fi
@@ -1565,30 +1588,49 @@ resolve_uncached_state_values() {
         capture="$(claude_focus_capture "$capture")"
         if claude_is_waiting "$capture"; then
           raw_status="WAIT"
-          PANEFLEET_RESOLVED_SOURCE="heuristic-live"
-          PANEFLEET_RESOLVED_REASON="claude chooser overrides adapter ${agent_status_value}"
+          source="heuristic-live"
+          reason="claude chooser overrides adapter ${agent_status_value}"
         fi
       fi
     fi
     status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
-    if [[ -z "${PANEFLEET_RESOLVED_SOURCE:-}" ]]; then
-      PANEFLEET_RESOLVED_SOURCE="agent"
+    if [[ -z "$source" ]]; then
+      source="agent"
       if [[ -n "$agent_source_value" ]]; then
-        PANEFLEET_RESOLVED_REASON="fresh adapter state from ${agent_source_value}"
+        reason="fresh adapter state from ${agent_source_value}"
       else
-        PANEFLEET_RESOLVED_REASON="fresh adapter state"
+        reason="fresh adapter state"
       fi
     fi
   else
-    resolve_live_raw_state_values "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "$capture"
-    tool="$PANEFLEET_RESOLVED_TOOL"
-    raw_status="$PANEFLEET_RESOLVED_RAW_STATUS"
+    live_record="$(resolve_live_raw_state_record "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "$capture")"
+    IFS="$PANEFIELD_SEP" read -r live_tool live_raw live_source live_reason <<<"$live_record"
+    tool="$live_tool"
+    raw_status="$live_raw"
+    source="$live_source"
+    reason="$live_reason"
     status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$done_recent_minutes" "$stale_minutes" "$now")"
   fi
 
   PANEFLEET_RESOLVED_TOOL="$tool"
   PANEFLEET_RESOLVED_RAW_STATUS="$raw_status"
   PANEFLEET_RESOLVED_STATUS="$status"
+  PANEFLEET_RESOLVED_SOURCE="$source"
+  PANEFLEET_RESOLVED_REASON="$reason"
+}
+
+resolve_uncached_state_record() {
+  resolve_uncached_state_values "$@"
+  printf '%s%s%s%s%s%s%s%s%s\n' \
+    "$PANEFLEET_RESOLVED_TOOL" \
+    "$PANEFIELD_SEP" \
+    "$PANEFLEET_RESOLVED_RAW_STATUS" \
+    "$PANEFIELD_SEP" \
+    "$PANEFLEET_RESOLVED_STATUS" \
+    "$PANEFIELD_SEP" \
+    "$PANEFLEET_RESOLVED_SOURCE" \
+    "$PANEFIELD_SEP" \
+    "$PANEFLEET_RESOLVED_REASON"
 }
 
 refresh_pane_cache_metadata() {
@@ -1628,12 +1670,14 @@ refresh_pane_cache_core() {
   local dead_status="$7"
   local last_done="${8:-}"
   local now tool capture raw_status normalized_last_done
+  local live_record live_tool live_raw _live_source _live_reason
 
   tool="$(tool_kind "$cmd" "$title")"
   capture="$(pane_recent_capture "$pane_id")"
-  resolve_live_raw_state_values "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "$capture"
-  tool="$PANEFLEET_RESOLVED_TOOL"
-  raw_status="$PANEFLEET_RESOLVED_RAW_STATUS"
+  live_record="$(resolve_live_raw_state_record "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "$capture")"
+  IFS="$PANEFIELD_SEP" read -r live_tool live_raw _live_source _live_reason <<<"$live_record"
+  tool="$live_tool"
+  raw_status="$live_raw"
   normalized_last_done="$last_done"
 
   set_cached_state "$pane_id" "$signature" "$raw_status" "$tool"
@@ -2634,9 +2678,13 @@ resolve_list_row_values() {
   local cached_signature="${14}"
   local cached_raw_status="${15}"
   local cached_tool="${16}"
-  local tool raw_status status refresh_record=""
+  local agent_source_value="${17:-}"
+  local tool raw_status status source reason refresh_record=""
+  local uncached_record uncached_tool uncached_raw uncached_status uncached_source uncached_reason
   local force_live_refresh="0"
 
+  source=""
+  reason=""
   tool="$(tool_kind "$cmd" "$title")"
   if [[ -n "$cached_tool" && ( "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ) ]]; then
     tool="$cached_tool"
@@ -2647,7 +2695,13 @@ resolve_list_row_values() {
   fi
 
   if [[ -n "$local_status" || "$dead" == "1" || -n "$agent_status_value" ]]; then
-    resolve_uncached_state_values "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$PANEFLEET_DONE_RECENT_MINUTES" "$PANEFLEET_STALE_MINUTES" "$PANEFLEET_AGENT_STATUS_MAX_AGE" "$PANEFLEET_NOW" "$agent_source_value"
+    uncached_record="$(resolve_uncached_state_record "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$PANEFLEET_DONE_RECENT_MINUTES" "$PANEFLEET_STALE_MINUTES" "$PANEFLEET_AGENT_STATUS_MAX_AGE" "$PANEFLEET_NOW" "$agent_source_value")"
+    IFS="$PANEFIELD_SEP" read -r uncached_tool uncached_raw uncached_status uncached_source uncached_reason <<<"$uncached_record"
+    PANEFLEET_RESOLVED_TOOL="$uncached_tool"
+    PANEFLEET_RESOLVED_RAW_STATUS="$uncached_raw"
+    PANEFLEET_RESOLVED_STATUS="$uncached_status"
+    PANEFLEET_RESOLVED_SOURCE="$uncached_source"
+    PANEFLEET_RESOLVED_REASON="$uncached_reason"
     PANEFLEET_RESOLVED_LAST_DONE="$last_done"
     return
   fi
@@ -2657,33 +2711,33 @@ resolve_list_row_values() {
       refresh_record="$(refresh_pane_cache_record "$pane_id" "${activity:-0}" "$signature" "$cmd" "$title" "$dead" "$dead_status" "$last_done")"
       IFS="$PANEFIELD_SEP" read -r tool raw_status last_done <<<"$refresh_record"
       PANEFLEET_SYNC_REFRESH_COUNT=$(( PANEFLEET_SYNC_REFRESH_COUNT + 1 ))
-      PANEFLEET_RESOLVED_SOURCE="heuristic-live"
-      if [[ -z "$PANEFLEET_RESOLVED_REASON" ]]; then
+      source="heuristic-live"
+      if [[ -z "$reason" ]]; then
         if [[ "$force_live_refresh" == "1" ]]; then
-          PANEFLEET_RESOLVED_REASON="recent pane activity forced live refresh"
+          reason="recent pane activity forced live refresh"
         else
-          PANEFLEET_RESOLVED_REASON="sync cache refresh"
+          reason="sync cache refresh"
         fi
       fi
     else
       PANEFLEET_REFRESH_QUEUE+="$pane_id"$'\n'
       raw_status="$(fallback_raw_status "$cached_raw_status" "$tool" "$cmd" "$dead" "$dead_status")"
       if [[ -n "$cached_raw_status" ]]; then
-        PANEFLEET_RESOLVED_SOURCE="heuristic-cache"
-        PANEFLEET_RESOLVED_REASON="deferred refresh using cached state"
+        source="heuristic-cache"
+        reason="deferred refresh using cached state"
       else
-        PANEFLEET_RESOLVED_SOURCE="default"
-        PANEFLEET_RESOLVED_REASON="deferred refresh without cache"
+        source="default"
+        reason="deferred refresh without cache"
       fi
     fi
   else
     raw_status="$(fallback_raw_status "$cached_raw_status" "$tool" "$cmd" "$dead" "$dead_status")"
     if [[ -n "$cached_raw_status" ]]; then
-      PANEFLEET_RESOLVED_SOURCE="heuristic-cache"
-      PANEFLEET_RESOLVED_REASON="cache signature match"
+      source="heuristic-cache"
+      reason="cache signature match"
     else
-      PANEFLEET_RESOLVED_SOURCE="default"
-      PANEFLEET_RESOLVED_REASON="no cache available"
+      source="default"
+      reason="no cache available"
     fi
   fi
 
@@ -2698,6 +2752,8 @@ resolve_list_row_values() {
   PANEFLEET_RESOLVED_TOOL="$tool"
   PANEFLEET_RESOLVED_RAW_STATUS="$raw_status"
   PANEFLEET_RESOLVED_STATUS="$status"
+  PANEFLEET_RESOLVED_SOURCE="$source"
+  PANEFLEET_RESOLVED_REASON="$reason"
   PANEFLEET_RESOLVED_LAST_DONE="$last_done"
 }
 
@@ -2811,7 +2867,7 @@ list_rows() {
   list_header >"$rows_file"
   while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool; do
     : "${agent_source_value:=}" "${agent_updated_at_value:=}"
-    resolve_list_row_values "$pane_id" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$signature" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$cached_signature" "$cached_raw_status" "$cached_tool"
+    resolve_list_row_values "$pane_id" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$signature" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$cached_signature" "$cached_raw_status" "$cached_tool" "$agent_source_value"
     tool="$PANEFLEET_RESOLVED_TOOL"
     status="$PANEFLEET_RESOLVED_STATUS"
     build_list_row "$pane_id" "$session_name" "$window_index" "$pane_index" "$path" "${activity:-0}" "$tool" "$status" "$window_name" >>"$rows_file"
@@ -2826,6 +2882,7 @@ preview_row() {
   local pane_id="${1:?pane_id is required}"
   local status cmd title path short_path session_name window_index pane_index window_name dead dead_status activity
   local agent_status_value agent_tool_value agent_updated_at_value
+  local uncached_record uncached_tool uncached_raw uncached_status _uncached_source _uncached_reason
 
   require_runtime_support
   resolve_theme
@@ -2842,9 +2899,10 @@ preview_row() {
   agent_tool_value="$(agent_tool "$pane_id")"
   agent_updated_at_value="$(agent_updated_at "$pane_id")"
   if [[ -z "$status" ]]; then
-    resolve_uncached_state_values "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$capture" "" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$(pane_option "$pane_id" @panefleet_last_touch)" "$(pane_option "$pane_id" @panefleet_last_done)" "$PANEFLEET_DONE_RECENT_MINUTES" "$PANEFLEET_STALE_MINUTES" "$PANEFLEET_AGENT_STATUS_MAX_AGE" "$PANEFLEET_NOW" "$(agent_source "$pane_id")"
-    tool="$PANEFLEET_RESOLVED_TOOL"
-    status="$PANEFLEET_RESOLVED_STATUS"
+    uncached_record="$(resolve_uncached_state_record "$pane_id" "$tool" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$capture" "" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$(pane_option "$pane_id" @panefleet_last_touch)" "$(pane_option "$pane_id" @panefleet_last_done)" "$PANEFLEET_DONE_RECENT_MINUTES" "$PANEFLEET_STALE_MINUTES" "$PANEFLEET_AGENT_STATUS_MAX_AGE" "$PANEFLEET_NOW" "$(agent_source "$pane_id")")"
+    IFS="$PANEFIELD_SEP" read -r uncached_tool uncached_raw uncached_status _uncached_source _uncached_reason <<<"$uncached_record"
+    tool="$uncached_tool"
+    status="$uncached_status"
   fi
 
   short_path="${path/#$HOME/\~}"
@@ -3347,7 +3405,7 @@ state_inspect_values() {
   require_runtime_support
   list_runtime_defaults
   IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool <<<"$(full_pane_record "$pane_id")"
-  resolve_list_row_values "$pane_id" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$signature" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$cached_signature" "$cached_raw_status" "$cached_tool"
+  resolve_list_row_values "$pane_id" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$signature" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$cached_signature" "$cached_raw_status" "$cached_tool" "$agent_source_value"
 
   PANEFLEET_INSPECT_SESSION_NAME="$session_name"
   PANEFLEET_INSPECT_WINDOW_INDEX="$window_index"
@@ -3437,7 +3495,7 @@ render_state_snapshot() {
   rows_file="$(mktemp "${TMPDIR:-/tmp}/panefleet-state-snapshot.XXXXXX")"
 
   while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool; do
-    resolve_list_row_values "$pane_id" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$signature" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$cached_signature" "$cached_raw_status" "$cached_tool"
+    resolve_list_row_values "$pane_id" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$signature" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$cached_signature" "$cached_raw_status" "$cached_tool" "$agent_source_value"
     tool="$PANEFLEET_RESOLVED_TOOL"
     status="$PANEFLEET_RESOLVED_STATUS"
     fresh="$(agent_freshness_label "$agent_updated_at_value" "$PANEFLEET_NOW" "$PANEFLEET_AGENT_STATUS_MAX_AGE")"
