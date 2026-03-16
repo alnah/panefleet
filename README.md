@@ -84,7 +84,7 @@ Board behavior:
 - `ctrl-s` toggles a manual `STALE` override on the selected pane (without waiting for auto-stale timing).
 - When the pane becomes active again (`RUN` or `WAIT`), the manual `STALE` override is cleared automatically.
 - The preview pane shows the selected pane metadata plus as many visible trailing lines as fit.
-- `ctrl-r` reloads the board content without leaving the popup.
+- Board content refreshes automatically while the popup stays open.
 - `bin/panefleet state-clear --pane <pane_id>` clears manual and adapter overrides for one pane.
 
 ## Status model
