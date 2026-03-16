@@ -8,8 +8,6 @@ Panefleet started as a way to reduce context switching across tmux windows and s
 
 So I wanted easier, and faster navigation. And I needed to see the worker states in one place: `RUN`, `DONE`, `IDLE`, `STALE`, and `WAIT`. When several workers are active, it is easy to forget that one pane is waiting for approval, that another one finished, or that a third one has gone stale. Keeping those states visible reduces the cognitive load of orchestrating the work and makes parallel sessions much easier to manage.
 
-If better hooks become available later, or if bridge distribution gets simpler, panefleet can use them. For now, it stays focused on a practical tmux workboard with portable defaults and known limitations.
-
 ## Table of contents
 
 - [Installation](#installation)
