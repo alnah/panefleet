@@ -4,9 +4,9 @@
 
 ![Panefleet demo](assets/demo.gif)
 
-Panefleet started as a way to reduce context switching across tmux windows and sessions while running Codex, Claude Code, and OpenCode in parallel. The agents can produce strong code, but I still need to track the production chain around them: implementation, behavior checks, security, testability, refactors, optimization, and portability across several chat sessions and projects at once.
+Panefleet started as a way to reduce context switching across tmux windows and sessions while running Codex, Claude Code, and OpenCode in parallel. The agents can produce strong code, but I still needed to track the the states between ~20 windows -/+ 3-4 sessions. So when you need to deal with different phases of the production like implementation, behavior checks, security, testability, refactors, optimization, portability, and more, across several chat sessions and projects at once, it gets really exhausting!
 
-The useful part is not only faster navigation. It is seeing the worker states in one place: `RUN`, `DONE`, `IDLE`, `STALE`, `WAIT`, and the rest. When several workers are active, it is easy to forget that one pane is waiting for approval, that another one finished, or that a third one has gone stale. Keeping those states visible reduces the cognitive load of orchestrating the work and makes parallel sessions much easier to manage.
+So I wanted easier, and faster navigation. And I needed to see the worker states in one place: `RUN`, `DONE`, `IDLE`, `STALE`, and `WAIT`. When several workers are active, it is easy to forget that one pane is waiting for approval, that another one finished, or that a third one has gone stale. Keeping those states visible reduces the cognitive load of orchestrating the work and makes parallel sessions much easier to manage.
 
 If better hooks become available later, or if bridge distribution gets simpler, panefleet can use them. For now, it stays focused on a practical tmux workboard with portable defaults and known limitations.
 
@@ -33,6 +33,7 @@ panefleet doctor --install
 ```
 
 Install targets:
+
 - `core`: heuristic-only runtime (no bridge)
 - `codex`: core + Codex integration
 - `claude`: core + Claude integration
@@ -54,12 +55,14 @@ make doctor
 </details>
 
 What install does:
+
 - checks and installs missing runtime dependencies with the detected package manager
 - installs tmux bindings (`prefix + P`, `prefix + T`)
 - for provider targets, downloads a prebuilt Go bridge from GitHub Releases when available
 - falls back to local bridge build only if release download is unavailable and Go is present
 
 Install output contract:
+
 - `install core` prints `Core installed` and keeps adapter mode `heuristic-only`
 - provider installs print integration result + `Bridge: ...` + `Adapter mode: auto`
 - re-running `install all` is idempotent and reports `Bridge: already installed`
