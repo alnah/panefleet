@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# Wrapper kept intentionally thin: fail fast when bridge is missing, then
+# delegate OpenCode event interpretation to the Go bridge.
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"

@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# install-deps.sh installs only the minimum runtime tools required by panefleet.
+# It keeps dependency ownership explicit: core deps are automatic, optional Go is
+# opt-in to avoid surprising users who only consume release binaries.
+
 with_go="0"
 missing_packages=()
 package_manager=""
@@ -33,6 +37,8 @@ run_install() {
   "$@"
 }
 
+# append_missing_package tracks missing commands first, then performs one package
+# manager call, which keeps install output predictable and easier to audit.
 append_missing_package() {
   local command_name="$1"
   local package_name="$2"
@@ -42,6 +48,8 @@ append_missing_package() {
   fi
 }
 
+# detect_package_manager intentionally supports only common package managers.
+# Unsupported systems fail fast with a manual list instead of guessing.
 detect_package_manager() {
   if command -v brew >/dev/null 2>&1; then
     package_manager="brew"

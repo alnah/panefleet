@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# panefleet is a tmux workboard focused on reducing context-switch overhead.
+# State detection combines adapter signals (when available) with heuristics so
+# core behavior remains functional even without provider-specific integrations.
+
 TMUX_BIN="${TMUX_BIN:-tmux}"
 FZF_BIN="${FZF_BIN:-fzf}"
 SELF="${0}"
@@ -578,6 +582,8 @@ preflight() {
   fi
 }
 
+# require_runtime_support is used by interactive commands so users get one clear
+# actionable error instead of partial rendering failures later in the flow.
 require_runtime_support() {
   if ! preflight --quiet; then
     printf 'panefleet preflight failed; run %s preflight\n' "$SELF" >&2
@@ -1349,6 +1355,8 @@ idle_or_stale_status_values() {
   fi
 }
 
+# effective_status_values turns a raw lifecycle signal into a user-facing state.
+# It preserves active states immediately and ages completion into idle/stale.
 effective_status_values() {
   local raw_status="$1"
   local fallback_activity="$2"
@@ -1458,6 +1466,8 @@ resolve_live_raw_state_values() {
   PANEFLEET_RESOLVED_SOURCE="heuristic-live"
 }
 
+# resolve_uncached_state_values is the authority for merging manual override,
+# adapter freshness, and heuristic fallback into a single stable state.
 resolve_uncached_state_values() {
   local pane_id="$1"
   local initial_tool="$2"
@@ -2954,6 +2964,8 @@ matching_hook_count() {
   printf '%s' "${count:-0}"
 }
 
+# install_command is the single user-facing install entrypoint.
+# It keeps wiring idempotent and ensures provider setup always includes core setup.
 install_command() {
   local root target="${1:-core}"
 
@@ -3054,6 +3066,8 @@ set_adapter_mode_auto_with_message() {
   fi
 }
 
+# install_integrations_targets wires provider adapters and keeps bridge setup
+# centralized, so each provider install path shares the same reliability checks.
 install_integrations_targets() {
   local target
 
@@ -3222,6 +3236,8 @@ open_theme_popup() {
     "${SELF} theme-select"
 }
 
+# state_set_command is a machine-oriented API used by bridges/hooks.
+# It validates required fields so bad adapter payloads fail fast and loudly.
 state_set_command() {
   local pane_id="" status="" tool="" source="" updated_at=""
 
@@ -3284,6 +3300,8 @@ state_clear_command() {
   clear_agent_state "$pane_id"
 }
 
+# state_stale_command lets operators force STALE as a temporary override.
+# The override is intentionally toggle-based to keep manual recovery quick.
 state_stale_command() {
   local pane_id=""
 
@@ -3565,6 +3583,8 @@ doctor_command() {
   rm -f "$rows_file"
 }
 
+# main keeps CLI routing explicit to preserve a stable command contract for
+# wrappers, tests, and tmux hook invocations.
 main() {
   local command="${1:-board}"
 

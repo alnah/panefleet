@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# install-tmux-bindings.sh wires panefleet into tmux without mutating unrelated
+# user config. It only sets defaults that are still unset and appends hooks idempotently.
+
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="${PANEFLEET_ROOT:-$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)}"
 PANEFLEET_BIN="${PLUGIN_ROOT}/bin/panefleet"
@@ -23,6 +26,7 @@ set_default_option @panefleet-agent-status-max-age-seconds "${PANEFLEET_AGENT_ST
 set_default_option @panefleet-adapter-mode "${PANEFLEET_ADAPTER_MODE:-heuristic-only}"
 set_default_option @panefleet-theme "${PANEFLEET_THEME:-panefleet-dark}"
 
+# ensure_hook appends only missing hooks so repeated installs stay safe.
 ensure_hook() {
   local hook_name="$1"
   local hook_command="$2"
@@ -40,6 +44,8 @@ touch_hook_command() {
   printf 'run-shell -b "%s touch \\"#{pane_id}\\""' "$PANEFLEET_BIN"
 }
 
+# remove_panefleet_touch_hooks cleans old panefleet-generated hook entries only.
+# It avoids deleting user hooks that happen to share the same tmux hook name.
 remove_panefleet_touch_hooks() {
   local hook_name="$1"
   local hook_ref

@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# test.sh runs the project quality gates in CI/local with a fixed order:
+# compile/tests first, then shell static checks, then contract regressions.
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 cd "$REPO_ROOT"

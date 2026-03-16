@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# build-agent-bridge.sh exists for explicit local builds when release binaries
+# are unavailable. It is intentionally tiny so build behavior stays transparent.
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_BIN="${PANEFLEET_AGENT_BRIDGE_BIN:-$REPO_ROOT/bin/panefleet-agent-bridge}"

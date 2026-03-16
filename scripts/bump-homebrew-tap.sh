@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+# bump-homebrew-tap.sh updates only the formula URL/SHA for a tagged release.
+# It fails loudly in CI when credentials are missing so release automation does
+# not silently publish binaries without updating install surfaces.
+
 REPO_SLUG="${PANEFLEET_REPO_SLUG:-alnah/panefleet}"
 TAP_REPO="${PANEFLEET_HOMEBREW_TAP_REPO:-alnah/homebrew-tap}"
 FORMULA_PATH="${PANEFLEET_HOMEBREW_FORMULA_PATH:-Formula/panefleet.rb}"

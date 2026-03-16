@@ -16,6 +16,10 @@ import (
 	"time"
 )
 
+// panefleet-agent-bridge converts provider-specific events into panefleet states.
+// It exists to keep tmux-side heuristics simple while allowing explicit state
+// updates when providers expose machine-readable events.
+
 const (
 	statusRun   = "RUN"
 	statusWait  = "WAIT"
@@ -51,6 +55,9 @@ func main() {
 	}
 }
 
+// runClaudeHook maps Claude hook payloads to panefleet states.
+// It is intentionally tolerant of missing/partial payloads so Claude flows are
+// not blocked when hooks misfire or emit unknown events.
 func runClaudeHook(ctx context.Context, args []string) error {
 	pane, _, err := parsePaneArgs("claude-hook", args)
 	if err != nil {
@@ -81,6 +88,8 @@ func runClaudeHook(ctx context.Context, args []string) error {
 	return applyMappedState(ctx, pane, "claude", "claude-hook", eventID, state, reason)
 }
 
+// mapClaudeHookEvent keeps Claude mapping conservative to avoid false positives.
+// Unknown events are ignored so heuristic fallback can still decide state.
 func mapClaudeHookEvent(event, lowerBlob string) (string, string) {
 	switch {
 	case containsString([]string{"PreToolUse", "UserPromptSubmit"}, event):
@@ -96,6 +105,8 @@ func mapClaudeHookEvent(event, lowerBlob string) (string, string) {
 	}
 }
 
+// runCodexNotify handles one-shot Codex notifications that represent completion.
+// This path exists because notify events may arrive without a long-lived stream.
 func runCodexNotify(ctx context.Context, args []string) error {
 	pane, rest, err := parsePaneArgs("codex-notify", args)
 	if err != nil {
@@ -121,6 +132,8 @@ func runCodexNotify(ctx context.Context, args []string) error {
 	return nil
 }
 
+// runCodexAppServer consumes Codex status-change stream events and updates state.
+// Non-status events are logged and ignored to keep the state machine stable.
 func runCodexAppServer(ctx context.Context, args []string) error {
 	pane, _, err := parsePaneArgs("codex-app-server", args)
 	if err != nil {
@@ -162,6 +175,8 @@ func runCodexAppServer(ctx context.Context, args []string) error {
 	return nil
 }
 
+// runOpenCodeEvent maps OpenCode plugin events to panefleet states.
+// It accepts shape variations in payloads to stay resilient across plugin changes.
 func runOpenCodeEvent(ctx context.Context, args []string) error {
 	pane, _, err := parsePaneArgs("opencode-event", args)
 	if err != nil {
@@ -195,6 +210,8 @@ func notificationPayload(args []string) ([]byte, error) {
 	return readAll(os.Stdin)
 }
 
+// parsePaneArgs centralizes pane resolution so all bridge entrypoints share
+// the same precedence rules (flag, env, tmux pane).
 func parsePaneArgs(command string, args []string) (string, []string, error) {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -214,6 +231,8 @@ func readLoggedStdinJSONPayload(source, pane string) (map[string]any, []byte, st
 	return payload, raw, eventID, ok, nil
 }
 
+// decodeLoggedJSONPayload always emits a decision trail before mapping.
+// This improves incident debugging when provider payloads drift.
 func decodeLoggedJSONPayload(source, pane string, raw []byte) (map[string]any, string, bool) {
 	eventID := nextEventID()
 	if len(bytes.TrimSpace(raw)) == 0 {
@@ -229,6 +248,8 @@ func decodeLoggedJSONPayload(source, pane string, raw []byte) (map[string]any, s
 	return payload, eventID, true
 }
 
+// mapCodexStatus translates Codex structured status into panefleet lifecycle states.
+// It prefers explicit waiting flags over generic activity to avoid hiding approvals.
 func mapCodexStatus(payload map[string]any) string {
 	params := mapValue(payload["params"])
 	status := mapValue(params["status"])
@@ -249,6 +270,8 @@ func mapCodexStatus(payload map[string]any) string {
 	}
 }
 
+// mapOpenCodeEvent handles OpenCode event variants and infers a stable lifecycle.
+// It intentionally prioritizes explicit error/permission signals over generic busy.
 func mapOpenCodeEvent(payload map[string]any, lowerBlob string) string {
 	event := mapValue(payload["event"])
 	eventType := stringValue(payload["type"])
@@ -338,6 +361,8 @@ func activeFlags(status map[string]any) []string {
 	return flags
 }
 
+// setState delegates writes to the panefleet CLI so bridge logic stays stateless
+// and all persistence rules remain in a single place.
 func setState(ctx context.Context, pane, status, tool, source string) error {
 	args := []string{
 		"state-set",
@@ -350,6 +375,8 @@ func setState(ctx context.Context, pane, status, tool, source string) error {
 	return runPanefleet(ctx, args...)
 }
 
+// applyMappedState records why a mapping was applied (or skipped) before returning.
+// The extra logging is critical when users report "state stuck" issues.
 func applyMappedState(ctx context.Context, pane, tool, source, eventID, status, reason string) error {
 	if status == "" {
 		logDecision(source, pane, eventID, "ignored", "", reason, "")
@@ -363,6 +390,8 @@ func applyMappedState(ctx context.Context, pane, tool, source, eventID, status, 
 	return nil
 }
 
+// runPanefleet applies a hard timeout to prevent provider hooks from hanging.
+// Fast failure keeps editor/agent workflows responsive even when tmux is busy.
 func runPanefleet(ctx context.Context, args ...string) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, bridgeTimeout())
 	defer cancel()
@@ -393,6 +422,8 @@ func ioReadAll(file *os.File) ([]byte, error) {
 	return buf.Bytes(), err
 }
 
+// defaultPane resolves the active pane from explicit bridge env first.
+// This allows wrappers to target panes reliably outside the immediate shell context.
 func defaultPane() string {
 	if pane := os.Getenv("PANEFLEET_PANE"); pane != "" {
 		return pane
@@ -400,6 +431,8 @@ func defaultPane() string {
 	return os.Getenv("TMUX_PANE")
 }
 
+// panefleetBin keeps a deterministic fallback path for source installs.
+// Environment override is preferred so package-manager installs can inject paths.
 func panefleetBin() string {
 	if bin := os.Getenv("PANEFLEET_BIN"); bin != "" {
 		return bin
@@ -411,6 +444,8 @@ func panefleetBin() string {
 	return filepath.Join(home, ".tmux", "plugins", "panefleet", "bin", "panefleet")
 }
 
+// bridgeTimeout enforces bounded hook latency and accepts runtime override.
+// Invalid overrides fail closed to the default timeout.
 func bridgeTimeout() time.Duration {
 	raw := os.Getenv("PANEFLEET_BRIDGE_TIMEOUT_MS")
 	if raw == "" {
@@ -428,6 +463,8 @@ func nextEventID() string {
 	return strconv.FormatInt(time.Now().UTC().UnixNano(), 36)
 }
 
+// logPayload writes raw provider payloads for post-mortem debugging.
+// Logging is opt-in to avoid persistent event data by default.
 func logPayload(source, pane, eventID string, raw []byte) {
 	logDir := os.Getenv("PANEFLEET_EVENT_LOG_DIR")
 	if logDir == "" {
@@ -476,6 +513,8 @@ func logPayload(source, pane, eventID string, raw []byte) {
 	_, _ = file.Write(append(encoded, '\n'))
 }
 
+// logDecision records the bridge decision path next to payload logs.
+// Keeping decision and payload in the same stream helps diff mapping regressions.
 func logDecision(source, pane, eventID, decision, status, reason, errText string) {
 	logDir := os.Getenv("PANEFLEET_EVENT_LOG_DIR")
 	if logDir == "" {
