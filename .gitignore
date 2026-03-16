@@ -49,7 +49,7 @@ tmp/
 
 bin/.tmp/
 bin/panefleet-agent-bridge
-panefleet-agent-bridge
+/panefleet-agent-bridge
 out/
 
 .local/
