@@ -2,20 +2,12 @@
 
 set -euo pipefail
 
-# Wrapper kept intentionally thin: fail fast when bridge is missing, then
-# delegate all Claude event parsing/state mapping to the Go bridge.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+TARGET="${SCRIPT_DIR}/../integrations/claude/claude-code-hook"
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
-BRIDGE_BIN="${PANEFLEET_AGENT_BRIDGE_BIN:-$STATE_HOME/panefleet/bin/panefleet-agent-bridge}"
-PANEFLEET_CMD="$(command -v panefleet 2>/dev/null || printf '%s/bin/panefleet' "$REPO_ROOT")"
-export PANEFLEET_EVENT_LOG_DIR="${PANEFLEET_EVENT_LOG_DIR:-$HOME/.local/state/panefleet/events}"
-
-if [[ ! -x "$BRIDGE_BIN" ]]; then
-  printf 'panefleet: missing compiled bridge %s\n' "$BRIDGE_BIN" >&2
-  printf 'install it with %s install claude\n' "$PANEFLEET_CMD" >&2
+if [[ ! -x "$TARGET" ]]; then
+  printf 'panefleet: missing integration wrapper %s\n' "$TARGET" >&2
   exit 1
 fi
 
-exec "$BRIDGE_BIN" claude-hook "$@"
+exec "$TARGET" "$@"

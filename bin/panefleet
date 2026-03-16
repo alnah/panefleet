@@ -139,6 +139,10 @@ opencode_event_bridge_path() {
   printf '%s/scripts/opencode-event-bridge' "$(self_root)"
 }
 
+opencode_plugin_template_path() {
+  printf '%s/integrations/opencode/panefleet.ts.template' "$(self_root)"
+}
+
 codex_config_path() {
   local candidate
 
@@ -219,44 +223,21 @@ ensure_bridge_binary() {
 }
 
 install_opencode_plugin() {
-  local plugin_dir plugin_path bridge_path escaped_bridge
+  local plugin_dir plugin_path bridge_path template_path escaped_bridge sed_bridge
 
   plugin_dir="$(opencode_plugin_dir)"
   plugin_path="$(opencode_plugin_path)"
   bridge_path="$(opencode_event_bridge_path)"
+  template_path="$(opencode_plugin_template_path)"
   escaped_bridge="$(js_escape_string "$bridge_path")"
+  sed_bridge="${escaped_bridge//&/\\&}"
 
   mkdir -p "$plugin_dir"
-  cat >"$plugin_path" <<EOF
-import { Plugin } from "@opencode-ai/plugin"
-
-const bridgePath = process.env.PANEFLEET_OPENCODE_BRIDGE || "${escaped_bridge}"
-
-export const PanefleetPlugin: Plugin = async () => {
-  const pane = process.env.PANEFLEET_PANE || process.env.TMUX_PANE || ""
-
-  return {
-    event: async ({ event }) => {
-      if (!pane) {
-        return
-      }
-
-      const payload = JSON.stringify({ event })
-      const proc = Bun.spawn([bridgePath, "--pane", pane], {
-        stdin: "pipe",
-        stdout: "ignore",
-        stderr: "inherit",
-      })
-
-      if (proc.stdin) {
-        await proc.stdin.write(payload)
-        await proc.stdin.end()
-      }
-      await proc.exited
-    },
-  }
-}
-EOF
+  if [[ ! -f "$template_path" ]]; then
+    printf 'panefleet: missing opencode plugin template %s\n' "$template_path" >&2
+    exit 1
+  fi
+  sed "s|__PANEFLEET_BRIDGE_PATH__|$sed_bridge|g" "$template_path" >"$plugin_path"
 }
 
 install_codex_integration() {
