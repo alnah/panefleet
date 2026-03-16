@@ -350,31 +350,42 @@ sub ensure_event {
   my $entries = $hooks_ref->{$event_name};
   $entries = [] if ref($entries) ne 'ARRAY';
 
-  my $exists = 0;
+  my @clean_entries = ();
   ENTRY: for my $entry (@{$entries}) {
     next ENTRY if ref($entry) ne 'HASH';
     my $hook_items = $entry->{hooks};
     next ENTRY if ref($hook_items) ne 'ARRAY';
+
+    my @kept_hooks = ();
     for my $hook (@{$hook_items}) {
-      next if ref($hook) ne 'HASH';
-      if (($hook->{type} // q{}) eq 'command' && ($hook->{command} // q{}) eq $command_path) {
-        $exists = 1;
-        last ENTRY;
+      if (ref($hook) ne 'HASH') {
+        push @kept_hooks, $hook;
+        next;
       }
+
+      my $hook_type = $hook->{type} // q{};
+      my $hook_cmd  = $hook->{command} // q{};
+      if ($hook_type eq 'command' && $hook_cmd ne q{} && $hook_cmd =~ m{claude-code-hook$} && $hook_cmd =~ /panefleet/) {
+        next;
+      }
+
+      push @kept_hooks, $hook;
     }
+
+    next ENTRY if @kept_hooks == 0;
+    my %clean_entry = %{$entry};
+    $clean_entry{hooks} = \@kept_hooks;
+    push @clean_entries, \%clean_entry;
   }
 
-  if (!$exists) {
-    my %new_entry = (
-      hooks => [ { type => 'command', command => $command_path } ],
-    );
-    if ($with_matcher) {
-      $new_entry{matcher} = q{};
-    }
-    push @{$entries}, \%new_entry;
+  my %new_entry = (
+    hooks => [ { type => 'command', command => $command_path } ],
+  );
+  if ($with_matcher) {
+    $new_entry{matcher} = q{};
   }
-
-  $hooks_ref->{$event_name} = $entries;
+  push @clean_entries, \%new_entry;
+  $hooks_ref->{$event_name} = \@clean_entries;
 }
 
 ensure_event($hooks, 'UserPromptSubmit', $command, 0);

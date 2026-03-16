@@ -534,12 +534,19 @@ test_cli_surface_contract() {
 test_runtime_install_contract() {
   local contract_root
   local case_root bridge_bin plugin_dir codex_config claude_settings
+  local old_codex_wrapper old_claude_wrapper_a old_claude_wrapper_b custom_claude_hook
+  local old_opencode_bridge
   local output doctor_output mode
   local codex_wrapper claude_wrapper
 
   contract_root="${TEST_TMPDIR}/runtime-contract"
   codex_wrapper="${REPO_ROOT}/scripts/codex-notify-bridge"
   claude_wrapper="${REPO_ROOT}/scripts/claude-code-hook"
+  old_codex_wrapper="/opt/homebrew/Cellar/panefleet/0.3.0/libexec/scripts/codex-notify-bridge"
+  old_claude_wrapper_a="/opt/homebrew/Cellar/panefleet/0.3.0/libexec/scripts/claude-code-hook"
+  old_claude_wrapper_b="/opt/homebrew/Cellar/panefleet/0.3.2/libexec/scripts/claude-code-hook"
+  custom_claude_hook="${TEST_TMPDIR}/custom-hooks/claude-custom-hook"
+  old_opencode_bridge="/opt/homebrew/Cellar/panefleet/0.3.0/libexec/scripts/opencode-event-bridge"
 
   # core
   reset_fake_tmux_fixture
@@ -566,11 +573,18 @@ test_runtime_install_contract() {
   plugin_dir="${case_root}/opencode/plugins"
   codex_config="${case_root}/codex/config.toml"
   claude_settings="${case_root}/claude/settings.json"
+  mkdir -p "$(dirname "$codex_config")"
+  cat >"$codex_config" <<EOF
+# >>> panefleet codex notify >>>
+notify = ["${old_codex_wrapper}"]
+# <<< panefleet codex notify <<<
+EOF
   output="$(run_install_target_in_fake_tmux codex "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
   [[ "$output" == *"Integration installed: codex"* ]] || fail "install codex should report codex integration"
   [[ "$output" == *"Bridge: built locally with Go"* ]] || fail "install codex should report local bridge build in tests"
   [[ "$output" == *"Adapter mode: auto"* ]] || fail "install codex should enable adapter mode"
   rg -Fq -- "$codex_wrapper" "$codex_config" || fail "install codex should wire codex config"
+  ! rg -Fq -- "$old_codex_wrapper" "$codex_config" || fail "install codex should remove stale codex wrapper path"
   mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
   [[ "$mode" == "auto" ]] || fail "install codex should set adapter mode auto"
   doctor_output="$(run_doctor_install_in_fake_tmux "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
@@ -586,11 +600,58 @@ test_runtime_install_contract() {
   plugin_dir="${case_root}/opencode/plugins"
   codex_config="${case_root}/codex/config.toml"
   claude_settings="${case_root}/claude/settings.json"
+  mkdir -p "$(dirname "$claude_settings")" "$(dirname "$custom_claude_hook")"
+  cat >"$custom_claude_hook" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$custom_claude_hook"
+  cat >"$claude_settings" <<EOF
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${old_claude_wrapper_a}" },
+          { "type": "command", "command": "${custom_claude_hook}" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "${old_claude_wrapper_b}" }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "${old_claude_wrapper_a}" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${old_claude_wrapper_b}" }
+        ]
+      }
+    ]
+  }
+}
+EOF
   output="$(run_install_target_in_fake_tmux claude "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
   [[ "$output" == *"Integration installed: claude"* ]] || fail "install claude should report claude integration"
   [[ "$output" == *"Bridge: built locally with Go"* ]] || fail "install claude should report local bridge build in tests"
   [[ "$output" == *"Adapter mode: auto"* ]] || fail "install claude should enable adapter mode"
   rg -Fq -- "$claude_wrapper" "$claude_settings" || fail "install claude should wire claude settings"
+  ! rg -Fq -- "$old_claude_wrapper_a" "$claude_settings" || fail "install claude should remove stale wrapper path 0.3.0"
+  ! rg -Fq -- "$old_claude_wrapper_b" "$claude_settings" || fail "install claude should remove stale wrapper path 0.3.2"
+  [[ "$(rg -F --count "$claude_wrapper" "$claude_settings")" == "4" ]] || fail "install claude should keep one hook command per claude event"
+  [[ "$(rg -F --count "$custom_claude_hook" "$claude_settings")" == "1" ]] || fail "install claude should preserve non-panefleet custom hooks"
   mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
   [[ "$mode" == "auto" ]] || fail "install claude should set adapter mode auto"
   doctor_output="$(run_doctor_install_in_fake_tmux "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
@@ -606,11 +667,17 @@ test_runtime_install_contract() {
   plugin_dir="${case_root}/opencode/plugins"
   codex_config="${case_root}/codex/config.toml"
   claude_settings="${case_root}/claude/settings.json"
+  mkdir -p "$plugin_dir"
+  cat >"${plugin_dir}/panefleet.ts" <<EOF
+const bridgePath = process.env.PANEFLEET_OPENCODE_BRIDGE || "${old_opencode_bridge}"
+EOF
   output="$(run_install_target_in_fake_tmux opencode "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
   [[ "$output" == *"Integration installed: opencode"* ]] || fail "install opencode should report opencode integration"
   [[ "$output" == *"Bridge: built locally with Go"* ]] || fail "install opencode should report local bridge build in tests"
   [[ "$output" == *"Adapter mode: auto"* ]] || fail "install opencode should enable adapter mode"
   [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "install opencode should install plugin file"
+  ! rg -Fq -- "$old_opencode_bridge" "${plugin_dir}/panefleet.ts" || fail "install opencode should remove stale bridge path in plugin file"
+  rg -Fq -- 'process.env.PANEFLEET_OPENCODE_BRIDGE ||' "${plugin_dir}/panefleet.ts" || fail "install opencode should keep bridge env override in plugin file"
   mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
   [[ "$mode" == "auto" ]] || fail "install opencode should set adapter mode auto"
   doctor_output="$(run_doctor_install_in_fake_tmux "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
