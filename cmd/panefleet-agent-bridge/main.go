@@ -27,11 +27,19 @@ const (
 	statusError = "ERROR"
 
 	defaultBridgeTimeout = 2 * time.Second
+	// defaultScannerBufferSize keeps Scanner's small allocation behavior for common
+	// payloads while maxScannerTokenBytes prevents long JSON events from failing.
+	defaultScannerBufferSize = 64 * 1024
+	maxScannerTokenBytes     = 2 * 1024 * 1024
 )
+
+func usageLine() string {
+	return fmt.Sprintf("usage: %s <claude-hook|codex-app-server|codex-notify|opencode-event> [flags]", filepath.Base(os.Args[0]))
+}
 
 func main() {
 	if len(os.Args) < 2 {
-		fatalf("usage: %s <claude-hook|codex-app-server|opencode-event> [flags]", filepath.Base(os.Args[0]))
+		fatalf("%s", usageLine())
 	}
 
 	ctx := context.Background()
@@ -47,7 +55,7 @@ func main() {
 	case "opencode-event":
 		err = runOpenCodeEvent(ctx, os.Args[2:])
 	default:
-		fatalf("usage: %s <claude-hook|codex-app-server|codex-notify|opencode-event> [flags]", filepath.Base(os.Args[0]))
+		fatalf("%s", usageLine())
 	}
 
 	if err != nil {
@@ -59,11 +67,11 @@ func main() {
 // It is intentionally tolerant of missing/partial payloads so Claude flows are
 // not blocked when hooks misfire or emit unknown events.
 func runClaudeHook(ctx context.Context, args []string) error {
-	pane, _, err := parsePaneArgs("claude-hook", args)
+	pane, _, skip, err := parsePaneOrSkip("claude-hook", args)
 	if err != nil {
 		return err
 	}
-	if pane == "" {
+	if skip {
 		return nil
 	}
 
@@ -108,11 +116,11 @@ func mapClaudeHookEvent(event, lowerBlob string) (string, string) {
 // runCodexNotify handles one-shot Codex notifications that represent completion.
 // This path exists because notify events may arrive without a long-lived stream.
 func runCodexNotify(ctx context.Context, args []string) error {
-	pane, rest, err := parsePaneArgs("codex-notify", args)
+	pane, rest, skip, err := parsePaneOrSkip("codex-notify", args)
 	if err != nil {
 		return err
 	}
-	if pane == "" {
+	if skip {
 		return nil
 	}
 
@@ -135,15 +143,16 @@ func runCodexNotify(ctx context.Context, args []string) error {
 // runCodexAppServer consumes Codex status-change stream events and updates state.
 // Non-status events are logged and ignored to keep the state machine stable.
 func runCodexAppServer(ctx context.Context, args []string) error {
-	pane, _, err := parsePaneArgs("codex-app-server", args)
+	pane, _, skip, err := parsePaneOrSkip("codex-app-server", args)
 	if err != nil {
 		return err
 	}
-	if pane == "" {
+	if skip {
 		return nil
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Buffer(make([]byte, 0, defaultScannerBufferSize), maxScannerTokenBytes)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -178,11 +187,11 @@ func runCodexAppServer(ctx context.Context, args []string) error {
 // runOpenCodeEvent maps OpenCode plugin events to panefleet states.
 // It accepts shape variations in payloads to stay resilient across plugin changes.
 func runOpenCodeEvent(ctx context.Context, args []string) error {
-	pane, _, err := parsePaneArgs("opencode-event", args)
+	pane, _, skip, err := parsePaneOrSkip("opencode-event", args)
 	if err != nil {
 		return err
 	}
-	if pane == "" {
+	if skip {
 		return nil
 	}
 
@@ -220,6 +229,17 @@ func parsePaneArgs(command string, args []string) (string, []string, error) {
 		return "", nil, err
 	}
 	return *pane, fs.Args(), nil
+}
+
+func parsePaneOrSkip(command string, args []string) (pane string, rest []string, skip bool, err error) {
+	pane, rest, err = parsePaneArgs(command, args)
+	if err != nil {
+		return "", nil, false, err
+	}
+	if pane == "" {
+		return "", rest, true, nil
+	}
+	return pane, rest, false, nil
 }
 
 func readLoggedStdinJSONPayload(source, pane string) (map[string]any, []byte, string, bool, error) {
@@ -273,17 +293,8 @@ func mapCodexStatus(payload map[string]any) string {
 // mapOpenCodeEvent handles OpenCode event variants and infers a stable lifecycle.
 // It intentionally prioritizes explicit error/permission signals over generic busy.
 func mapOpenCodeEvent(payload map[string]any, lowerBlob string) string {
-	event := mapValue(payload["event"])
-	eventType := stringValue(payload["type"])
-	if eventType == "" {
-		eventType = stringValue(event["type"])
-	}
-
-	status := stringValue(payload["status"])
-	if status == "" {
-		status = stringValue(event["status"])
-	}
-	status = strings.ToLower(status)
+	eventType := openCodeEventType(payload)
+	status := openCodeStatus(payload)
 
 	switch {
 	case eventType == "session.idle":
@@ -295,25 +306,51 @@ func mapOpenCodeEvent(payload map[string]any, lowerBlob string) string {
 	case strings.HasPrefix(eventType, "tool.execute.before"):
 		return statusRun
 	case strings.HasPrefix(eventType, "tool.execute.after"):
-		if containsAny(status, "error", "failed") || containsAny(lowerBlob, "\"error\"", "\"failed\"") {
-			return statusError
-		}
-		return statusRun
+		return mapOpenCodeToolExecuteAfter(status, lowerBlob)
 	case eventType == "permission.asked":
 		return statusWait
 	case eventType == "permission.replied":
-		if permissionDecisionDenied(payload) {
-			return statusError
-		}
-		if permissionDecisionApproved(payload) {
-			return statusRun
-		}
-		return ""
+		return mapOpenCodePermissionReply(payload)
 	case containsAny(strings.ToLower(eventType), "error") || status == "error":
 		return statusError
 	default:
 		return ""
 	}
+}
+
+func openCodeEventType(payload map[string]any) string {
+	event := mapValue(payload["event"])
+	eventType := stringValue(payload["type"])
+	if eventType == "" {
+		eventType = stringValue(event["type"])
+	}
+	return eventType
+}
+
+func openCodeStatus(payload map[string]any) string {
+	event := mapValue(payload["event"])
+	status := stringValue(payload["status"])
+	if status == "" {
+		status = stringValue(event["status"])
+	}
+	return strings.ToLower(status)
+}
+
+func mapOpenCodeToolExecuteAfter(status, lowerBlob string) string {
+	if containsAny(status, "error", "failed") || containsAny(lowerBlob, "\"error\"", "\"failed\"") {
+		return statusError
+	}
+	return statusRun
+}
+
+func mapOpenCodePermissionReply(payload map[string]any) string {
+	if permissionDecisionDenied(payload) {
+		return statusError
+	}
+	if permissionDecisionApproved(payload) {
+		return statusRun
+	}
+	return ""
 }
 
 func permissionDecisionApproved(payload map[string]any) bool {
@@ -463,37 +500,27 @@ func nextEventID() string {
 	return strconv.FormatInt(time.Now().UTC().UnixNano(), 36)
 }
 
-// logPayload writes raw provider payloads for post-mortem debugging.
-// Logging is opt-in to avoid persistent event data by default.
-func logPayload(source, pane, eventID string, raw []byte) {
-	logDir := os.Getenv("PANEFLEET_EVENT_LOG_DIR")
+func eventLogDir() string {
+	return os.Getenv("PANEFLEET_EVENT_LOG_DIR")
+}
+
+func ensureEventLogDir(logDir string) bool {
 	if logDir == "" {
-		return
-	}
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return
+		return false
 	}
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
-		return
+		return false
 	}
 	if err := os.Chmod(logDir, 0o700); err != nil {
-		return
+		return false
 	}
+	return true
+}
 
-	record := struct {
-		Timestamp string          `json:"ts"`
-		Kind      string          `json:"kind"`
-		EventID   string          `json:"event_id"`
-		Source    string          `json:"source"`
-		Pane      string          `json:"pane,omitempty"`
-		Payload   json.RawMessage `json:"payload"`
-	}{
-		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-		Kind:      "payload",
-		EventID:   eventID,
-		Source:    source,
-		Pane:      pane,
-		Payload:   json.RawMessage(bytes.TrimSpace(raw)),
+func appendJSONLogRecord(source string, record any) {
+	logDir := eventLogDir()
+	if !ensureEventLogDir(logDir) {
+		return
 	}
 
 	encoded, err := json.Marshal(record)
@@ -513,20 +540,35 @@ func logPayload(source, pane, eventID string, raw []byte) {
 	_, _ = file.Write(append(encoded, '\n'))
 }
 
-// logDecision records the bridge decision path next to payload logs.
-// Keeping decision and payload in the same stream helps diff mapping regressions.
-func logDecision(source, pane, eventID, decision, status, reason, errText string) {
-	logDir := os.Getenv("PANEFLEET_EVENT_LOG_DIR")
-	if logDir == "" {
-		return
-	}
-	if err := os.MkdirAll(logDir, 0o700); err != nil {
-		return
-	}
-	if err := os.Chmod(logDir, 0o700); err != nil {
+// logPayload writes raw provider payloads for post-mortem debugging.
+// Logging is opt-in to avoid persistent event data by default.
+func logPayload(source, pane, eventID string, raw []byte) {
+	if len(bytes.TrimSpace(raw)) == 0 {
 		return
 	}
 
+	record := struct {
+		Timestamp string          `json:"ts"`
+		Kind      string          `json:"kind"`
+		EventID   string          `json:"event_id"`
+		Source    string          `json:"source"`
+		Pane      string          `json:"pane,omitempty"`
+		Payload   json.RawMessage `json:"payload"`
+	}{
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Kind:      "payload",
+		EventID:   eventID,
+		Source:    source,
+		Pane:      pane,
+		Payload:   json.RawMessage(bytes.TrimSpace(raw)),
+	}
+
+	appendJSONLogRecord(source, record)
+}
+
+// logDecision records the bridge decision path next to payload logs.
+// Keeping decision and payload in the same stream helps diff mapping regressions.
+func logDecision(source, pane, eventID, decision, status, reason, errText string) {
 	record := struct {
 		Timestamp string `json:"ts"`
 		Kind      string `json:"kind"`
@@ -549,21 +591,7 @@ func logDecision(source, pane, eventID, decision, status, reason, errText string
 		Error:     errText,
 	}
 
-	encoded, err := json.Marshal(record)
-	if err != nil {
-		return
-	}
-
-	path := filepath.Join(logDir, source+".jsonl")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-	if err := file.Chmod(0o600); err != nil {
-		return
-	}
-	_, _ = file.Write(append(encoded, '\n'))
+	appendJSONLogRecord(source, record)
 }
 
 func stringValue(v any) string {
