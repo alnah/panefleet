@@ -52,14 +52,14 @@ run_install_bridge() {
   local stderr_file="$4"
 
   PATH="${FAKE_BIN}:${SYSTEM_PATH}" \
-  GO_LOG="$GO_LOG" \
-  CURL_LOG="$CURL_LOG" \
-  TAR_LOG="$TAR_LOG" \
-  CURL_COUNT_FILE="$CURL_COUNT_FILE" \
-  PANEFLEET_ROOT="$REPO_ROOT" \
-  PANEFLEET_AGENT_BRIDGE_BIN="$output_bin" \
-  PANEFLEET_BRIDGE_INSTALL_MODE="$mode" \
-  "${REPO_ROOT}/scripts/install-bridge.sh" >"$stdout_file" 2>"$stderr_file"
+    GO_LOG="$GO_LOG" \
+    CURL_LOG="$CURL_LOG" \
+    TAR_LOG="$TAR_LOG" \
+    CURL_COUNT_FILE="$CURL_COUNT_FILE" \
+    PANEFLEET_ROOT="$REPO_ROOT" \
+    PANEFLEET_AGENT_BRIDGE_BIN="$output_bin" \
+    PANEFLEET_BRIDGE_INSTALL_MODE="$mode" \
+    "${REPO_ROOT}/scripts/install-bridge.sh" >"$stdout_file" 2>"$stderr_file"
 }
 
 mkdir -p "$FAKE_BIN"

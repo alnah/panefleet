@@ -7,8 +7,11 @@ set -euo pipefail
 # still allowing source-only environments to recover.
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${PANEFLEET_ROOT:-$(CDPATH='' cd -- "${SCRIPT_DIR}/.." && pwd)}"
-STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/panefleet/runtime/paths.sh"
+
+REPO_ROOT="${PANEFLEET_ROOT:-$(panefleet_find_repo_root_from "${BASH_SOURCE[0]}")}"
+STATE_HOME="$(panefleet_user_state_home)"
 OUTPUT_BIN="${PANEFLEET_AGENT_BRIDGE_BIN:-$STATE_HOME/panefleet/bin/panefleet-agent-bridge}"
 BRIDGE_REPO="${PANEFLEET_BRIDGE_REPO:-alnah/panefleet}"
 INSTALL_MODE="${PANEFLEET_BRIDGE_INSTALL_MODE:-auto}"
@@ -29,9 +32,9 @@ is_safe_tar_path() {
   fi
   if [[ "$cleaned" == *'..'* ]]; then
     case "$cleaned" in
-      *'/../'*|'../'*|*'/..'|'..')
-        return 1
-        ;;
+    *'/../'* | '../'* | *'/..' | '..')
+      return 1
+      ;;
     esac
   fi
   return 0
@@ -56,7 +59,7 @@ extract_bridge_entry() {
     fi
   done < <(tar -tzf "$archive")
 
-  if (( selected_count != 1 )); then
+  if ((selected_count != 1)); then
     printf 'panefleet: archive must contain exactly one panefleet-agent-bridge entry\n' >&2
     return 1
   fi
@@ -69,6 +72,10 @@ install_bridge_atomically() {
   local output_dir tmp_out backup=""
 
   output_dir="$(dirname "$OUTPUT_BIN")"
+  if [[ -L "$output_dir" ]]; then
+    printf 'panefleet: refusing to install bridge through symlinked output directory %s\n' "$output_dir" >&2
+    return 1
+  fi
   if [[ -L "$OUTPUT_BIN" ]]; then
     printf 'panefleet: refusing to install bridge through symlinked output path %s\n' "$OUTPUT_BIN" >&2
     return 1
@@ -102,23 +109,23 @@ install_bridge_atomically() {
 # Failing early avoids silent installs of incompatible binaries.
 normalize_os() {
   case "$(uname -s)" in
-    Darwin) printf 'darwin' ;;
-    Linux) printf 'linux' ;;
-    *)
-      printf 'unsupported operating system: %s\n' "$(uname -s)" >&2
-      return 1
-      ;;
+  Darwin) printf 'darwin' ;;
+  Linux) printf 'linux' ;;
+  *)
+    printf 'unsupported operating system: %s\n' "$(uname -s)" >&2
+    return 1
+    ;;
   esac
 }
 
 normalize_arch() {
   case "$(uname -m)" in
-    x86_64|amd64) printf 'amd64' ;;
-    arm64|aarch64) printf 'arm64' ;;
-    *)
-      printf 'unsupported architecture: %s\n' "$(uname -m)" >&2
-      return 1
-      ;;
+  x86_64 | amd64) printf 'amd64' ;;
+  arm64 | aarch64) printf 'arm64' ;;
+  *)
+    printf 'unsupported architecture: %s\n' "$(uname -m)" >&2
+    return 1
+    ;;
   esac
 }
 
@@ -207,20 +214,19 @@ main() {
   local os arch version
 
   case "$INSTALL_MODE" in
-    auto|build|download|force-build|force-download)
-      ;;
-    *)
-      printf 'unknown PANEFLEET_BRIDGE_INSTALL_MODE: %s\n' "$INSTALL_MODE" >&2
-      exit 1
-      ;;
+  auto | build | download | force-build | force-download) ;;
+  *)
+    printf 'unknown PANEFLEET_BRIDGE_INSTALL_MODE: %s\n' "$INSTALL_MODE" >&2
+    exit 1
+    ;;
   esac
 
   if bridge_ready; then
     case "$INSTALL_MODE" in
-      auto|build|download)
-        printf 'Bridge already installed %s\n' "$OUTPUT_BIN"
-        return
-        ;;
+    auto | build | download)
+      printf 'Bridge already installed %s\n' "$OUTPUT_BIN"
+      return
+      ;;
     esac
   fi
 
@@ -229,34 +235,34 @@ main() {
   version="${PANEFLEET_BRIDGE_VERSION:-$(exact_checkout_tag)}"
 
   case "$INSTALL_MODE" in
-    force-build)
-      if ! build_bridge; then
-        printf 'panefleet: Go is required to build the bridge from source.\n' >&2
-        exit 1
-      fi
-      return
-      ;;
-    force-download)
-      if ! download_bridge "$version" "$os" "$arch"; then
-        printf 'panefleet: failed to download a prebuilt bridge for %s/%s.\n' "$os" "$arch" >&2
-        exit 1
-      fi
-      return
-      ;;
-    build)
-      if ! build_bridge; then
-        printf 'panefleet: Go is required to build the bridge from source.\n' >&2
-        exit 1
-      fi
-      return
-      ;;
-    download)
-      if ! download_bridge "$version" "$os" "$arch"; then
-        printf 'panefleet: failed to download a prebuilt bridge for %s/%s.\n' "$os" "$arch" >&2
-        exit 1
-      fi
-      return
-      ;;
+  force-build)
+    if ! build_bridge; then
+      printf 'panefleet: Go is required to build the bridge from source.\n' >&2
+      exit 1
+    fi
+    return
+    ;;
+  force-download)
+    if ! download_bridge "$version" "$os" "$arch"; then
+      printf 'panefleet: failed to download a prebuilt bridge for %s/%s.\n' "$os" "$arch" >&2
+      exit 1
+    fi
+    return
+    ;;
+  build)
+    if ! build_bridge; then
+      printf 'panefleet: Go is required to build the bridge from source.\n' >&2
+      exit 1
+    fi
+    return
+    ;;
+  download)
+    if ! download_bridge "$version" "$os" "$arch"; then
+      printf 'panefleet: failed to download a prebuilt bridge for %s/%s.\n' "$os" "$arch" >&2
+      exit 1
+    fi
+    return
+    ;;
   esac
 
   if [[ -n "$version" ]] && download_bridge "$version" "$os" "$arch"; then

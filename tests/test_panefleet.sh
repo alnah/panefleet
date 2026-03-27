@@ -192,11 +192,11 @@ EOF
 
 run_list() {
   TMUX=1 \
-  TMUX_BIN="${FAKE_TMUX_BIN}" \
-  FZF_BIN="${FZF_BIN:-fzf}" \
-  RG_BIN="${RG_BIN:-rg}" \
-  PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" \
-  "${PANEFLEET_BIN}" list | strip_ansi
+    TMUX_BIN="${FAKE_TMUX_BIN}" \
+    FZF_BIN="${FZF_BIN:-fzf}" \
+    RG_BIN="${RG_BIN:-rg}" \
+    PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" \
+    "${PANEFLEET_BIN}" list | strip_ansi
 }
 
 reset_fake_tmux_fixture() {
@@ -213,15 +213,15 @@ run_install_target_in_fake_tmux() {
   local bridge_mode="${6:-build}"
 
   TMUX=1 \
-  TMUX_BIN="${FAKE_TMUX_BIN}" \
-  FZF_BIN="${FAKE_FZF_BIN}" \
-  PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" \
-  PANEFLEET_AGENT_BRIDGE_BIN="$bridge_bin" \
-  PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" \
-  PANEFLEET_CODEX_CONFIG="$codex_config" \
-  PANEFLEET_CLAUDE_SETTINGS="$claude_settings" \
-  PANEFLEET_BRIDGE_INSTALL_MODE="$bridge_mode" \
-  "${PANEFLEET_BIN}" install "$target"
+    TMUX_BIN="${FAKE_TMUX_BIN}" \
+    FZF_BIN="${FAKE_FZF_BIN}" \
+    PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" \
+    PANEFLEET_AGENT_BRIDGE_BIN="$bridge_bin" \
+    PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" \
+    PANEFLEET_CODEX_CONFIG="$codex_config" \
+    PANEFLEET_CLAUDE_SETTINGS="$claude_settings" \
+    PANEFLEET_BRIDGE_INSTALL_MODE="$bridge_mode" \
+    "${PANEFLEET_BIN}" install "$target"
 }
 
 run_doctor_install_in_fake_tmux() {
@@ -231,14 +231,14 @@ run_doctor_install_in_fake_tmux() {
   local claude_settings="$4"
 
   TMUX=1 \
-  TMUX_BIN="${FAKE_TMUX_BIN}" \
-  FZF_BIN="${FAKE_FZF_BIN}" \
-  PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" \
-  PANEFLEET_AGENT_BRIDGE_BIN="$bridge_bin" \
-  PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" \
-  PANEFLEET_CODEX_CONFIG="$codex_config" \
-  PANEFLEET_CLAUDE_SETTINGS="$claude_settings" \
-  "${PANEFLEET_BIN}" doctor --install
+    TMUX_BIN="${FAKE_TMUX_BIN}" \
+    FZF_BIN="${FAKE_FZF_BIN}" \
+    PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" \
+    PANEFLEET_AGENT_BRIDGE_BIN="$bridge_bin" \
+    PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" \
+    PANEFLEET_CODEX_CONFIG="$codex_config" \
+    PANEFLEET_CLAUDE_SETTINGS="$claude_settings" \
+    "${PANEFLEET_BIN}" doctor --install
 }
 
 assert_opencode_readyish() {
@@ -276,7 +276,7 @@ test_sourced_helpers() {
   assert_eq "$got" "DONE" "effective_status_values keeps recent DONE"
   pass "effective_status_values keeps recent done"
 
-  got="$(effective_status_values DONE "$(date +%s)" "$(( $(date +%s) - 3600 ))" "" 10 45 "$(date +%s)")"
+  got="$(effective_status_values DONE "$(date +%s)" "$(($(date +%s) - 3600))" "" 10 45 "$(date +%s)")"
   assert_eq "$got" "DONE" "effective_status_values refreshes done when recent activity is newer"
   pass "effective_status_values refreshes done from newer activity"
 
@@ -461,7 +461,7 @@ test_fake_tmux_cli() {
   TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-clear --pane %102 >/dev/null
 
   printf '1' >"${TEST_TMPDIR}/fake-tmux/globals/@panefleet-stale-minutes"
-  stale_touch="$(( $(date +%s) - 120 ))"
+  stale_touch="$(($(date +%s) - 120))"
   TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${FAKE_TMUX_BIN}" set-option -pt %103 -q @panefleet_last_touch "$stale_touch" >/dev/null
   output="$(run_list)"
   line103="$(printf '%s\n' "$output" | rg '^%103')"
@@ -502,13 +502,13 @@ exit 0
 EOF
   chmod +x "$fake_panefleet"
 
-  PATH="$fake_bin:${PATH}" PANEFLEET_AGENT_BRIDGE_BIN="$missing_bridge" "${REPO_ROOT}/scripts/codex-notify-bridge" > /dev/null 2>"$stderr_file" || true
+  PATH="$fake_bin:${PATH}" PANEFLEET_AGENT_BRIDGE_BIN="$missing_bridge" "${REPO_ROOT}/scripts/codex-notify-bridge" >/dev/null 2>"$stderr_file" || true
   [[ "$(cat "$stderr_file")" == *"install it with ${fake_panefleet} install codex"* ]] || fail "codex wrapper should suggest panefleet install codex"
 
-  PATH="$fake_bin:${PATH}" PANEFLEET_AGENT_BRIDGE_BIN="$missing_bridge" "${REPO_ROOT}/scripts/claude-code-hook" > /dev/null 2>"$stderr_file" || true
+  PATH="$fake_bin:${PATH}" PANEFLEET_AGENT_BRIDGE_BIN="$missing_bridge" "${REPO_ROOT}/scripts/claude-code-hook" >/dev/null 2>"$stderr_file" || true
   [[ "$(cat "$stderr_file")" == *"install it with ${fake_panefleet} install claude"* ]] || fail "claude wrapper should suggest panefleet install claude"
 
-  PATH="$fake_bin:${PATH}" PANEFLEET_AGENT_BRIDGE_BIN="$missing_bridge" "${REPO_ROOT}/scripts/opencode-event-bridge" > /dev/null 2>"$stderr_file" || true
+  PATH="$fake_bin:${PATH}" PANEFLEET_AGENT_BRIDGE_BIN="$missing_bridge" "${REPO_ROOT}/scripts/opencode-event-bridge" >/dev/null 2>"$stderr_file" || true
   [[ "$(cat "$stderr_file")" == *"install it with ${fake_panefleet} install opencode"* ]] || fail "opencode wrapper should suggest panefleet install opencode"
   pass "wrappers print consistent install hints"
 }
@@ -534,6 +534,51 @@ EOF
   PANEFLEET_AGENT_BRIDGE_BIN="$fake_bridge" PANEFLEET_PANE="%888" TMUX_PANE="$expected_pane" "${REPO_ROOT}/scripts/codex-notify-bridge" '{}' >/dev/null
   [[ "$(cat "$bridge_args")" == *"codex-notify --pane %888 {}"* ]] || fail "codex notify wrapper should prioritize PANEFLEET_PANE over TMUX_PANE"
   pass "codex wrappers forward pane when available"
+}
+
+test_wrapper_uses_xdg_state_home_for_event_logs() {
+  local fake_bridge_root fake_bridge env_log expected_log_dir
+
+  fake_bridge_root="${TEST_TMPDIR}/fake-bridge-xdg"
+  fake_bridge="${fake_bridge_root}/panefleet-agent-bridge"
+  env_log="${fake_bridge_root}/env.log"
+  mkdir -p "$fake_bridge_root"
+  cat >"$fake_bridge" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\${PANEFLEET_EVENT_LOG_DIR:-}" >"$env_log"
+exit 0
+EOF
+  chmod +x "$fake_bridge"
+
+  expected_log_dir="${TEST_TMPDIR}/xdg-state/panefleet/events"
+  XDG_STATE_HOME="${TEST_TMPDIR}/xdg-state" PANEFLEET_AGENT_BRIDGE_BIN="$fake_bridge" "${REPO_ROOT}/scripts/claude-code-hook" >/dev/null
+  [[ "$(cat "$env_log")" == "$expected_log_dir" ]] || fail "wrapper should default PANEFLEET_EVENT_LOG_DIR from XDG_STATE_HOME"
+  pass "wrapper event logs honor XDG_STATE_HOME"
+}
+
+test_uninstall_bindings_works_without_panefleet_bin() {
+  local missing_root bindings_root globals_root hook_root
+
+  rm -rf "${TEST_TMPDIR}/fake-tmux"
+  missing_root="${TEST_TMPDIR}/missing-plugin"
+  bindings_root="${TEST_TMPDIR}/fake-tmux/bindings/prefix"
+  globals_root="${TEST_TMPDIR}/fake-tmux/globals"
+  hook_root="${TEST_TMPDIR}/fake-tmux/hooks/after-select-pane"
+  mkdir -p "$missing_root" "${TEST_TMPDIR}/fake-tmux"
+
+  PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${FAKE_TMUX_BIN}" bind-key -T prefix P run-shell -b "panefleet popup"
+  PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${FAKE_TMUX_BIN}" bind-key -T prefix T run-shell -b "panefleet theme-popup"
+  PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${FAKE_TMUX_BIN}" set-hook -ag after-select-pane 'run-shell -b "/tmp/panefleet touch \"#{pane_id}\""'
+
+  TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_ROOT="${missing_root}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${REPO_ROOT}/scripts/install-tmux-bindings.sh" uninstall >/dev/null
+
+  [[ ! -e "${bindings_root}/P" ]] || fail "uninstall should remove prefix P binding even when panefleet bin is missing"
+  [[ ! -e "${bindings_root}/T" ]] || fail "uninstall should remove prefix T binding even when panefleet bin is missing"
+  [[ ! -d "${hook_root}" || -z "$(find "${hook_root}" -mindepth 1 -maxdepth 1 -type f 2>/dev/null)" ]] || fail "uninstall should remove panefleet touch hooks even when panefleet bin is missing"
+  [[ ! -e "${globals_root}/@panefleet-done-recent-minutes" ]] || fail "uninstall should not seed tmux defaults"
+  [[ ! -e "${globals_root}/@panefleet-stale-minutes" ]] || fail "uninstall should not seed stale defaults"
+  [[ ! -e "${globals_root}/@panefleet-adapter-mode" ]] || fail "uninstall should not seed adapter defaults"
+  pass "install-tmux-bindings uninstall stays side-effect free"
 }
 
 test_install_command() {
@@ -774,6 +819,8 @@ test_sourced_helpers
 test_fake_tmux_cli
 test_install_command
 test_codex_wrapper_forwards_pane_when_available
+test_wrapper_uses_xdg_state_home_for_event_logs
 test_wrapper_install_hints
+test_uninstall_bindings_works_without_panefleet_bin
 test_cli_surface_contract
 test_runtime_install_contract

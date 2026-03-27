@@ -5,22 +5,8 @@ set -euo pipefail
 # Wrapper kept intentionally thin: fail fast when bridge is missing, then
 # delegate all Codex app-server stream handling to the Go bridge.
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
-BRIDGE_BIN="${PANEFLEET_AGENT_BRIDGE_BIN:-$STATE_HOME/panefleet/bin/panefleet-agent-bridge}"
-PANEFLEET_CMD="$(command -v panefleet 2>/dev/null || printf '%s/bin/panefleet' "$REPO_ROOT")"
-export PANEFLEET_EVENT_LOG_DIR="${PANEFLEET_EVENT_LOG_DIR:-$HOME/.local/state/panefleet/events}"
-PANE="${PANEFLEET_PANE:-${TMUX_PANE:-}}"
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../../lib/panefleet/integrations/bridge_wrapper.sh"
 
-if [[ ! -x "$BRIDGE_BIN" ]]; then
-  printf 'panefleet: missing compiled bridge %s\n' "$BRIDGE_BIN" >&2
-  printf 'install it with %s install codex\n' "$PANEFLEET_CMD" >&2
-  exit 1
-fi
-
-if [[ -n "$PANE" ]]; then
-  exec "$BRIDGE_BIN" codex-app-server --pane "$PANE" "$@"
-fi
-
-exec "$BRIDGE_BIN" codex-app-server "$@"
+panefleet_bridge_wrapper_main "${BASH_SOURCE[0]}" codex-app-server codex 1 "$@"
