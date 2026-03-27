@@ -118,10 +118,14 @@ func (s *Service) StateList(ctx context.Context) ([]state.PaneState, error) {
 // SetOverride sets a manual status that intentionally wins over adapter events
 // until cleared, for operator-controlled recovery workflows.
 func (s *Service) SetOverride(ctx context.Context, paneID string, target state.Status, source string) (state.PaneState, error) {
+	occurredAt, err := s.controlOccurredAt(ctx, paneID)
+	if err != nil {
+		return state.PaneState{}, fmt.Errorf("set-override pane=%s: %w", paneID, err)
+	}
 	ev := state.Event{
 		PaneID:     paneID,
 		Kind:       state.EventOverrideSet,
-		OccurredAt: time.Now().UTC(),
+		OccurredAt: occurredAt,
 		OverrideTo: target,
 		Source:     source,
 		ReasonCode: "override.set",
@@ -132,10 +136,14 @@ func (s *Service) SetOverride(ctx context.Context, paneID string, target state.S
 // ClearOverride removes a manual status so reducer time/event rules become
 // authoritative again.
 func (s *Service) ClearOverride(ctx context.Context, paneID, source string) (state.PaneState, error) {
+	occurredAt, err := s.controlOccurredAt(ctx, paneID)
+	if err != nil {
+		return state.PaneState{}, fmt.Errorf("clear-override pane=%s: %w", paneID, err)
+	}
 	ev := state.Event{
 		PaneID:     paneID,
 		Kind:       state.EventOverrideCleared,
-		OccurredAt: time.Now().UTC(),
+		OccurredAt: occurredAt,
 		Source:     source,
 		ReasonCode: "override.cleared",
 	}
@@ -182,4 +190,16 @@ func (s *Service) lockPane(paneID string) func() {
 
 	lock.Lock()
 	return lock.Unlock
+}
+
+func (s *Service) controlOccurredAt(ctx context.Context, paneID string) (time.Time, error) {
+	now := time.Now().UTC()
+	current, ok, err := s.store.GetPaneState(ctx, paneID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if ok && current.LastEventAt.After(now) {
+		return current.LastEventAt, nil
+	}
+	return now, nil
 }

@@ -98,3 +98,25 @@ func TestServiceStateShowErrors(t *testing.T) {
 		t.Fatalf("expected pane not found, got: %v", err)
 	}
 }
+
+func TestServiceOverrideMethodsTolerateFutureLastEventAt(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	future := time.Now().UTC().Add(2 * time.Minute)
+
+	if _, err := svc.Ingest(ctx, state.Event{
+		PaneID:     "%63",
+		Kind:       state.EventPaneStarted,
+		OccurredAt: future,
+		Source:     "adapter:test",
+	}); err != nil {
+		t.Fatalf("ingest future start: %v", err)
+	}
+
+	if _, err := svc.SetOverride(ctx, "%63", state.StatusStale, "test"); err != nil {
+		t.Fatalf("SetOverride with future state: %v", err)
+	}
+	if _, err := svc.ClearOverride(ctx, "%63", "test"); err != nil {
+		t.Fatalf("ClearOverride with future state: %v", err)
+	}
+}
