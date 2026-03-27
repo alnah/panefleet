@@ -7,13 +7,15 @@ func TestParseControlLine(t *testing.T) {
 		line string
 		ok   bool
 		kind string
-	}{
-		{line: "%window-add @1", ok: true, kind: "%window-add"},
-		{line: "%session-changed $1", ok: true, kind: "%session-changed"},
-		{line: "%output %1 hello", ok: false, kind: ""},
-		{line: "random text", ok: false, kind: ""},
-		{line: "", ok: false, kind: ""},
-	}
+		}{
+			{line: "%window-add @1", ok: true, kind: "%window-add"},
+			{line: "%session-changed $1", ok: true, kind: "%session-changed"},
+			{line: "%window-pane-changed @1 %2", ok: true, kind: "%window-pane-changed"},
+			{line: "%sessions-changed", ok: true, kind: "%sessions-changed"},
+			{line: "%output %1 hello", ok: false, kind: ""},
+			{line: "random text", ok: false, kind: ""},
+			{line: "", ok: false, kind: ""},
+		}
 	for _, tc := range cases {
 		ev, ok := ParseControlLine(tc.line)
 		if ok != tc.ok {

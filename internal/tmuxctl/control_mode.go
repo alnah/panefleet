@@ -6,13 +6,17 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
+// ControlEvent describes one actionable tmux control-mode signal.
 type ControlEvent struct {
 	Kind string
 	Raw  string
 }
 
+// ParseControlLine filters tmux control-mode lines to events that require a
+// panefleet snapshot refresh.
 func ParseControlLine(line string) (ControlEvent, bool) {
 	line = strings.TrimSpace(line)
 	if line == "" || !strings.HasPrefix(line, "%") {
@@ -23,7 +27,21 @@ func ParseControlLine(line string) (ControlEvent, bool) {
 		kind = line[:idx]
 	}
 	switch kind {
-	case "%layout-change", "%window-add", "%window-close", "%window-renamed", "%session-changed", "%session-window-changed", "%pane-mode-changed", "%unlinked-window-close":
+	case "%layout-change",
+		"%pane-mode-changed",
+		"%pause",
+		"%continue",
+		"%session-changed",
+		"%session-renamed",
+		"%session-window-changed",
+		"%sessions-changed",
+		"%unlinked-window-add",
+		"%unlinked-window-close",
+		"%unlinked-window-renamed",
+		"%window-add",
+		"%window-close",
+		"%window-pane-changed",
+		"%window-renamed":
 		return ControlEvent{Kind: kind, Raw: line}, true
 	default:
 		return ControlEvent{}, false
@@ -52,10 +70,16 @@ func (c *ExecClient) WatchControlMode(ctx context.Context, onEvent func(ControlE
 	}
 
 	// Drain stderr to avoid potential blocking.
+	var stderrTail string
+	var stderrMu sync.Mutex
+	stderrDone := make(chan struct{})
 	go func() {
+		defer close(stderrDone)
 		sc := bufio.NewScanner(stderr)
 		for sc.Scan() {
-			_ = sc.Text()
+			stderrMu.Lock()
+			stderrTail = sc.Text()
+			stderrMu.Unlock()
 		}
 	}()
 
@@ -68,7 +92,26 @@ func (c *ExecClient) WatchControlMode(ctx context.Context, onEvent func(ControlE
 	}
 	if err := sc.Err(); err != nil {
 		_ = cmd.Wait()
+		<-stderrDone
+		return withControlModeStderr(err, stderrTailSnapshot(&stderrMu, &stderrTail))
+	}
+	err = cmd.Wait()
+	<-stderrDone
+	if err != nil {
+		return withControlModeStderr(err, stderrTailSnapshot(&stderrMu, &stderrTail))
+	}
+	return nil
+}
+
+func stderrTailSnapshot(mu *sync.Mutex, tail *string) string {
+	mu.Lock()
+	defer mu.Unlock()
+	return strings.TrimSpace(*tail)
+}
+
+func withControlModeStderr(err error, stderrTail string) error {
+	if stderrTail == "" {
 		return err
 	}
-	return cmd.Wait()
+	return fmt.Errorf("%w (tmux stderr tail: %s)", err, stderrTail)
 }
