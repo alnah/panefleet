@@ -463,6 +463,42 @@ board_prompt_text() {
   printf '%spanefleet ~ ' "$(board_left_padding)"
 }
 
+board_cache_has_metric_columns() {
+  local path="$1"
+
+  [[ -s "$path" ]] || return 1
+  head -n 1 "$path" | "${RG_BIN}" -Fq -- 'TOKENS' || return 1
+  head -n 1 "$path" | "${RG_BIN}" -Fq -- 'CTX%' || return 1
+}
+
+seed_board_cache() {
+  local cache_file="$1"
+  local warm_cache_file="$2"
+
+  if PANEFLEET_LIST_MODE=deferred-refresh list_rows >"$cache_file"; then
+    cp "$cache_file" "$warm_cache_file" 2>/dev/null || true
+    return 0
+  fi
+
+  if board_cache_has_metric_columns "$warm_cache_file"; then
+    cp "$warm_cache_file" "$cache_file" 2>/dev/null
+    return 0
+  fi
+
+  return 1
+}
+
+board_poll_interval_seconds() {
+  local poll_interval="${PANEFLEET_BOARD_POLL_INTERVAL_SECONDS:-0.2}"
+
+  if [[ "$poll_interval" =~ ^[0-9]+([.][0-9]+)?$ ]] && [[ ! "$poll_interval" =~ ^0([.]0+)?$ ]]; then
+    printf '%s' "$poll_interval"
+    return
+  fi
+
+  printf '0.2'
+}
+
 open_board() {
   require_tmux
   require_runtime_support
@@ -479,16 +515,11 @@ open_board() {
   state_file="${cache_dir}/state-${board_token}.txt"
   warm_cache_file="${cache_dir}/rows-last.tsv"
   initial_generation="$(current_refresh_generation)"
-  if [[ -s "$warm_cache_file" ]]; then
-    if ! head -n 1 "$warm_cache_file" | "${RG_BIN}" -Fq -- 'TOKENS' || ! head -n 1 "$warm_cache_file" | "${RG_BIN}" -Fq -- 'CTX%'; then
-      rm -f "$warm_cache_file"
-    fi
-  fi
-  if [[ -s "$warm_cache_file" ]]; then
-    cp "$warm_cache_file" "$cache_file" 2>/dev/null || PANEFLEET_LIST_MODE=deferred-refresh list_rows >"$cache_file"
-  else
-    PANEFLEET_LIST_MODE=deferred-refresh list_rows >"$cache_file"
-    cp "$cache_file" "$warm_cache_file" 2>/dev/null || true
+  "$SELF" queue-refresh --all >/dev/null 2>&1 || true
+  if ! seed_board_cache "$cache_file" "$warm_cache_file"; then
+    rm -f "$cache_file"
+    printf 'panefleet: failed to build initial board rows\n' >&2
+    return 1
   fi
   printf '%s\n' "$initial_generation" >"$state_file"
   # Immediate by default; optional override for slower environments.
@@ -532,10 +563,7 @@ open_board() {
     --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+execute-silent(${SELF} refresh-panes-cache {1})+reload(PANEFLEET_LIST_MODE=deferred-refresh ${SELF} list-deferred)"
     --bind "${reload_event}:${load_reload_action}(${repaint_command})"
   )
-  poll_interval="${PANEFLEET_BOARD_POLL_INTERVAL_SECONDS:-1}"
-  if [[ ! "$poll_interval" =~ ^[0-9]+$ ]] || ((poll_interval <= 0)); then
-    poll_interval="1"
-  fi
+  poll_interval="$(board_poll_interval_seconds)"
   if fzf_supports_reload_sync && fzf_supports_result_event; then
     # Keep board data fresh even when the user does not interact.
     fzf_args+=(--bind "result:reload-sync(sleep \"${poll_interval}\"; ${repaint_command})")
@@ -544,8 +572,6 @@ open_board() {
     # Use symmetric padding to keep prompt/controls/table visually aligned.
     fzf_args+=(--padding='1,3,1,3')
   fi
-  "$SELF" queue-refresh --all >/dev/null 2>&1 || true
-
   set +e
   "${FZF_BIN}" "${fzf_args[@]}" <"$cache_file"
   rc=$?
