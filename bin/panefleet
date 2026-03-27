@@ -551,6 +551,10 @@ fzf_supports_header_border() {
   command_exists "${FZF_BIN}" && "${FZF_BIN}" --help 2>/dev/null | grep -Fq -- '--header-lines-border'
 }
 
+fzf_supports_reload_sync() {
+  command_exists "${FZF_BIN}" && "${FZF_BIN}" --help 2>/dev/null | grep -Fq -- 'reload-sync'
+}
+
 preflight() {
   local quiet="${1:-}"
   local ok=0
@@ -2846,7 +2850,7 @@ open_board() {
   resolve_theme
   local rc
   local cache_dir cache_file state_file board_token
-  local initial_generation repaint_command repaint_delay
+  local initial_generation repaint_command repaint_delay load_reload_action
   local -a fzf_args
 
   cache_dir="$(user_state_home)/panefleet/board-cache"
@@ -2863,6 +2867,10 @@ open_board() {
     repaint_command="\"${SELF}\" board-repaint-cache --cache-file \"${cache_file}\" --state-file \"${state_file}\""
   else
     repaint_command="sleep \"${repaint_delay}\"; \"${SELF}\" board-repaint-cache --cache-file \"${cache_file}\" --state-file \"${state_file}\""
+  fi
+  load_reload_action="reload"
+  if fzf_supports_reload_sync; then
+    load_reload_action="reload-sync"
   fi
 
   fzf_args=(
@@ -2887,7 +2895,7 @@ open_board() {
     --bind "down:down+execute-silent(${SELF} queue-refresh --pane {1})"
     --bind "change:execute-silent(${SELF} queue-refresh --all)"
     --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+execute-silent(${SELF} queue-refresh --pane {1})"
-    --bind "load:reload(${repaint_command})"
+    --bind "load:${load_reload_action}(${repaint_command})"
   )
   "$SELF" queue-refresh --all >/dev/null 2>&1 || true
 
