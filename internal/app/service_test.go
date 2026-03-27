@@ -377,3 +377,31 @@ func TestServiceRetriesAfterConcurrentWrite(t *testing.T) {
 		t.Fatalf("expected ERROR after retry, got %s", got.Status)
 	}
 }
+
+func TestServiceReleasesPaneLocksAfterIngest(t *testing.T) {
+	svc := newService(t)
+	base := time.Now().UTC()
+
+	if _, err := svc.Ingest(context.Background(), state.Event{
+		ID:         "lock-gc-1",
+		PaneID:     "%lock",
+		Kind:       state.EventPaneStarted,
+		OccurredAt: base,
+	}); err != nil {
+		t.Fatalf("first ingest: %v", err)
+	}
+	if _, err := svc.Ingest(context.Background(), state.Event{
+		ID:         "lock-gc-2",
+		PaneID:     "%lock",
+		Kind:       state.EventPaneWaiting,
+		OccurredAt: base.Add(time.Second),
+	}); err != nil {
+		t.Fatalf("second ingest: %v", err)
+	}
+
+	svc.lockMu.Lock()
+	defer svc.lockMu.Unlock()
+	if len(svc.locks) != 0 {
+		t.Fatalf("expected pane lock map to be empty, got %d entries", len(svc.locks))
+	}
+}
