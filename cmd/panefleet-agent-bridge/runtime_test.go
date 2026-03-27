@@ -126,7 +126,7 @@ exit 0
 	}
 }
 
-func TestRunCodexAppServerSetsStateAndIgnoresMetrics(t *testing.T) {
+func TestRunCodexAppServerSetsStateAndMetrics(t *testing.T) {
 	bin, logPath := fakePanefleetBin(t, `#!/bin/sh
 echo "$@" >> "__LOG_PATH__"
 exit 0
@@ -150,8 +150,11 @@ exit 0
 	if !strings.Contains(log, "ingest --pane %2 --source codex-app-server --kind start") {
 		t.Fatalf("ingest start not present in log: %s", log)
 	}
-	if strings.Contains(log, "metrics-set") {
-		t.Fatalf("token usage should not call unsupported metrics-set command: %s", log)
+	if !strings.Contains(log, "metrics-set --pane %2 --tokens-used 123 --context-window 1000 --context-left-pct 88") {
+		t.Fatalf("expected metrics-set with derived context percentage, got: %s", log)
+	}
+	if !strings.Contains(log, "metrics-set --pane %2 --tokens-used 456") {
+		t.Fatalf("expected metrics-set to keep updating token totals without context window, got: %s", log)
 	}
 }
 
@@ -351,7 +354,7 @@ exit 0
 	if !strings.Contains(log, "ingest --pane %4 --source source --kind exit --exit-code 0") {
 		t.Fatalf("done ingest not logged: %s", log)
 	}
-	if strings.Contains(log, "state-set") || strings.Contains(log, "--tool") || strings.Contains(log, "--updated-at") || strings.Contains(log, "metrics-set") {
+	if strings.Contains(log, "state-set") || strings.Contains(log, "--tool") || strings.Contains(log, "--updated-at") {
 		t.Fatalf("unsupported CLI flags/commands leaked into panefleet invocation: %s", log)
 	}
 }

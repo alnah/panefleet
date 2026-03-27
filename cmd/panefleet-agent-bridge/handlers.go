@@ -109,7 +109,9 @@ func runCodexAppServer(ctx context.Context, args []string) error {
 				return err
 			}
 		case "thread/tokenUsage/updated":
-			logDecision("codex-app-server", pane, eventID, "ignored", "", "token usage update unsupported by panefleet CLI", "")
+			if err := applyCodexTokenUsage(ctx, pane, "codex-app-server", eventID, payload); err != nil {
+				return err
+			}
 		default:
 			logDecision("codex-app-server", pane, eventID, "ignored", "", "unsupported app-server method", method)
 		}
