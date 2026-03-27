@@ -128,18 +128,19 @@ VALUES(?, ?, ?, ?, ?, ?, ?)`,
 	}
 
 	_, err = tx.ExecContext(ctx, `
-INSERT INTO pane_state(
-  pane_id, status, status_source, reason_code, version, last_event_at, last_transition_at, last_exit_code, manual_override
-) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(pane_id) DO UPDATE SET
+	INSERT INTO pane_state(
+	  pane_id, status, status_source, reason_code, version, last_event_at, last_transition_at, last_exit_code, manual_override
+	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(pane_id) DO UPDATE SET
   status=excluded.status,
   status_source=excluded.status_source,
   reason_code=excluded.reason_code,
   version=excluded.version,
-  last_event_at=excluded.last_event_at,
-  last_transition_at=excluded.last_transition_at,
-  last_exit_code=excluded.last_exit_code,
-  manual_override=excluded.manual_override`,
+	  last_event_at=excluded.last_event_at,
+	  last_transition_at=excluded.last_transition_at,
+	  last_exit_code=excluded.last_exit_code,
+	  manual_override=excluded.manual_override
+	WHERE pane_state.version = excluded.version - 1`,
 		st.PaneID,
 		string(st.Status),
 		st.StatusSource,
@@ -152,6 +153,13 @@ ON CONFLICT(pane_id) DO UPDATE SET
 	)
 	if err != nil {
 		return err
+	}
+	affected, err = rowsAffectedOne(tx, "SELECT changes()")
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrConcurrentWrite
 	}
 
 	return tx.Commit()
@@ -283,4 +291,12 @@ func formatTime(ts time.Time) string {
 
 func parseTime(raw string) (time.Time, error) {
 	return time.Parse(time.RFC3339Nano, raw)
+}
+
+func rowsAffectedOne(tx *sql.Tx, query string) (int64, error) {
+	var changes int64
+	if err := tx.QueryRow(query).Scan(&changes); err != nil {
+		return 0, err
+	}
+	return changes, nil
 }

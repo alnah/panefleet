@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -207,4 +208,74 @@ func TestSQLiteStoreInitConfiguresBusyTimeoutAndWAL(t *testing.T) {
 	if journalMode != "wal" {
 		t.Fatalf("journal_mode=%q, want wal", journalMode)
 	}
+}
+
+func TestSQLiteStoreRejectsStaleProjectionUpdate(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	base := time.Now().UTC()
+
+	ev1 := state.Event{
+		ID:         "stale-1",
+		PaneID:     "%55",
+		Kind:       state.EventPaneStarted,
+		OccurredAt: base,
+	}
+	st1 := state.PaneState{
+		PaneID:           "%55",
+		Status:           state.StatusRun,
+		StatusSource:     "adapter:test",
+		ReasonCode:       "pane.started",
+		Version:          1,
+		LastEventAt:      base,
+		LastTransitionAt: base,
+	}
+	if err := s.AppendAndProject(ctx, ev1, st1); err != nil {
+		t.Fatalf("append first projection: %v", err)
+	}
+
+	ev2 := state.Event{
+		ID:         "stale-2",
+		PaneID:     "%55",
+		Kind:       state.EventPaneWaiting,
+		OccurredAt: base.Add(time.Second),
+	}
+	st2 := state.PaneState{
+		PaneID:           "%55",
+		Status:           state.StatusWait,
+		StatusSource:     "adapter:test",
+		ReasonCode:       "pane.waiting",
+		Version:          2,
+		LastEventAt:      ev2.OccurredAt,
+		LastTransitionAt: ev2.OccurredAt,
+	}
+	if err := s.AppendAndProject(ctx, ev2, st2); err != nil {
+		t.Fatalf("append second projection: %v", err)
+	}
+
+	staleEvent := state.Event{
+		ID:         "stale-3",
+		PaneID:     "%55",
+		Kind:       state.EventPaneExited,
+		OccurredAt: base.Add(2 * time.Second),
+		ExitCode:   intPtr(1),
+	}
+	staleProjection := state.PaneState{
+		PaneID:           "%55",
+		Status:           state.StatusError,
+		StatusSource:     "adapter:test",
+		ReasonCode:       "pane.exited",
+		Version:          2,
+		LastEventAt:      staleEvent.OccurredAt,
+		LastTransitionAt: staleEvent.OccurredAt,
+		LastExitCode:     intPtr(1),
+	}
+	err := s.AppendAndProject(ctx, staleEvent, staleProjection)
+	if !errors.Is(err, ErrConcurrentWrite) {
+		t.Fatalf("expected ErrConcurrentWrite, got %v", err)
+	}
+}
+
+func intPtr(v int) *int {
+	return &v
 }

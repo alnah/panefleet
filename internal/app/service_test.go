@@ -288,3 +288,92 @@ func TestServiceDuplicateEventReturnsPersistedState(t *testing.T) {
 		t.Fatalf("timeout waiting for duplicate publish")
 	}
 }
+
+type retryStore struct {
+	mu          sync.Mutex
+	state       state.PaneState
+	conflicted  bool
+	appendCalls int
+}
+
+func (s *retryStore) Init(context.Context) error { return nil }
+func (s *retryStore) Close() error               { return nil }
+
+func (s *retryStore) GetPaneState(context.Context, string) (state.PaneState, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state, true, nil
+}
+
+func (s *retryStore) AppendAndProject(_ context.Context, _ state.Event, st state.PaneState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.appendCalls++
+	if !s.conflicted {
+		s.conflicted = true
+		s.state = state.PaneState{
+			PaneID:           st.PaneID,
+			Status:           state.StatusWait,
+			StatusSource:     "adapter:other-writer",
+			ReasonCode:       "pane.waiting",
+			Version:          2,
+			LastEventAt:      st.LastEventAt.Add(-1 * time.Second),
+			LastTransitionAt: st.LastEventAt.Add(-1 * time.Second),
+		}
+		return store.ErrConcurrentWrite
+	}
+	s.state = st
+	return nil
+}
+
+func (s *retryStore) ListPaneStates(context.Context) ([]state.PaneState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return []state.PaneState{s.state}, nil
+}
+
+func TestServiceRetriesAfterConcurrentWrite(t *testing.T) {
+	reducer, err := state.NewReducer(state.Config{
+		DoneRecentWindow: 10 * time.Minute,
+		StaleWindow:      45 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("new reducer: %v", err)
+	}
+
+	base := time.Now().UTC()
+	st := &retryStore{
+		state: state.PaneState{
+			PaneID:           "%88",
+			Status:           state.StatusRun,
+			StatusSource:     "adapter:test",
+			ReasonCode:       "pane.started",
+			Version:          1,
+			LastEventAt:      base,
+			LastTransitionAt: base,
+		},
+	}
+	svc := NewService(reducer, st)
+
+	exitCode := 3
+	got, err := svc.Ingest(context.Background(), state.Event{
+		ID:         "retry-1",
+		PaneID:     "%88",
+		Kind:       state.EventPaneExited,
+		OccurredAt: base.Add(2 * time.Second),
+		ExitCode:   &exitCode,
+		Source:     "adapter:test",
+	})
+	if err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	if st.appendCalls != 2 {
+		t.Fatalf("expected one retry, appendCalls=%d", st.appendCalls)
+	}
+	if got.Version != 3 {
+		t.Fatalf("expected version 3 after retry, got %d", got.Version)
+	}
+	if got.Status != state.StatusError {
+		t.Fatalf("expected ERROR after retry, got %s", got.Status)
+	}
+}

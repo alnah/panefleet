@@ -35,6 +35,8 @@ func NewService(reducer *state.Reducer, st store.Store) *Service {
 	}
 }
 
+const maxIngestAttempts = 8
+
 // Ingest applies one event to the canonical pane stream and persists the
 // projected state atomically to keep runtime and storage aligned.
 func (s *Service) Ingest(ctx context.Context, ev state.Event) (state.PaneState, error) {
@@ -48,34 +50,41 @@ func (s *Service) Ingest(ctx context.Context, ev state.Event) (state.PaneState, 
 	defer unlock()
 
 	errScope := fmt.Sprintf("pane=%s kind=%s event_id=%s", ev.PaneID, ev.Kind, ev.ID)
+	for attempt := 0; attempt < maxIngestAttempts; attempt++ {
+		current, ok, err := s.store.GetPaneState(ctx, ev.PaneID)
+		if err != nil {
+			return state.PaneState{}, fmt.Errorf("ingest lookup (%s): %w", errScope, err)
+		}
+		if !ok {
+			current = state.NewPaneState(ev.PaneID)
+			current.LastEventAt = ev.OccurredAt
+			current.LastTransitionAt = ev.OccurredAt
+		}
 
-	current, ok, err := s.store.GetPaneState(ctx, ev.PaneID)
-	if err != nil {
-		return state.PaneState{}, fmt.Errorf("ingest lookup (%s): %w", errScope, err)
-	}
-	if !ok {
-		current = state.NewPaneState(ev.PaneID)
-		current.LastEventAt = ev.OccurredAt
-		current.LastTransitionAt = ev.OccurredAt
+		next, err := s.reducer.Apply(current, ev)
+		if err != nil {
+			return state.PaneState{}, fmt.Errorf("ingest reduce (%s): %w", errScope, err)
+		}
+		if err := s.store.AppendAndProject(ctx, ev, next); err != nil {
+			if errors.Is(err, store.ErrConcurrentWrite) {
+				continue
+			}
+			return state.PaneState{}, fmt.Errorf("ingest persist (%s): %w", errScope, err)
+		}
+
+		persisted, ok, err := s.store.GetPaneState(ctx, ev.PaneID)
+		if err != nil {
+			return state.PaneState{}, fmt.Errorf("ingest reload (%s): %w", errScope, err)
+		}
+		if !ok {
+			return state.PaneState{}, fmt.Errorf("ingest reload (%s): pane state missing after persist", errScope)
+		}
+		view := persisted.Effective()
+		s.publish(view)
+		return view, nil
 	}
 
-	next, err := s.reducer.Apply(current, ev)
-	if err != nil {
-		return state.PaneState{}, fmt.Errorf("ingest reduce (%s): %w", errScope, err)
-	}
-	if err := s.store.AppendAndProject(ctx, ev, next); err != nil {
-		return state.PaneState{}, fmt.Errorf("ingest persist (%s): %w", errScope, err)
-	}
-	persisted, ok, err := s.store.GetPaneState(ctx, ev.PaneID)
-	if err != nil {
-		return state.PaneState{}, fmt.Errorf("ingest reload (%s): %w", errScope, err)
-	}
-	if !ok {
-		return state.PaneState{}, fmt.Errorf("ingest reload (%s): pane state missing after persist", errScope)
-	}
-	view := persisted.Effective()
-	s.publish(view)
-	return view, nil
+	return state.PaneState{}, fmt.Errorf("ingest persist (%s): %w", errScope, store.ErrConcurrentWrite)
 }
 
 // StateShow returns one pane projection and fails fast on missing pane ids to
