@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/alnah/panefleet/internal/state"
@@ -13,7 +14,8 @@ import (
 
 // SQLiteStore is the default local Store implementation for Panefleet.
 type SQLiteStore struct {
-	db *sql.DB
+	db  *sql.DB
+	dsn string
 }
 
 // NewSQLiteStore creates a single-writer sqlite handle tuned for local,
@@ -26,7 +28,7 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	db.SetConnMaxLifetime(0)
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	return &SQLiteStore{db: db}, nil
+	return &SQLiteStore{db: db, dsn: dsn}, nil
 }
 
 // Close releases the underlying DB handle.
@@ -76,6 +78,9 @@ func (s *SQLiteStore) configureConnection(ctx context.Context) error {
 	var mode string
 	if err := s.db.QueryRowContext(ctx, `PRAGMA journal_mode = WAL`).Scan(&mode); err != nil {
 		return err
+	}
+	if expectsWAL(s.dsn) && !strings.EqualFold(mode, "wal") {
+		return fmt.Errorf("sqlite journal_mode=%q, want wal", mode)
 	}
 	return nil
 }
@@ -299,4 +304,12 @@ func rowsAffectedOne(tx *sql.Tx, query string) (int64, error) {
 		return 0, err
 	}
 	return changes, nil
+}
+
+func expectsWAL(dsn string) bool {
+	lower := strings.ToLower(strings.TrimSpace(dsn))
+	if lower == "" || strings.Contains(lower, ":memory:") {
+		return false
+	}
+	return !strings.Contains(lower, "mode=memory")
 }

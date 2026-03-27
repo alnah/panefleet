@@ -279,3 +279,21 @@ func TestSQLiteStoreRejectsStaleProjectionUpdate(t *testing.T) {
 func intPtr(v int) *int {
 	return &v
 }
+
+func TestExpectsWAL(t *testing.T) {
+	cases := []struct {
+		dsn  string
+		want bool
+	}{
+		{dsn: "", want: false},
+		{dsn: ":memory:", want: false},
+		{dsn: "file::memory:?cache=shared", want: false},
+		{dsn: "file:/tmp/panefleet.db", want: true},
+		{dsn: "/tmp/panefleet.db", want: true},
+	}
+	for _, tc := range cases {
+		if got := expectsWAL(tc.dsn); got != tc.want {
+			t.Fatalf("expectsWAL(%q)=%v, want %v", tc.dsn, got, tc.want)
+		}
+	}
+}
