@@ -34,17 +34,17 @@ type actionMsg struct {
 
 // Model stores UI state for the fallback Bubble Tea application.
 type Model struct {
-	reader      StateReader
-	interval    time.Duration
-	opTimeout   time.Duration
-	updates     <-chan state.PaneState
-	states      []state.PaneState
-	selected    int
-	lastRefresh time.Time
-	fetching    bool
-	acting      bool
+	reader        StateReader
+	interval      time.Duration
+	opTimeout     time.Duration
+	updates       <-chan state.PaneState
+	states        []state.PaneState
+	selected      int
+	lastRefresh   time.Time
+	fetching      bool
+	acting        bool
 	refreshQueued bool
-	err         error
+	err           error
 }
 
 // New constructs the lightweight fallback TUI model used by the Go runtime
@@ -54,12 +54,12 @@ func New(reader StateReader, interval time.Duration, updates <-chan state.PaneSt
 		interval = 700 * time.Millisecond
 	}
 	return Model{
-		reader:   reader,
-		interval: interval,
+		reader:    reader,
+		interval:  interval,
 		opTimeout: 5 * time.Second,
-		updates:  updates,
-		states:   make([]state.PaneState, 0),
-		fetching: true,
+		updates:   updates,
+		states:    make([]state.PaneState, 0),
+		fetching:  true,
 	}
 }
 
@@ -89,72 +89,72 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.selected < len(m.states)-1 {
 				m.selected++
 			}
-			case "r":
-				if !m.fetching {
-					m.fetching = true
-					return m, m.fetchCmd()
-				}
-				m.refreshQueued = true
-			case "s":
-				if st, ok := m.selectedState(); ok && !m.acting {
-					m.acting = true
-					return m, m.toggleStaleOverrideCmd(st)
-				}
-			case "x":
-				if st, ok := m.selectedState(); ok && !m.acting {
-					m.acting = true
-					return m, m.respawnCmd(st.PaneID)
-				}
-			case "d":
-				if st, ok := m.selectedState(); ok && !m.acting {
-					m.acting = true
-					return m, m.killCmd(st.PaneID)
-				}
-			}
-		case statesMsg:
-			m.fetching = false
-			m.err = msg.err
-			if msg.err == nil {
-				m.states = msg.states
-			if m.selected >= len(m.states) && len(m.states) > 0 {
-				m.selected = len(m.states) - 1
-				}
-				m.lastRefresh = time.Now().UTC()
-			}
-			if m.refreshQueued {
-				m.refreshQueued = false
+		case "r":
+			if !m.fetching {
 				m.fetching = true
 				return m, m.fetchCmd()
 			}
-		case tickMsg:
-			if m.fetching {
-				return m, tickCmd(m.interval)
+			m.refreshQueued = true
+		case "s":
+			if st, ok := m.selectedState(); ok && !m.acting {
+				m.acting = true
+				return m, m.toggleStaleOverrideCmd(st)
 			}
-			m.fetching = true
-			return m, tea.Batch(m.fetchCmd(), tickCmd(m.interval))
-		case stateUpdatedMsg:
-			if m.fetching {
-				m.refreshQueued = true
-				if m.updates != nil {
-					return m, waitForUpdateCmd(m.updates)
-				}
-				return m, nil
+		case "x":
+			if st, ok := m.selectedState(); ok && !m.acting {
+				m.acting = true
+				return m, m.respawnCmd(st.PaneID)
 			}
-			m.fetching = true
-			if m.updates != nil {
-				return m, tea.Batch(m.fetchCmd(), waitForUpdateCmd(m.updates))
+		case "d":
+			if st, ok := m.selectedState(); ok && !m.acting {
+				m.acting = true
+				return m, m.killCmd(st.PaneID)
 			}
-			return m, m.fetchCmd()
-		case actionMsg:
-			m.acting = false
-			m.err = msg.err
-			if m.fetching {
-				m.refreshQueued = true
-				return m, nil
+		}
+	case statesMsg:
+		m.fetching = false
+		m.err = msg.err
+		if msg.err == nil {
+			m.states = msg.states
+			if m.selected >= len(m.states) && len(m.states) > 0 {
+				m.selected = len(m.states) - 1
 			}
+			m.lastRefresh = time.Now().UTC()
+		}
+		if m.refreshQueued {
+			m.refreshQueued = false
 			m.fetching = true
 			return m, m.fetchCmd()
 		}
+	case tickMsg:
+		if m.fetching {
+			return m, tickCmd(m.interval)
+		}
+		m.fetching = true
+		return m, tea.Batch(m.fetchCmd(), tickCmd(m.interval))
+	case stateUpdatedMsg:
+		if m.fetching {
+			m.refreshQueued = true
+			if m.updates != nil {
+				return m, waitForUpdateCmd(m.updates)
+			}
+			return m, nil
+		}
+		m.fetching = true
+		if m.updates != nil {
+			return m, tea.Batch(m.fetchCmd(), waitForUpdateCmd(m.updates))
+		}
+		return m, m.fetchCmd()
+	case actionMsg:
+		m.acting = false
+		m.err = msg.err
+		if m.fetching {
+			m.refreshQueued = true
+			return m, nil
+		}
+		m.fetching = true
+		return m, m.fetchCmd()
+	}
 	return m, nil
 }
 
