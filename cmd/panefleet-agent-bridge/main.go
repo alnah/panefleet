@@ -146,18 +146,30 @@ func runCodexAppServer(ctx context.Context, args []string) error {
 		if !ok {
 			continue
 		}
-		if stringValue(payload["method"]) != "thread/status/changed" {
-			logDecision("codex-app-server", pane, eventID, "ignored", "", "non-status app-server method", "")
-			continue
-		}
-
-		state := mapCodexStatus(payload)
-		if state == "" {
-			logDecision("codex-app-server", pane, eventID, "ignored", "", "status payload unmapped", "")
-			continue
-		}
-		if err := applyMappedState(ctx, pane, "codex", "codex-app-server", eventID, state, "thread/status/changed"); err != nil {
-			return err
+		method := stringValue(payload["method"])
+		switch method {
+		case "thread/status/changed":
+			state := mapCodexStatus(payload)
+			if state == "" {
+				logDecision("codex-app-server", pane, eventID, "ignored", "", "status payload unmapped", "")
+				continue
+			}
+			if err := applyMappedState(ctx, pane, "codex", "codex-app-server", eventID, state, "thread/status/changed"); err != nil {
+				return err
+			}
+		case "thread/tokenUsage/updated":
+			tokensUsed, contextLeftPct, contextWindow, ok := codexTokenUsageMetrics(payload)
+			if !ok {
+				logDecision("codex-app-server", pane, eventID, "ignored", "", "token usage payload unmapped", "")
+				continue
+			}
+			if err := setMetrics(ctx, pane, tokensUsed, contextLeftPct, contextWindow); err != nil {
+				logDecision("codex-app-server", pane, eventID, "metrics_set_error", "", "thread/tokenUsage/updated", err.Error())
+				return err
+			}
+			logDecision("codex-app-server", pane, eventID, "metrics_set", "", "thread/tokenUsage/updated", "")
+		default:
+			logDecision("codex-app-server", pane, eventID, "ignored", "", "unsupported app-server method", method)
 		}
 	}
 
@@ -261,6 +273,21 @@ func setState(ctx context.Context, pane, status, tool, source string) error {
 		"--tool", tool,
 		"--source", source,
 		"--updated-at", strconv.FormatInt(time.Now().Unix(), 10),
+	}
+	return runPanefleet(ctx, args...)
+}
+
+func setMetrics(ctx context.Context, pane string, tokensUsed int64, contextLeftPct int64, contextWindow int64) error {
+	args := []string{
+		"metrics-set",
+		"--pane", pane,
+		"--tokens-used", strconv.FormatInt(tokensUsed, 10),
+	}
+	if contextLeftPct >= 0 {
+		args = append(args, "--context-left-pct", strconv.FormatInt(contextLeftPct, 10))
+	}
+	if contextWindow > 0 {
+		args = append(args, "--context-window", strconv.FormatInt(contextWindow, 10))
 	}
 	return runPanefleet(ctx, args...)
 }

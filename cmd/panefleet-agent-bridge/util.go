@@ -1,6 +1,9 @@
 package main
 
-import "strings"
+import (
+	"math"
+	"strings"
+)
 
 func stringValue(v any) string {
 	switch value := v.(type) {
@@ -40,4 +43,22 @@ func containsAny(haystack string, needles ...string) bool {
 		}
 	}
 	return false
+}
+
+func int64Value(v any) (int64, bool) {
+	switch value := v.(type) {
+	case int:
+		return int64(value), true
+	case int64:
+		return value, true
+	case int32:
+		return int64(value), true
+	case float64:
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return 0, false
+		}
+		return int64(value), true
+	default:
+		return 0, false
+	}
 }
