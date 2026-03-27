@@ -731,6 +731,20 @@ resolve_theme() {
         "#7cc7ff" "#72e39b" "#ff8da1" "#9fd6ff"
       ;;
   esac
+
+  derive_theme_tokens
+}
+
+derive_theme_tokens() {
+  # Advanced visual tokens are derived from the base palette so all themes
+  # receive the same UI semantics without expanding every theme definition.
+  THEME_BG_SURFACE="${THEME_BG_ALT}"
+  THEME_FG_SUBTLE="${THEME_MUTED}"
+  THEME_BORDER_SOFT="${THEME_BORDER}"
+  THEME_BORDER_STRONG="${THEME_HEADER}"
+  THEME_FOCUS_BG="${THEME_SELECTION_BG}"
+  THEME_FOCUS_FG="${THEME_SELECTION_FG}"
+  THEME_FOCUS_MARKER="${THEME_ACCENT}"
 }
 
 tmux_global_option() {
@@ -2185,11 +2199,11 @@ header_cell() {
 }
 
 separator_cell() {
-  paint_fg " | " "$THEME_BORDER"
+  paint_fg " │ " "$THEME_BORDER_SOFT"
 }
 
 preview_label() {
-  header_cell "$(fit_cell "$1" 7)"
+  paint_fg "$(fit_cell "$1" 7)" "$THEME_FG_SUBTLE" "1"
 }
 
 preview_value() {
@@ -2197,6 +2211,40 @@ preview_value() {
   local color="${2:-$THEME_FG}"
 
   paint_fg "$text" "$color"
+}
+
+tokens_color() {
+  local tokens="$1"
+  local text="${2:-$tokens}"
+
+  if [[ ! "$tokens" =~ ^[0-9]+$ ]]; then
+    paint_fg "$text" "$THEME_FG_SUBTLE"
+    return
+  fi
+
+  if (( tokens >= 100000 )); then
+    paint_fg "$text" "$THEME_WAIT" "1"
+  else
+    paint_fg "$text" "$THEME_FG"
+  fi
+}
+
+context_left_color() {
+  local pct="$1"
+  local text="${2:-$pct%}"
+
+  if [[ ! "$pct" =~ ^[0-9]+$ ]]; then
+    paint_fg "$text" "$THEME_FG_SUBTLE"
+    return
+  fi
+
+  if (( pct >= 60 )); then
+    paint_fg "$text" "$THEME_RUN" "1"
+  elif (( pct >= 30 )); then
+    paint_fg "$text" "$THEME_WAIT" "1"
+  else
+    paint_fg "$text" "$THEME_ERROR" "1"
+  fi
 }
 
 preview_pad_bg() {
@@ -2486,24 +2534,24 @@ fzf_color_spec() {
   printf 'bg:%s,fg:%s,preview-bg:%s,preview-fg:%s,bg+:%s,fg+:%s,hl:%s,hl+:%s,info:%s,border:%s,list-border:%s,preview-border:%s,header-border:%s,input-border:%s,separator:%s,prompt:%s,pointer:%s,marker:%s,spinner:%s,scrollbar:%s,header:%s,label:%s,gutter:%s' \
     "$(fzf_color_value "$THEME_BG")" \
     "$(fzf_color_value "$THEME_FG")" \
-    "$(fzf_color_value "$THEME_BG_ALT")" \
+    "$(fzf_color_value "$THEME_BG_SURFACE")" \
     "$(fzf_color_value "$THEME_FG")" \
-    "$(fzf_color_value "$THEME_SELECTION_BG")" \
-    "$(fzf_color_value "$THEME_SELECTION_FG")" \
+    "$(fzf_color_value "$THEME_FOCUS_BG")" \
+    "$(fzf_color_value "$THEME_FOCUS_FG")" \
     "$(fzf_color_value "$THEME_ACCENT")" \
     "$(fzf_color_value "$THEME_ACCENT")" \
-    "$(fzf_color_value "$THEME_MUTED")" \
-    "$(fzf_color_value "$THEME_BORDER")" \
-    "$(fzf_color_value "$THEME_BORDER")" \
-    "$(fzf_color_value "$THEME_BORDER")" \
-    "$(fzf_color_value "$THEME_BORDER")" \
-    "$(fzf_color_value "$THEME_BORDER")" \
-    "$(fzf_color_value "$THEME_BORDER")" \
+    "$(fzf_color_value "$THEME_FG_SUBTLE")" \
+    "$(fzf_color_value "$THEME_BORDER_SOFT")" \
+    "$(fzf_color_value "$THEME_BORDER_SOFT")" \
+    "$(fzf_color_value "$THEME_BORDER_SOFT")" \
+    "$(fzf_color_value "$THEME_BORDER_STRONG")" \
+    "$(fzf_color_value "$THEME_BORDER_SOFT")" \
+    "$(fzf_color_value "$THEME_BORDER_SOFT")" \
     "$(fzf_color_value "$THEME_ACCENT")" \
+    "$(fzf_color_value "$THEME_FOCUS_MARKER")" \
     "$(fzf_color_value "$THEME_ACCENT")" \
-    "$(fzf_color_value "$THEME_ACCENT")" \
-    "$(fzf_color_value "$THEME_ACCENT")" \
-    "$(fzf_color_value "$THEME_MUTED")" \
+    "$(fzf_color_value "$THEME_FOCUS_MARKER")" \
+    "$(fzf_color_value "$THEME_FG_SUBTLE")" \
     "$(fzf_color_value "$THEME_HEADER")" \
     "$(fzf_color_value "$THEME_HEADER")" \
     "$(fzf_color_value "$THEME_BG")"
@@ -2632,6 +2680,36 @@ resolve_list_row_values() {
   fi
 
   if [[ -n "$local_status" || "$dead" == "1" || -n "$agent_status_value" ]]; then
+    # When a fresh heuristic cache exists for the current pane signature,
+    # prefer it over adapter-fast status to keep board rows aligned with
+    # preview/live-derived state after queue-refresh.
+    if [[ -z "$local_status" && "$dead" != "1" && -n "$cached_raw_status" && -n "$cached_signature" && "$cached_signature" == "$signature" ]]; then
+      if [[ -n "$agent_status_value" ]]; then
+        case "$cached_raw_status:$agent_status_value" in
+          RUN:DONE|RUN:IDLE|RUN:STALE|WAIT:DONE|WAIT:IDLE|WAIT:STALE|ERROR:DONE|ERROR:IDLE|ERROR:STALE)
+            ;;
+          *)
+            cached_raw_status=""
+            ;;
+        esac
+      fi
+    fi
+
+    if [[ -z "$local_status" && "$dead" != "1" && -n "$cached_raw_status" && -n "$cached_signature" && "$cached_signature" == "$signature" ]]; then
+      raw_status="$cached_raw_status"
+      if [[ -n "$cached_tool" ]]; then
+        tool="$cached_tool"
+      fi
+      status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$PANEFLEET_DONE_RECENT_MINUTES" "$PANEFLEET_STALE_MINUTES" "$PANEFLEET_NOW")"
+      PANEFLEET_RESOLVED_TOOL="$tool"
+      PANEFLEET_RESOLVED_RAW_STATUS="$raw_status"
+      PANEFLEET_RESOLVED_STATUS="$status"
+      PANEFLEET_RESOLVED_SOURCE="heuristic-cache"
+      PANEFLEET_RESOLVED_REASON="cache signature match"
+      PANEFLEET_RESOLVED_LAST_DONE="$last_done"
+      return
+    fi
+
     if list_deferred_refresh_mode_enabled && [[ -z "$local_status" ]] && [[ "$dead" != "1" ]] && [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$PANEFLEET_AGENT_STATUS_MAX_AGE" "$PANEFLEET_NOW" && agent_state_matches_live_tool "$tool" "$agent_tool_value"; then
       raw_status="$agent_status_value"
       if [[ -n "$agent_tool_value" ]]; then
@@ -2733,6 +2811,7 @@ build_list_row() {
   local context_left_pct="${11:-}"
   local repo target_window target_pane short_path age
   local tool_cell target_cell session_cell window_cell repo_cell tokens_cell ctx_cell colored_status display rank sep
+  local colored_tokens colored_ctx
 
   repo="${path##*/}"
   if [[ -z "$repo" ]]; then
@@ -2759,6 +2838,8 @@ build_list_row() {
     ctx_cell="-"
   fi
   fit_cell_into ctx_cell "$ctx_cell" 4
+  colored_tokens="$(tokens_color "$tokens_used" "$tokens_cell")"
+  colored_ctx="$(context_left_color "$context_left_pct" "$ctx_cell")"
   colored_status="$(colored_status_cell "$status")"
   status_rank_value "$status"
   rank="$REPLY"
@@ -2776,9 +2857,9 @@ build_list_row() {
     "$sep" \
     "$repo_cell" \
     "$sep" \
-    "$tokens_cell" \
+    "$colored_tokens" \
     "$sep" \
-    "$ctx_cell" \
+    "$colored_ctx" \
     "$sep" \
     "$age")"
 
@@ -2898,6 +2979,7 @@ preview_row() {
   short_path="${path/#$HOME/\~}"
   capture="$(preview_body_capture "$pane_id")"
 
+  printf '%s\n' "$(paint_fg "pane meta" "$THEME_HEADER" "1")"
   printf '%s %s\n' "$(preview_label "status")" "$(status_color "$status")"
   printf '%s %s\n' "$(preview_label "target")" "$(preview_value "${session_name}:${window_index}.${pane_index}" "$THEME_ACCENT")"
   printf '%s %s\n' "$(preview_label "window")" "$(preview_value "$window_name")"
@@ -2906,7 +2988,7 @@ preview_row() {
   printf '%s %s\n' "$(preview_label "title")" "$(preview_value "$title")"
   printf '%s %s\n' "$(preview_label "path")" "$(preview_value "$short_path" "$THEME_ACCENT")"
   printf '\n'
-  printf '%s\n' "$(paint_fg "────────────────────────────────────────" "$THEME_BORDER")"
+  printf '%s\n' "$(paint_fg "pane output ────────────────────────────" "$THEME_BORDER_STRONG")"
   printf '%s\n' "$capture" | render_preview_capture
 }
 
@@ -2960,9 +3042,9 @@ open_board() {
   # Immediate by default; optional override for slower environments.
   repaint_delay="${PANEFLEET_BOARD_REPAINT_DELAY:-0}"
   if [ "$repaint_delay" = "0" ] || [ "$repaint_delay" = "0.0" ]; then
-    repaint_command="\"${SELF}\" board-repaint-cache --cache-file \"${cache_file}\" --state-file \"${state_file}\""
+    repaint_command="PANEFLEET_LIST_MODE=deferred-refresh \"${SELF}\" list-deferred"
   else
-    repaint_command="sleep \"${repaint_delay}\"; \"${SELF}\" board-repaint-cache --cache-file \"${cache_file}\" --state-file \"${state_file}\""
+    repaint_command="sleep \"${repaint_delay}\"; PANEFLEET_LIST_MODE=deferred-refresh \"${SELF}\" list-deferred"
   fi
   load_reload_action="reload"
   reload_event="load"
@@ -2988,13 +3070,15 @@ open_board() {
     --prompt='panefleet> '
     --header="$(board_header_navigation)"
     --separator='─'
+    --pointer='▌'
+    --marker='•'
     --preview "${SELF} preview {1}"
     --preview-window='bottom,55%,border-top,wrap,follow,~9'
     --bind "enter:execute-silent(${SELF} jump {1} {2})+abort"
-    --bind "up:up+execute-silent(${SELF} queue-refresh --pane {1})"
-    --bind "down:down+execute-silent(${SELF} queue-refresh --pane {1})"
+    --bind "up:up+execute-silent(${SELF} refresh-panes-cache {1})+reload(PANEFLEET_LIST_MODE=deferred-refresh ${SELF} list-deferred)"
+    --bind "down:down+execute-silent(${SELF} refresh-panes-cache {1})+reload(PANEFLEET_LIST_MODE=deferred-refresh ${SELF} list-deferred)"
     --bind "change:execute-silent(${SELF} queue-refresh --all)"
-    --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+execute-silent(${SELF} queue-refresh --pane {1})"
+    --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+execute-silent(${SELF} refresh-panes-cache {1})+reload(PANEFLEET_LIST_MODE=deferred-refresh ${SELF} list-deferred)"
     --bind "${reload_event}:${load_reload_action}(${repaint_command})"
   )
   "$SELF" queue-refresh --all >/dev/null 2>&1 || true
@@ -3018,13 +3102,13 @@ open_board() {
 theme_popup_style() {
   resolve_theme
   resolve_color_mode
-  printf 'fg=%s,bg=%s' "$(tmux_style_color "$THEME_FG")" "$(tmux_style_color "$THEME_BG")"
+  printf 'fg=%s,bg=%s' "$(tmux_style_color "$THEME_FG")" "$(tmux_style_color "$THEME_BG_SURFACE")"
 }
 
 theme_popup_border_style() {
   resolve_theme
   resolve_color_mode
-  printf 'fg=%s,bg=%s' "$(tmux_style_color "$THEME_BORDER")" "$(tmux_style_color "$THEME_BG")"
+  printf 'fg=%s,bg=%s' "$(tmux_style_color "$THEME_BORDER_STRONG")" "$(tmux_style_color "$THEME_BG_SURFACE")"
 }
 
 binding_state() {
@@ -3243,17 +3327,69 @@ theme_rows() {
   done < <(available_themes)
 }
 
+contrast_ratio_x100() {
+  local c1="$1"
+  local c2="$2"
+  local r1 g1 b1 r2 g2 b2
+
+  read -r r1 g1 b1 <<<"$(hex_components "$c1")"
+  read -r r2 g2 b2 <<<"$(hex_components "$c2")"
+  awk -v r1="$r1" -v g1="$g1" -v b1="$b1" -v r2="$r2" -v g2="$g2" -v b2="$b2" '
+    function channel(c) {
+      c = c / 255.0
+      if (c <= 0.03928) {
+        return c / 12.92
+      }
+      return ((c + 0.055) / 1.055) ^ 2.4
+    }
+    BEGIN {
+      l1 = 0.2126 * channel(r1) + 0.7152 * channel(g1) + 0.0722 * channel(b1)
+      l2 = 0.2126 * channel(r2) + 0.7152 * channel(g2) + 0.0722 * channel(b2)
+      if (l1 > l2) {
+        hi = l1
+        lo = l2
+      } else {
+        hi = l2
+        lo = l1
+      }
+      ratio = (hi + 0.05) / (lo + 0.05)
+      printf "%d", int(ratio * 100 + 0.5)
+    }
+  '
+}
+
+contrast_badge_text() {
+  local ratio_x100="$1"
+  local threshold_x100="$2"
+
+  if (( ratio_x100 >= threshold_x100 )); then
+    printf '%s' "$(paint_fg "pass" "$THEME_RUN" "1")"
+  else
+    printf '%s' "$(paint_fg "warn" "$THEME_ERROR" "1")"
+  fi
+}
+
 theme_preview() {
   local theme_name="${1:?theme name is required}"
+  local text_ratio ui_ratio text_pass ui_pass
 
   PANEFLEET_THEME="$theme_name"
   resolve_theme
+  text_ratio="$(contrast_ratio_x100 "$THEME_FG" "$THEME_BG")"
+  ui_ratio="$(contrast_ratio_x100 "$THEME_BORDER_STRONG" "$THEME_BG")"
+  text_pass="$(contrast_badge_text "$text_ratio" 450)"
+  ui_pass="$(contrast_badge_text "$ui_ratio" 300)"
 
   printf 'theme   %s\n' "$THEME_NAME"
   printf 'bg      %s\n' "$THEME_BG"
   printf 'fg      %s\n' "$THEME_FG"
   printf 'border  %s\n' "$THEME_BORDER"
   printf 'accent  %s\n' "$THEME_ACCENT"
+  printf 'wcag    text %s (%d.%02d:1)  ui %s (%d.%02d:1)\n' \
+    "$text_pass" \
+    "$(( text_ratio / 100 ))" "$(( text_ratio % 100 ))" \
+    "$ui_pass" \
+    "$(( ui_ratio / 100 ))" "$(( ui_ratio % 100 ))"
   printf '\n'
   printf 'states  %s  %s  %s  %s  %s  %s\n' \
     "$(status_color "RUN")" \
@@ -3296,9 +3432,12 @@ open_theme_selector() {
     --layout=reverse \
     --height=100% \
     --border=none \
+    --info=inline-right \
     --prompt='theme> ' \
-    --header='enter: apply theme' \
+    --header='enter: apply theme · preview includes quick wcag check' \
     --separator='─' \
+    --pointer='▌' \
+    --marker='•' \
     --preview "${SELF} theme-preview {1}" \
     --preview-window='bottom,45%,border-top,wrap' \
     --bind "enter:execute-silent(${SELF} theme-apply {1})+abort"
