@@ -84,6 +84,66 @@ list_mode_value() {
   printf '%s' "${PANEFLEET_LIST_MODE:-full}"
 }
 
+board_viewport_columns() {
+  local columns="${PANEFLEET_BOARD_COLUMNS:-}"
+
+  if [[ "$columns" =~ ^[0-9]+$ ]] && ((columns >= 80)); then
+    printf '%s' "$columns"
+    return
+  fi
+
+  if command -v tput >/dev/null 2>&1; then
+    columns="$(tput cols 2>/dev/null || true)"
+    if [[ "$columns" =~ ^[0-9]+$ ]] && ((columns >= 80)); then
+      printf '%s' "$columns"
+      return
+    fi
+  fi
+
+  columns="${COLUMNS:-}"
+  if [[ "$columns" =~ ^[0-9]+$ ]] && ((columns >= 80)); then
+    printf '%s' "$columns"
+    return
+  fi
+
+  printf '120'
+}
+
+board_layout_widths() {
+  local columns="${1:-$(board_viewport_columns)}"
+  local separator_width=24
+  local fixed_width=40
+  local flex_floor=24
+  local extra_budget session_extra window_extra repo_extra
+
+  if [[ ! "$columns" =~ ^[0-9]+$ ]] || ((columns < 80)); then
+    columns=120
+  fi
+
+  extra_budget=$((columns - separator_width - fixed_width - flex_floor))
+  if ((extra_budget < 0)); then
+    extra_budget=0
+  fi
+
+  session_extra=$((extra_budget * 3 / 10))
+  window_extra=$((extra_budget * 4 / 10))
+  repo_extra=$((extra_budget - session_extra - window_extra))
+
+  PANEFLEET_BOARD_STATUS_WIDTH=5
+  PANEFLEET_BOARD_TOOL_WIDTH=8
+  PANEFLEET_BOARD_TARGET_WIDTH=8
+  PANEFLEET_BOARD_SESSION_WIDTH=$((7 + session_extra))
+  PANEFLEET_BOARD_WINDOW_WIDTH=$((10 + window_extra))
+  PANEFLEET_BOARD_REPO_WIDTH=$((7 + repo_extra))
+  PANEFLEET_BOARD_TOKENS_WIDTH=10
+  PANEFLEET_BOARD_CTX_WIDTH=5
+  PANEFLEET_BOARD_AGE_WIDTH=4
+}
+
+board_padding_spec() {
+  printf '%s' "${PANEFLEET_BOARD_PADDING:-0,1,0,1}"
+}
+
 list_deferred_refresh_mode_enabled() {
   local mode
   mode="$(list_mode_value)"
@@ -264,30 +324,30 @@ build_list_row() {
   target_pane="${window_index}.${pane_index}"
   short_path="${path/#$HOME/\~}"
   pretty_age_into age "${activity:-0}" "$PANEFLEET_NOW"
-  fit_cell_into tool_cell "$tool" 8
-  fit_cell_into target_cell "$target_pane" 8
-  fit_cell_into session_cell "$session_name" 14
-  fit_cell_into window_cell "$window_name" 18
-  fit_cell_into repo_cell "$repo" 14
+  fit_cell_into tool_cell "$tool" "$PANEFLEET_BOARD_TOOL_WIDTH"
+  fit_cell_into target_cell "$target_pane" "$PANEFLEET_BOARD_TARGET_WIDTH"
+  fit_cell_into session_cell "$session_name" "$PANEFLEET_BOARD_SESSION_WIDTH"
+  fit_cell_into window_cell "$window_name" "$PANEFLEET_BOARD_WINDOW_WIDTH"
+  fit_cell_into repo_cell "$repo" "$PANEFLEET_BOARD_REPO_WIDTH"
   if [[ "$tokens_used" =~ ^[0-9]+$ ]]; then
     tokens_cell="$tokens_used"
   else
     tokens_cell="-"
   fi
-  fit_cell_into tokens_cell "$tokens_cell" 8
+  fit_cell_into tokens_cell "$tokens_cell" "$PANEFLEET_BOARD_TOKENS_WIDTH"
   if [[ "$context_left_pct" =~ ^[0-9]+$ ]]; then
     ctx_cell="${context_left_pct}%"
   else
     ctx_cell="-"
   fi
-  fit_cell_into ctx_cell "$ctx_cell" 4
+  fit_cell_into ctx_cell "$ctx_cell" "$PANEFLEET_BOARD_CTX_WIDTH"
   colored_tokens="$(tokens_color "$tokens_used" "$tokens_cell")"
   colored_ctx="$(context_left_color "$context_left_pct" "$ctx_cell")"
   colored_status="$(colored_status_cell "$status")"
   status_rank_value "$status"
   rank="$REPLY"
   sep="$(separator_cell)"
-  display="$(printf '%b%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%4s' \
+  display="$(printf '%b%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%*s' \
     "$colored_status" \
     "$sep" \
     "$tool_cell" \
@@ -304,7 +364,7 @@ build_list_row() {
     "$sep" \
     "$colored_ctx" \
     "$sep" \
-    "$age")"
+    "$PANEFLEET_BOARD_AGE_WIDTH" "$age")"
 
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$pane_id" \
@@ -319,14 +379,14 @@ list_header() {
   local status_text tool_text target_text session_text window_text repo_text tokens_text ctx_text
   local status_cell tool_cell target_cell session_cell window_cell repo_cell tokens_cell ctx_cell display sep
 
-  fit_cell_into status_text "STATE" 5
-  fit_cell_into tool_text "TOOL" 8
-  fit_cell_into target_text "TARGET" 8
-  fit_cell_into session_text "SESSION" 14
-  fit_cell_into window_text "WINDOW" 18
-  fit_cell_into repo_text "REPO" 14
-  fit_cell_into tokens_text "TOKENS" 8
-  fit_cell_into ctx_text "CTX%" 4
+  fit_cell_into status_text "STATE" "$PANEFLEET_BOARD_STATUS_WIDTH"
+  fit_cell_into tool_text "TOOL" "$PANEFLEET_BOARD_TOOL_WIDTH"
+  fit_cell_into target_text "TARGET" "$PANEFLEET_BOARD_TARGET_WIDTH"
+  fit_cell_into session_text "SESSION" "$PANEFLEET_BOARD_SESSION_WIDTH"
+  fit_cell_into window_text "WINDOW" "$PANEFLEET_BOARD_WINDOW_WIDTH"
+  fit_cell_into repo_text "REPO" "$PANEFLEET_BOARD_REPO_WIDTH"
+  fit_cell_into tokens_text "TOKENS" "$PANEFLEET_BOARD_TOKENS_WIDTH"
+  fit_cell_into ctx_text "CTX%" "$PANEFLEET_BOARD_CTX_WIDTH"
   status_cell="$(header_cell "$status_text")"
   tool_cell="$(header_cell "$tool_text")"
   target_cell="$(header_cell "$target_text")"
@@ -336,7 +396,7 @@ list_header() {
   tokens_cell="$(header_cell "$tokens_text")"
   ctx_cell="$(header_cell "$ctx_text")"
   sep="$(separator_cell)"
-  display="$(printf '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%4s' \
+  display="$(printf '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%*s' \
     "$status_cell" \
     "$sep" \
     "$tool_cell" \
@@ -353,7 +413,7 @@ list_header() {
     "$sep" \
     "$ctx_cell" \
     "$sep" \
-    "$(header_cell "AGE")")"
+    "$PANEFLEET_BOARD_AGE_WIDTH" "$(header_cell "AGE")")"
 
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
     "__header__" \
@@ -372,6 +432,7 @@ list_rows() {
   local tool status
 
   list_runtime_defaults
+  board_layout_widths "$(board_viewport_columns)"
   PANEFLEET_REFRESH_QUEUE=""
   PANEFLEET_SYNC_REFRESH_COUNT=0
 
@@ -569,8 +630,7 @@ open_board() {
     fzf_args+=(--bind "result:reload-sync(sleep \"${poll_interval}\"; ${repaint_command})")
   fi
   if fzf_supports_padding; then
-    # Use symmetric padding to keep prompt/controls/table visually aligned.
-    fzf_args+=(--padding='1,3,1,3')
+    fzf_args+=(--padding="$(board_padding_spec)")
   fi
   set +e
   "${FZF_BIN}" "${fzf_args[@]}" <"$cache_file"

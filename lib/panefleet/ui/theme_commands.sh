@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 
 # Theme selector, theme preview, and popup UI commands.
+board_popup_width() {
+  printf '%s' "${PANEFLEET_BOARD_POPUP_WIDTH:-100%}"
+}
+
+board_popup_height() {
+  printf '%s' "${PANEFLEET_BOARD_POPUP_HEIGHT:-100%}"
+}
+
 open_popup() {
   require_tmux
   require_runtime_support
@@ -8,8 +16,8 @@ open_popup() {
 
   "${TMUX_BIN}" display-popup \
     -E \
-    -w 90% \
-    -h 85% \
+    -w "$(board_popup_width)" \
+    -h "$(board_popup_height)" \
     -s "$(theme_popup_style)" \
     -S "$(theme_popup_border_style)" \
     "${SELF} board"
@@ -98,16 +106,17 @@ contrast_badge_text() {
 
 theme_preview() {
   local theme_name="${1:?theme name is required}"
-  local text_ratio ui_ratio text_pass ui_pass
+  local text_ratio ui_ratio text_pass ui_pass resolved_theme_name
 
   PANEFLEET_THEME="$theme_name"
   resolve_theme
+  resolved_theme_name="${THEME_NAME:-$theme_name}"
   text_ratio="$(contrast_ratio_x100 "$THEME_FG" "$THEME_BG")"
   ui_ratio="$(contrast_ratio_x100 "$THEME_BORDER_STRONG" "$THEME_BG")"
   text_pass="$(contrast_badge_text "$text_ratio" 450)"
   ui_pass="$(contrast_badge_text "$ui_ratio" 300)"
 
-  printf 'theme   %s\n' "$THEME_NAME"
+  printf 'theme   %s\n' "$resolved_theme_name"
   printf 'bg      %s\n' "$THEME_BG"
   printf 'fg      %s\n' "$THEME_FG"
   printf 'border  %s\n' "$THEME_BORDER"

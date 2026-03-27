@@ -274,6 +274,26 @@ test_sourced_helpers() {
   ! rg -Fq -- '--bind "down:down+execute-silent(${SELF} refresh-panes-cache {1})+reload(' "$board_file" || fail "board down binding should not run synchronous reloads"
   pass "board navigation stays decoupled from synchronous refresh"
 
+  got="$(PANEFLEET_BOARD_COLUMNS=160 board_viewport_columns)"
+  assert_eq "$got" "160" "board_viewport_columns should honor explicit override"
+  pass "board_viewport_columns honors explicit override"
+
+  PANEFLEET_BOARD_COLUMNS=160 board_layout_widths
+  assert_eq "$PANEFLEET_BOARD_SESSION_WIDTH" "28" "board_layout_widths should expand session column"
+  assert_eq "$PANEFLEET_BOARD_WINDOW_WIDTH" "38" "board_layout_widths should expand window column"
+  assert_eq "$PANEFLEET_BOARD_REPO_WIDTH" "30" "board_layout_widths should expand repo column"
+  pass "board layout widths scale to the viewport"
+
+  got="$(board_padding_spec)"
+  assert_eq "$got" "0,1,0,1" "board_padding_spec should keep the board nearly edge-to-edge"
+  pass "board padding stays minimal"
+
+  got="$(board_popup_width)"
+  assert_eq "$got" "100%" "board popup width should default to full client width"
+  got="$(board_popup_height)"
+  assert_eq "$got" "100%" "board popup height should default to full client height"
+  pass "board popup defaults to full client size"
+
   if agent_status_is_fresh "$(date +%s)" 600 "$(date +%s)"; then
     pass "agent_status_is_fresh accepts current timestamp"
   else
