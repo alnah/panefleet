@@ -7,8 +7,9 @@ GO ?= go
 GOFMT ?= gofmt
 GOLANGCI_LINT ?= golangci-lint
 GOSEC ?= gosec
+BASH ?= bash
 
-.PHONY: help install $(INSTALL_TARGETS) doctor uninstall deps test preflight bridge bridge-download release-check health backup-go-db restore-go-db fmt-go fmt-go-check lint-go lint-go-fix gosec-go vet-go test-go test-go-race verify-go
+.PHONY: help install $(INSTALL_TARGETS) doctor uninstall deps test preflight bridge bridge-download release-check health backup-go-db restore-go-db fmt-go fmt-go-check lint-go lint-go-fix gosec-go vet-go test-go test-go-race verify-go fmt-sh lint-sh lint-sh-fix test-sh verify-sh
 
 help:
 	@printf '%s\n' \
@@ -30,6 +31,11 @@ help:
 	  'make test-go           # run Go unit/integration tests' \
 	  'make test-go-race      # run Go tests with the race detector' \
 	  'make verify-go         # run formatting, lint, security, vet, and tests' \
+	  'make fmt-sh            # rewrite shell files with shfmt' \
+	  'make lint-sh           # run bash -n, shfmt -d, and shellcheck' \
+	  'make lint-sh-fix       # apply shell formatting with shfmt' \
+	  'make test-sh           # run shell contract tests' \
+	  'make verify-sh         # run shell lint and shell tests' \
 	  'make uninstall         # remove tmux bindings and hooks'
 
 install:
@@ -109,6 +115,22 @@ test-go-race:
 	@$(GO) test -race ./...
 
 verify-go: fmt-go-check lint-go gosec-go vet-go test-go test-go-race
+
+fmt-sh:
+	@./scripts/lint-shell.sh fix
+
+lint-sh:
+	@./scripts/lint-shell.sh check
+
+lint-sh-fix:
+	@./scripts/lint-shell.sh fix
+
+test-sh:
+	@./tests/test_panefleet.sh
+	@./tests/test_make_install.sh
+	@./tests/test_install_bridge.sh
+
+verify-sh: lint-sh test-sh
 
 preflight:
 	$(PANEFLEET_BIN) preflight

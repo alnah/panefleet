@@ -10,16 +10,16 @@ with_go="0"
 missing_packages=()
 package_manager=""
 
-while (( $# > 0 )); do
+while (($# > 0)); do
   case "$1" in
-    --with-go)
-      with_go="1"
-      shift
-      ;;
-    *)
-      printf 'unknown option: %s\n' "$1" >&2
-      exit 1
-      ;;
+  --with-go)
+    with_go="1"
+    shift
+    ;;
+  *)
+    printf 'unknown option: %s\n' "$1" >&2
+    exit 1
+    ;;
   esac
 done
 
@@ -73,7 +73,7 @@ if [[ "$with_go" == "1" ]]; then
   append_missing_package go go
 fi
 
-if (( ${#missing_packages[@]} == 0 )); then
+if ((${#missing_packages[@]} == 0)); then
   printf 'Core dependencies already present: tmux, fzf, ripgrep\n'
   if [[ "$with_go" == "1" ]]; then
     printf 'Optional build dependency already present: go\n'
