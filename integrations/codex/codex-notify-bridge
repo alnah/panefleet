@@ -11,11 +11,16 @@ STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
 BRIDGE_BIN="${PANEFLEET_AGENT_BRIDGE_BIN:-$STATE_HOME/panefleet/bin/panefleet-agent-bridge}"
 PANEFLEET_CMD="$(command -v panefleet 2>/dev/null || printf '%s/bin/panefleet' "$REPO_ROOT")"
 export PANEFLEET_EVENT_LOG_DIR="${PANEFLEET_EVENT_LOG_DIR:-$HOME/.local/state/panefleet/events}"
+PANE="${PANEFLEET_PANE:-${TMUX_PANE:-}}"
 
 if [[ ! -x "$BRIDGE_BIN" ]]; then
   printf 'panefleet: missing compiled bridge %s\n' "$BRIDGE_BIN" >&2
   printf 'install it with %s install codex\n' "$PANEFLEET_CMD" >&2
   exit 1
+fi
+
+if [[ -n "$PANE" ]]; then
+  exec "$BRIDGE_BIN" codex-notify --pane "$PANE" "$@"
 fi
 
 exec "$BRIDGE_BIN" codex-notify "$@"

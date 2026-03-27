@@ -559,6 +559,14 @@ fzf_supports_padding() {
   command_exists "${FZF_BIN}" && "${FZF_BIN}" --help 2>/dev/null | grep -Fq -- '--padding'
 }
 
+fzf_supports_result_event() {
+  if ! command_exists "${FZF_BIN}"; then
+    return 1
+  fi
+
+  printf 'x\n' | "${FZF_BIN}" --filter 'x' --bind 'result:abort' >/dev/null 2>&1
+}
+
 preflight() {
   local quiet="${1:-}"
   local ok=0
@@ -1090,17 +1098,27 @@ set_usage_metrics() {
   local tokens_used="${2:-}"
   local context_left_pct="${3:-}"
   local context_window="${4:-}"
+  local clear_tokens="${5:-0}"
+  local clear_context_left="${6:-0}"
+  local clear_context_window="${7:-0}"
 
   if [[ -n "$tokens_used" ]]; then
     set_pane_option "$pane_id" @panefleet_tokens_used "$tokens_used"
+  elif [[ "$clear_tokens" == "1" ]]; then
+    unset_pane_option "$pane_id" @panefleet_tokens_used 2>/dev/null || true
   fi
   if [[ -n "$context_left_pct" ]]; then
     set_pane_option "$pane_id" @panefleet_context_left_pct "$context_left_pct"
+  elif [[ "$clear_context_left" == "1" ]]; then
+    unset_pane_option "$pane_id" @panefleet_context_left_pct 2>/dev/null || true
   fi
   if [[ -n "$context_window" ]]; then
     set_pane_option "$pane_id" @panefleet_context_window "$context_window"
+  elif [[ "$clear_context_window" == "1" ]]; then
+    unset_pane_option "$pane_id" @panefleet_context_window 2>/dev/null || true
   fi
-  runtime_log_event "usage_metrics_set" pane "$pane_id" tokens "$tokens_used" ctx_left_pct "$context_left_pct" ctx_window "$context_window"
+  advance_refresh_generation
+  runtime_log_event "usage_metrics_set" pane "$pane_id" tokens "$tokens_used" ctx_left_pct "$context_left_pct" ctx_window "$context_window" clear_tokens "$clear_tokens" clear_ctx_left "$clear_context_left" clear_ctx_window "$clear_context_window"
 }
 
 clear_usage_metrics() {
@@ -1109,6 +1127,7 @@ clear_usage_metrics() {
   unset_pane_option "$pane_id" @panefleet_tokens_used 2>/dev/null || true
   unset_pane_option "$pane_id" @panefleet_context_left_pct 2>/dev/null || true
   unset_pane_option "$pane_id" @panefleet_context_window 2>/dev/null || true
+  advance_refresh_generation
   runtime_log_event "usage_metrics_cleared" pane "$pane_id"
 }
 
@@ -3029,7 +3048,7 @@ open_board() {
   resolve_theme
   local rc
   local cache_dir cache_file state_file warm_cache_file board_token
-  local initial_generation repaint_command repaint_delay load_reload_action reload_event
+  local initial_generation repaint_command repaint_delay load_reload_action reload_event poll_interval
   local -a fzf_args
 
   cache_dir="$(user_state_home)/panefleet/board-cache"
@@ -3053,10 +3072,9 @@ open_board() {
   printf '%s\n' "$initial_generation" >"$state_file"
   # Immediate by default; optional override for slower environments.
   repaint_delay="${PANEFLEET_BOARD_REPAINT_DELAY:-0}"
-  if [ "$repaint_delay" = "0" ] || [ "$repaint_delay" = "0.0" ]; then
-    repaint_command="PANEFLEET_LIST_MODE=deferred-refresh \"${SELF}\" list-deferred"
-  else
-    repaint_command="sleep \"${repaint_delay}\"; PANEFLEET_LIST_MODE=deferred-refresh \"${SELF}\" list-deferred"
+  repaint_command="\"${SELF}\" board-repaint-cache --cache-file \"${cache_file}\" --state-file \"${state_file}\""
+  if [ "$repaint_delay" != "0" ] && [ "$repaint_delay" != "0.0" ]; then
+    repaint_command="sleep \"${repaint_delay}\"; ${repaint_command}"
   fi
   load_reload_action="reload"
   reload_event="load"
@@ -3093,6 +3111,14 @@ open_board() {
     --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+execute-silent(${SELF} refresh-panes-cache {1})+reload(PANEFLEET_LIST_MODE=deferred-refresh ${SELF} list-deferred)"
     --bind "${reload_event}:${load_reload_action}(${repaint_command})"
   )
+  poll_interval="${PANEFLEET_BOARD_POLL_INTERVAL_SECONDS:-1}"
+  if [[ ! "$poll_interval" =~ ^[0-9]+$ ]] || (( poll_interval <= 0 )); then
+    poll_interval="1"
+  fi
+  if fzf_supports_reload_sync && fzf_supports_result_event; then
+    # Keep board data fresh even when the user does not interact.
+    fzf_args+=(--bind "result:reload-sync(sleep \"${poll_interval}\"; ${repaint_command})")
+  fi
   if fzf_supports_padding; then
     # Use symmetric padding to keep prompt/controls/table visually aligned.
     fzf_args+=(--padding='1,3,1,3')
@@ -3554,6 +3580,9 @@ usage_metrics_set_command() {
   local tokens_used=""
   local context_left_pct=""
   local context_window=""
+  local clear_tokens_used="0"
+  local clear_context_left_pct="0"
+  local clear_context_window="0"
 
   while (( $# > 0 )); do
     case "$1" in
@@ -3573,6 +3602,18 @@ usage_metrics_set_command() {
         context_window="${2:-}"
         shift 2
         ;;
+      --clear-tokens-used)
+        clear_tokens_used="1"
+        shift
+        ;;
+      --clear-context-left-pct)
+        clear_context_left_pct="1"
+        shift
+        ;;
+      --clear-context-window)
+        clear_context_window="1"
+        shift
+        ;;
       *)
         printf 'unknown metrics-set option: %s\n' "$1" >&2
         exit 1
@@ -3580,7 +3621,7 @@ usage_metrics_set_command() {
     esac
   done
 
-  if [[ -z "$tokens_used" && -z "$context_left_pct" && -z "$context_window" ]]; then
+  if [[ -z "$tokens_used" && -z "$context_left_pct" && -z "$context_window" && "$clear_tokens_used" != "1" && "$clear_context_left_pct" != "1" && "$clear_context_window" != "1" ]]; then
     printf 'metrics-set requires at least one metric flag\n' >&2
     exit 1
   fi
@@ -3602,7 +3643,7 @@ usage_metrics_set_command() {
   fi
 
   pane_id="$(resolve_target_pane "$pane_id")"
-  set_usage_metrics "$pane_id" "$tokens_used" "$context_left_pct" "$context_window"
+  set_usage_metrics "$pane_id" "$tokens_used" "$context_left_pct" "$context_window" "$clear_tokens_used" "$clear_context_left_pct" "$clear_context_window"
 }
 
 usage_metrics_clear_command() {

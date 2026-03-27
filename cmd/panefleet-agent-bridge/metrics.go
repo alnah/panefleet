@@ -4,13 +4,25 @@ func codexTokenUsageMetrics(payload map[string]any) (tokensUsed int64, contextLe
 	params := mapValue(payload["params"])
 	tokenUsage := mapValue(params["tokenUsage"])
 	total := mapValue(tokenUsage["total"])
-	totalTokens, hasTotalTokens := int64Value(total["totalTokens"])
+	totalTokens, hasTotalTokens := firstInt64(
+		total["totalTokens"],
+		total["total_tokens"],
+		tokenUsage["totalTokens"],
+		tokenUsage["total_tokens"],
+		params["totalTokens"],
+		params["total_tokens"],
+	)
 	if !hasTotalTokens || totalTokens < 0 {
 		return 0, -1, 0, false
 	}
 
 	contextLeftPct = -1
-	contextWindow, hasWindow := int64Value(tokenUsage["modelContextWindow"])
+	contextWindow, hasWindow := firstInt64(
+		tokenUsage["modelContextWindow"],
+		tokenUsage["model_context_window"],
+		params["modelContextWindow"],
+		params["model_context_window"],
+	)
 	if hasWindow && contextWindow > 0 {
 		remaining := contextWindow - totalTokens
 		if remaining < 0 {
@@ -26,4 +38,13 @@ func codexTokenUsageMetrics(payload map[string]any) (tokensUsed int64, contextLe
 	}
 
 	return totalTokens, contextLeftPct, contextWindow, true
+}
+
+func firstInt64(values ...any) (int64, bool) {
+	for _, value := range values {
+		if parsed, ok := int64Value(value); ok {
+			return parsed, true
+		}
+	}
+	return 0, false
 }

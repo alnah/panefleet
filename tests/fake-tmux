@@ -223,7 +223,7 @@ render_format() {
     rendered="${rendered//\#\{$key\}/$value}"
   done
 
-  for key in @panefleet_status @panefleet_agent_status @panefleet_agent_tool @panefleet_agent_source @panefleet_agent_updated_at @panefleet_last_touch @panefleet_last_done @panefleet_auto_signature @panefleet_auto_raw_status @panefleet_auto_tool; do
+  for key in @panefleet_status @panefleet_agent_status @panefleet_agent_tool @panefleet_agent_source @panefleet_agent_updated_at @panefleet_last_touch @panefleet_last_done @panefleet_auto_signature @panefleet_auto_raw_status @panefleet_auto_tool @panefleet_tokens_used @panefleet_context_left_pct @panefleet_context_window; do
     value="$(read_pane_option "$pane_id" "$key")"
     rendered="${rendered//\#\{$key\}/$value}"
   done

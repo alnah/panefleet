@@ -232,6 +232,7 @@ func parsePaneOrSkip(command string, args []string) (pane string, rest []string,
 		return "", nil, false, err
 	}
 	if pane == "" {
+		logDecision(command, "", nextEventID(), "ignored", "", "pane unresolved", "set --pane or PANEFLEET_PANE")
 		return "", rest, true, nil
 	}
 	return pane, rest, false, nil
@@ -285,9 +286,13 @@ func setMetrics(ctx context.Context, pane string, tokensUsed int64, contextLeftP
 	}
 	if contextLeftPct >= 0 {
 		args = append(args, "--context-left-pct", strconv.FormatInt(contextLeftPct, 10))
+	} else {
+		args = append(args, "--clear-context-left-pct")
 	}
 	if contextWindow > 0 {
 		args = append(args, "--context-window", strconv.FormatInt(contextWindow, 10))
+	} else {
+		args = append(args, "--clear-context-window")
 	}
 	return runPanefleet(ctx, args...)
 }

@@ -390,6 +390,20 @@ test_fake_tmux_cli() {
   [[ "$line101" != *"cdx resume panefleet"* ]] || fail "list should no longer expose the task column"
   pass "fake tmux list shows expected baseline statuses"
 
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" metrics-set --pane %101 --tokens-used 12345 --context-left-pct 88 --context-window 128000 >/dev/null
+  output="$(run_list)"
+  line101="$(printf '%s\n' "$output" | rg '^%101')"
+  [[ "$line101" == *"12345"* ]] || fail "metrics-set should expose TOKENS in list output"
+  [[ "$line101" == *"88%"* ]] || fail "metrics-set should expose CTX% in list output"
+  pass "metrics-set exposes tokens and context columns"
+
+  TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" metrics-set --pane %101 --tokens-used 13000 --clear-context-left-pct --clear-context-window >/dev/null
+  output="$(run_list)"
+  line101="$(printf '%s\n' "$output" | rg '^%101')"
+  [[ "$line101" == *"13000"* ]] || fail "metrics-set should keep TOKENS when context fields are cleared"
+  [[ "$line101" != *"88%"* ]] || fail "metrics-set clear flags should remove stale CTX%"
+  pass "metrics-set clear flags remove stale context values"
+
   printf 'auto' >"${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode"
   TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" "${PANEFLEET_BIN}" state-set --pane %103 --status ERROR --tool shell --source test --updated-at "$(date +%s)" >/dev/null
   output="$(run_list)"
@@ -497,6 +511,29 @@ EOF
   PATH="$fake_bin:${PATH}" PANEFLEET_AGENT_BRIDGE_BIN="$missing_bridge" "${REPO_ROOT}/scripts/opencode-event-bridge" > /dev/null 2>"$stderr_file" || true
   [[ "$(cat "$stderr_file")" == *"install it with ${fake_panefleet} install opencode"* ]] || fail "opencode wrapper should suggest panefleet install opencode"
   pass "wrappers print consistent install hints"
+}
+
+test_codex_wrapper_forwards_pane_when_available() {
+  local fake_bridge_root fake_bridge bridge_args expected_pane
+
+  fake_bridge_root="${TEST_TMPDIR}/fake-bridge"
+  fake_bridge="${fake_bridge_root}/panefleet-agent-bridge"
+  bridge_args="${fake_bridge_root}/args.log"
+  mkdir -p "$fake_bridge_root"
+  cat >"$fake_bridge" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >"$bridge_args"
+exit 0
+EOF
+  chmod +x "$fake_bridge"
+
+  expected_pane="%777"
+  PANEFLEET_AGENT_BRIDGE_BIN="$fake_bridge" TMUX_PANE="$expected_pane" "${REPO_ROOT}/scripts/codex-app-server-bridge" >/dev/null
+  [[ "$(cat "$bridge_args")" == *"codex-app-server --pane ${expected_pane}"* ]] || fail "codex app-server wrapper should forward TMUX_PANE as --pane"
+
+  PANEFLEET_AGENT_BRIDGE_BIN="$fake_bridge" PANEFLEET_PANE="%888" TMUX_PANE="$expected_pane" "${REPO_ROOT}/scripts/codex-notify-bridge" '{}' >/dev/null
+  [[ "$(cat "$bridge_args")" == *"codex-notify --pane %888 {}"* ]] || fail "codex notify wrapper should prioritize PANEFLEET_PANE over TMUX_PANE"
+  pass "codex wrappers forward pane when available"
 }
 
 test_install_command() {
@@ -736,6 +773,7 @@ setup_fake_tmux_fixture "${TEST_TMPDIR}/fake-tmux"
 test_sourced_helpers
 test_fake_tmux_cli
 test_install_command
+test_codex_wrapper_forwards_pane_when_available
 test_wrapper_install_hints
 test_cli_surface_contract
 test_runtime_install_contract

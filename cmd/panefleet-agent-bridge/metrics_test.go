@@ -47,6 +47,38 @@ func TestCodexTokenUsageMetrics(t *testing.T) {
 			wantOk:         true,
 		},
 		{
+			name: "supports flat token usage payload fields",
+			payload: map[string]any{
+				"params": map[string]any{
+					"tokenUsage": map[string]any{
+						"totalTokens":       float64(64000),
+						"modelContextWindow": float64(128000),
+					},
+				},
+			},
+			wantTokens:     64000,
+			wantCtxLeftPct: 50,
+			wantContextWin: 128000,
+			wantOk:         true,
+		},
+		{
+			name: "supports string number token fields",
+			payload: map[string]any{
+				"params": map[string]any{
+					"tokenUsage": map[string]any{
+						"total": map[string]any{
+							"totalTokens": "32000",
+						},
+						"model_context_window": "128000",
+					},
+				},
+			},
+			wantTokens:     32000,
+			wantCtxLeftPct: 75,
+			wantContextWin: 128000,
+			wantOk:         true,
+		},
+		{
 			name: "missing total tokens is ignored",
 			payload: map[string]any{
 				"params": map[string]any{
