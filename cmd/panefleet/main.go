@@ -264,6 +264,7 @@ func cmdRun(ctx context.Context, svc *app.Service, args []string) error {
 	refresh := fs.Duration("refresh", 700*time.Millisecond, "tui refresh interval")
 	syncEvery := fs.Duration("sync-every", 1200*time.Millisecond, "tmux sync interval")
 	source := fs.String("source", "adapter:tmux-runner", "event source")
+	controlMode := fs.Bool("control-mode", true, "enable tmux control-mode trigger stream")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -277,6 +278,22 @@ func cmdRun(ctx context.Context, svc *app.Service, args []string) error {
 
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
+	triggerSync := make(chan struct{}, 1)
+	enqueueSync := func() {
+		select {
+		case triggerSync <- struct{}{}:
+		default:
+		}
+	}
+	if *controlMode {
+		go func() {
+			if err := tmux.WatchControlMode(runCtx, func(_ tmuxctl.ControlEvent) {
+				enqueueSync()
+			}); err != nil && runCtx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "panefleet: control-mode watcher disabled: %v\n", err)
+			}
+		}()
+	}
 	go func() {
 		ticker := time.NewTicker(*syncEvery)
 		defer ticker.Stop()
@@ -286,6 +303,8 @@ func cmdRun(ctx context.Context, svc *app.Service, args []string) error {
 				return
 			case t := <-ticker.C:
 				_, _ = syncTmuxOnce(runCtx, svc, tmux, t.UTC(), *source)
+			case <-triggerSync:
+				_, _ = syncTmuxOnce(runCtx, svc, tmux, time.Now().UTC(), *source)
 			}
 		}
 	}()
