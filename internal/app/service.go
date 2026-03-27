@@ -20,6 +20,8 @@ type Service struct {
 	store   store.Store
 	mu      sync.RWMutex
 	subs    map[chan state.PaneState]struct{}
+	lockMu  sync.Mutex
+	locks   map[string]*sync.Mutex
 }
 
 // NewService builds the application boundary that keeps reducer rules and
@@ -29,6 +31,7 @@ func NewService(reducer *state.Reducer, st store.Store) *Service {
 		reducer: reducer,
 		store:   st,
 		subs:    make(map[chan state.PaneState]struct{}),
+		locks:   make(map[string]*sync.Mutex),
 	}
 }
 
@@ -41,6 +44,8 @@ func (s *Service) Ingest(ctx context.Context, ev state.Event) (state.PaneState, 
 	if ev.OccurredAt.IsZero() {
 		ev.OccurredAt = time.Now().UTC()
 	}
+	unlock := s.lockPane(ev.PaneID)
+	defer unlock()
 
 	errScope := fmt.Sprintf("pane=%s kind=%s event_id=%s", ev.PaneID, ev.Kind, ev.ID)
 
@@ -148,4 +153,17 @@ func (s *Service) publish(st state.PaneState) {
 		default:
 		}
 	}
+}
+
+func (s *Service) lockPane(paneID string) func() {
+	s.lockMu.Lock()
+	lock, ok := s.locks[paneID]
+	if !ok {
+		lock = &sync.Mutex{}
+		s.locks[paneID] = lock
+	}
+	s.lockMu.Unlock()
+
+	lock.Lock()
+	return lock.Unlock
 }
