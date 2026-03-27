@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,6 +22,14 @@ import (
 	"github.com/alnah/panefleet/internal/tmuxsync"
 	"github.com/alnah/panefleet/internal/tui"
 )
+
+type teaProgram interface {
+	Run() (tea.Model, error)
+}
+
+var newTeaProgram = func(model tea.Model, opts ...tea.ProgramOption) teaProgram {
+	return tea.NewProgram(model, opts...)
+}
 
 func main() {
 	if err := run(context.Background(), os.Args[1:]); err != nil {
@@ -33,32 +43,66 @@ func run(ctx context.Context, args []string) error {
 		return usageError()
 	}
 
-	svc, closer, err := newService(ctx)
-	if err != nil {
-		return err
-	}
-	defer closer()
-
 	switch args[0] {
 	case "ingest":
+		svc, closer, err := newService(ctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
 		return cmdIngest(ctx, svc, args[1:])
 	case "state-show":
+		svc, closer, err := newService(ctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
 		return cmdStateShow(ctx, svc, args[1:])
 	case "state-list":
+		svc, closer, err := newService(ctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
 		return cmdStateList(ctx, svc, args[1:])
 	case "state-set":
+		svc, closer, err := newService(ctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
 		return cmdStateSet(ctx, svc, args[1:])
 	case "state-clear":
+		svc, closer, err := newService(ctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
 		return cmdStateClear(ctx, svc, args[1:])
 	case "sync-tmux":
+		svc, closer, err := newService(ctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
 		return cmdSyncTmux(ctx, svc, args[1:])
 	case "pane-kill":
 		return cmdPaneKill(ctx, args[1:])
 	case "pane-respawn":
 		return cmdPaneRespawn(ctx, args[1:])
 	case "tui":
+		svc, closer, err := newService(ctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
 		return cmdTUI(svc, args[1:])
 	case "run":
+		svc, closer, err := newService(ctx)
+		if err != nil {
+			return err
+		}
+		defer closer()
 		return cmdRun(ctx, svc, args[1:])
 	default:
 		return usageError()
@@ -66,16 +110,14 @@ func run(ctx context.Context, args []string) error {
 }
 
 func newService(ctx context.Context) (*app.Service, func(), error) {
-	dbPath := os.Getenv("PANEFLEET_DB_PATH")
-	if dbPath == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
+	dbPath, err := resolveDBPath()
+	if err != nil {
+		return nil, nil, err
+	}
+	if shouldPrepareDBDir(dbPath) {
+		if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 			return nil, nil, err
 		}
-		dbPath = filepath.Join(home, ".local", "state", "panefleet", "panefleet.db")
-	}
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
-		return nil, nil, err
 	}
 
 	st, err := store.NewSQLiteStore(dbPath)
@@ -104,6 +146,21 @@ func newService(ctx context.Context) (*app.Service, func(), error) {
 	return app.NewService(reducer, st), func() { _ = st.Close() }, nil
 }
 
+func resolveDBPath() (string, error) {
+	if dbPath := strings.TrimSpace(os.Getenv("PANEFLEET_DB_PATH")); dbPath != "" {
+		return dbPath, nil
+	}
+	stateHome := strings.TrimSpace(os.Getenv("XDG_STATE_HOME"))
+	if stateHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		stateHome = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(stateHome, "panefleet", "panefleet.db"), nil
+}
+
 func cmdIngest(ctx context.Context, svc *app.Service, args []string) error {
 	fs := flag.NewFlagSet("ingest", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -117,17 +174,17 @@ func cmdIngest(ctx context.Context, svc *app.Service, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := rejectUnexpectedArgs(fs); err != nil {
+		return err
+	}
 
 	eventKind, err := parseKind(*kind)
 	if err != nil {
 		return err
 	}
-	occurredAt := time.Now().UTC()
-	if *atRaw != "" {
-		occurredAt, err = time.Parse(time.RFC3339, *atRaw)
-		if err != nil {
-			return fmt.Errorf("invalid --at: %w", err)
-		}
+	occurredAt, err := parseOptionalRFC3339Time(*atRaw)
+	if err != nil {
+		return fmt.Errorf("invalid --at: %w", err)
 	}
 
 	ev := state.Event{
@@ -163,6 +220,9 @@ func cmdStateShow(ctx context.Context, svc *app.Service, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := rejectUnexpectedArgs(fs); err != nil {
+		return err
+	}
 	out, err := svc.StateShow(ctx, *pane)
 	if err != nil {
 		return err
@@ -174,6 +234,9 @@ func cmdStateList(ctx context.Context, svc *app.Service, args []string) error {
 	fs := flag.NewFlagSet("state-list", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := rejectUnexpectedArgs(fs); err != nil {
 		return err
 	}
 	out, err := svc.StateList(ctx)
@@ -190,6 +253,9 @@ func cmdStateSet(ctx context.Context, svc *app.Service, args []string) error {
 	statusRaw := fs.String("status", "", "override status")
 	source := fs.String("source", "cli", "override source")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := rejectUnexpectedArgs(fs); err != nil {
 		return err
 	}
 	target, err := state.ParseStatus(*statusRaw)
@@ -211,6 +277,9 @@ func cmdStateClear(ctx context.Context, svc *app.Service, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := rejectUnexpectedArgs(fs); err != nil {
+		return err
+	}
 	out, err := svc.ClearOverride(ctx, *pane, *source)
 	if err != nil {
 		return err
@@ -225,6 +294,9 @@ func cmdTUI(svc *app.Service, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := rejectUnexpectedArgs(fs); err != nil {
+		return err
+	}
 	if err := validatePositiveDuration("refresh", *refresh); err != nil {
 		return err
 	}
@@ -233,7 +305,7 @@ func cmdTUI(svc *app.Service, args []string) error {
 	defer cancel()
 	api := runtimeAPI{svc: svc, tmux: tmux}
 	m := tui.New(api, *refresh, updates)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := newTeaProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
@@ -246,14 +318,13 @@ func cmdSyncTmux(ctx context.Context, svc *app.Service, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := rejectUnexpectedArgs(fs); err != nil {
+		return err
+	}
 
-	at := time.Now().UTC()
-	if *atRaw != "" {
-		parsed, err := time.Parse(time.RFC3339, *atRaw)
-		if err != nil {
-			return fmt.Errorf("invalid --at: %w", err)
-		}
-		at = parsed
+	at, err := parseOptionalRFC3339Time(*atRaw)
+	if err != nil {
+		return fmt.Errorf("invalid --at: %w", err)
 	}
 
 	tmux := tmuxctl.New(os.Getenv("PANEFLEET_TMUX_BIN"))
@@ -278,6 +349,9 @@ func cmdRun(ctx context.Context, svc *app.Service, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := rejectUnexpectedArgs(fs); err != nil {
+		return err
+	}
 	if err := validatePositiveDuration("refresh", *refresh); err != nil {
 		return err
 	}
@@ -285,15 +359,20 @@ func cmdRun(ctx context.Context, svc *app.Service, args []string) error {
 		return err
 	}
 	tmux := tmuxctl.New(os.Getenv("PANEFLEET_TMUX_BIN"))
+	runID := newRunID()
 
 	updates, cancel := svc.Subscribe()
 	defer cancel()
 
 	// Initial snapshot before opening the UI.
-	_, _ = syncTmuxOnce(ctx, svc, tmux, time.Now().UTC(), *source)
+	appliedInitial, err := syncTmuxOnce(ctx, svc, tmux, time.Now().UTC(), *source)
+	if err != nil {
+		runLogf(runID, "sync.initial source=%s err=%v", *source, err)
+	} else if runVerboseEnabled() {
+		runLogf(runID, "sync.initial source=%s applied=%d", *source, appliedInitial)
+	}
 
 	runCtx, stop := context.WithCancel(ctx)
-	defer stop()
 	triggerSync := make(chan struct{}, 1)
 	enqueueSync := func() {
 		select {
@@ -301,16 +380,21 @@ func cmdRun(ctx context.Context, svc *app.Service, args []string) error {
 		default:
 		}
 	}
+	var bg sync.WaitGroup
 	if *controlMode {
+		bg.Add(1)
 		go func() {
+			defer bg.Done()
 			if err := tmux.WatchControlMode(runCtx, func(_ tmuxctl.ControlEvent) {
 				enqueueSync()
 			}); err != nil && runCtx.Err() == nil {
-				fmt.Fprintf(os.Stderr, "panefleet: control-mode watcher disabled: %v\n", err)
+				runLogf(runID, "watch.control_mode status=disabled err=%v", err)
 			}
 		}()
 	}
+	bg.Add(1)
 	go func() {
+		defer bg.Done()
 		ticker := time.NewTicker(*syncEvery)
 		defer ticker.Stop()
 		for {
@@ -318,17 +402,36 @@ func cmdRun(ctx context.Context, svc *app.Service, args []string) error {
 			case <-runCtx.Done():
 				return
 			case t := <-ticker.C:
-				_, _ = syncTmuxOnce(runCtx, svc, tmux, t.UTC(), *source)
+				applied, err := syncTmuxOnce(runCtx, svc, tmux, t.UTC(), *source)
+				if err != nil {
+					runLogf(runID, "sync.ticker source=%s err=%v", *source, err)
+					continue
+				}
+				if runVerboseEnabled() {
+					runLogf(runID, "sync.ticker source=%s applied=%d", *source, applied)
+				}
 			case <-triggerSync:
-				_, _ = syncTmuxOnce(runCtx, svc, tmux, time.Now().UTC(), *source)
+				applied, err := syncTmuxOnce(runCtx, svc, tmux, time.Now().UTC(), *source)
+				if err != nil {
+					runLogf(runID, "sync.trigger source=%s err=%v", *source, err)
+					continue
+				}
+				if runVerboseEnabled() {
+					runLogf(runID, "sync.trigger source=%s applied=%d", *source, applied)
+				}
 			}
 		}
 	}()
 
 	api := runtimeAPI{svc: svc, tmux: tmux}
 	model := tui.New(api, *refresh, updates)
-	program := tea.NewProgram(model, tea.WithAltScreen())
-	_, err := program.Run()
+	program := newTeaProgram(model, tea.WithAltScreen())
+	_, err = program.Run()
+	stop()
+	bg.Wait()
+	if err != nil {
+		runLogf(runID, "ui.exit err=%v", err)
+	}
 	return err
 }
 
@@ -337,6 +440,9 @@ func cmdPaneKill(ctx context.Context, args []string) error {
 	fs.SetOutput(os.Stderr)
 	pane := fs.String("pane", "", "tmux pane id")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := rejectUnexpectedArgs(fs); err != nil {
 		return err
 	}
 	tmux := tmuxctl.New(os.Getenv("PANEFLEET_TMUX_BIN"))
@@ -351,6 +457,9 @@ func cmdPaneRespawn(ctx context.Context, args []string) error {
 	fs.SetOutput(os.Stderr)
 	pane := fs.String("pane", "", "tmux pane id")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := rejectUnexpectedArgs(fs); err != nil {
 		return err
 	}
 	tmux := tmuxctl.New(os.Getenv("PANEFLEET_TMUX_BIN"))
@@ -383,7 +492,21 @@ func validatePositiveDuration(name string, value time.Duration) error {
 	return nil
 }
 
+func rejectUnexpectedArgs(fs *flag.FlagSet) error {
+	if fs.NArg() == 0 {
+		return nil
+	}
+	return fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
+}
+
 func shouldHardenDBPermissions(dbPath string) bool {
+	if !shouldPrepareDBDir(dbPath) {
+		return false
+	}
+	return true
+}
+
+func shouldPrepareDBDir(dbPath string) bool {
 	if dbPath == "" || dbPath == ":memory:" {
 		return false
 	}
@@ -394,6 +517,32 @@ func shouldHardenDBPermissions(dbPath string) bool {
 		return false
 	}
 	return true
+}
+
+func parseOptionalRFC3339Time(raw string) (time.Time, error) {
+	if strings.TrimSpace(raw) == "" {
+		return time.Now().UTC(), nil
+	}
+	return time.Parse(time.RFC3339, raw)
+}
+
+func newRunID() string {
+	return strconv.FormatInt(time.Now().UTC().UnixNano(), 36)
+}
+
+func runVerboseEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PANEFLEET_OBS_VERBOSE"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func runLogf(runID, format string, args ...any) {
+	prefixArgs := []any{runID, time.Now().UTC().Format(time.RFC3339)}
+	allArgs := append(prefixArgs, args...)
+	fmt.Fprintf(os.Stderr, "panefleet: run_id=%s ts=%s "+format+"\n", allArgs...)
 }
 
 type runtimeAPI struct {
