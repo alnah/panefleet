@@ -85,3 +85,31 @@ func TestServiceStateList(t *testing.T) {
 		t.Fatalf("want 2 states, got %d", len(all))
 	}
 }
+
+func TestServiceSubscribePublishesOnIngest(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	ch, cancel := svc.Subscribe()
+	defer cancel()
+
+	at := time.Date(2026, 3, 26, 19, 0, 0, 0, time.UTC)
+	if _, err := svc.Ingest(ctx, state.Event{
+		PaneID:     "%31",
+		Kind:       state.EventPaneStarted,
+		OccurredAt: at,
+	}); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	select {
+	case got := <-ch:
+		if got.PaneID != "%31" {
+			t.Fatalf("unexpected pane id: %s", got.PaneID)
+		}
+		if got.Status != state.StatusRun {
+			t.Fatalf("unexpected status: %s", got.Status)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for publish")
+	}
+}
