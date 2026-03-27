@@ -2857,9 +2857,13 @@ open_board() {
   initial_generation="$(current_refresh_generation)"
   PANEFLEET_LIST_FAST=1 list_rows >"$cache_file"
   printf '%s\n' "$initial_generation" >"$state_file"
-  # Reduce popup perceived latency: delay before first repaint is configurable.
-  repaint_delay="${PANEFLEET_BOARD_REPAINT_DELAY:-0.1}"
-  repaint_command="sleep \"${repaint_delay}\"; \"${SELF}\" board-repaint-cache --cache-file \"${cache_file}\" --state-file \"${state_file}\""
+  # Immediate by default; optional override for slower environments.
+  repaint_delay="${PANEFLEET_BOARD_REPAINT_DELAY:-0}"
+  if [ "$repaint_delay" = "0" ] || [ "$repaint_delay" = "0.0" ]; then
+    repaint_command="\"${SELF}\" board-repaint-cache --cache-file \"${cache_file}\" --state-file \"${state_file}\""
+  else
+    repaint_command="sleep \"${repaint_delay}\"; \"${SELF}\" board-repaint-cache --cache-file \"${cache_file}\" --state-file \"${state_file}\""
+  fi
 
   fzf_args=(
     --ansi
