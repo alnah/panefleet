@@ -54,6 +54,19 @@ func (c *ExecClient) WatchControlMode(ctx context.Context, onEvent func(ControlE
 	if onEvent == nil {
 		return fmt.Errorf("onEvent callback is required")
 	}
+	eventCh := make(chan ControlEvent, 64)
+	callbackDone := make(chan struct{})
+	go func() {
+		defer close(callbackDone)
+		for ev := range eventCh {
+			onEvent(ev)
+		}
+	}()
+	defer func() {
+		close(eventCh)
+		<-callbackDone
+	}()
+
 	args := []string{"-C", "attach-session"}
 	cmd := exec.CommandContext(ctx, c.Binary, args...)
 	stdout, err := cmd.StdoutPipe()
@@ -87,7 +100,10 @@ func (c *ExecClient) WatchControlMode(ctx context.Context, onEvent func(ControlE
 	for sc.Scan() {
 		ev, ok := ParseControlLine(sc.Text())
 		if ok {
-			onEvent(ev)
+			select {
+			case eventCh <- ev:
+			default:
+			}
 		}
 	}
 	if err := sc.Err(); err != nil {
