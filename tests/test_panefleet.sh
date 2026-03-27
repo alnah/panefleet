@@ -294,6 +294,12 @@ test_sourced_helpers() {
   assert_eq "$got" "100%" "board popup height should default to full client height"
   pass "board popup defaults to full client size"
 
+  got="$(FZF_BIN="$(command -v fzf)" fzf_supports_reload_sync && printf yes || printf no)"
+  assert_eq "$got" "yes" "fzf_supports_reload_sync should probe runtime bind support"
+  got="$(FZF_BIN="$(command -v fzf)" fzf_supports_result_event && printf yes || printf no)"
+  assert_eq "$got" "yes" "fzf_supports_result_event should probe runtime bind support"
+  pass "fzf capability probes detect live bind support"
+
   if agent_status_is_fresh "$(date +%s)" 600 "$(date +%s)"; then
     pass "agent_status_is_fresh accepts current timestamp"
   else

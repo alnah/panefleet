@@ -16,8 +16,18 @@ fzf_supports_header_border() {
   command_exists "${FZF_BIN}" && "${FZF_BIN}" --help 2>/dev/null | grep -Fq -- '--header-lines-border'
 }
 
+fzf_supports_bind_action() {
+  local bind_expression="${1:?bind expression is required}"
+
+  if ! command_exists "${FZF_BIN}"; then
+    return 1
+  fi
+
+  printf 'x\n' | "${FZF_BIN}" --filter 'x' --bind "$bind_expression" >/dev/null 2>&1
+}
+
 fzf_supports_reload_sync() {
-  command_exists "${FZF_BIN}" && "${FZF_BIN}" --help 2>/dev/null | grep -Fq -- 'reload-sync'
+  fzf_supports_bind_action 'start:reload-sync(printf "x\n")'
 }
 
 fzf_supports_padding() {
@@ -25,11 +35,7 @@ fzf_supports_padding() {
 }
 
 fzf_supports_result_event() {
-  if ! command_exists "${FZF_BIN}"; then
-    return 1
-  fi
-
-  printf 'x\n' | "${FZF_BIN}" --filter 'x' --bind 'result:abort' >/dev/null 2>&1
+  fzf_supports_bind_action 'result:abort'
 }
 
 preflight() {
