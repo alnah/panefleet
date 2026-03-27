@@ -2554,16 +2554,7 @@ list_runtime_defaults() {
 }
 
 list_mode_value() {
-  if [[ -n "${PANEFLEET_LIST_MODE:-}" ]]; then
-    printf '%s' "${PANEFLEET_LIST_MODE}"
-    return
-  fi
-  # Backward compatibility for legacy env name.
-  if [[ "${PANEFLEET_LIST_FAST:-0}" == "1" ]]; then
-    printf 'deferred-refresh'
-  else
-    printf 'full'
-  fi
+  printf '%s' "${PANEFLEET_LIST_MODE:-full}"
 }
 
 list_deferred_refresh_mode_enabled() {
@@ -3635,7 +3626,7 @@ main() {
     list)
       list_rows
       ;;
-    list-fast|list-deferred)
+    list-deferred)
       PANEFLEET_LIST_MODE=deferred-refresh list_rows
       ;;
     preview)
