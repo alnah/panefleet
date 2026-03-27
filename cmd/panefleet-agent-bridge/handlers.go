@@ -65,7 +65,10 @@ func runCodexNotify(ctx context.Context, args []string) error {
 	}
 
 	if stringValue(payload["type"]) == "agent-turn-complete" {
-		return applyMappedState(ctx, pane, "codex-notify", eventID, statusDone, "notify agent-turn-complete")
+		if err := applyMappedState(ctx, pane, "codex-notify", eventID, statusDone, "notify agent-turn-complete"); err != nil {
+			return err
+		}
+		return applyCodexNotifyMetrics(ctx, pane, "codex-notify", eventID, payload)
 	}
 	logDecision("codex-notify", pane, eventID, "ignored", "", "notify payload type not mapped", "")
 	return nil

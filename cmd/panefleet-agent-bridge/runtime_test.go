@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	_ "modernc.org/sqlite"
 )
 
 func withStdinText(t *testing.T, text string, fn func()) {
@@ -48,6 +52,46 @@ func readLog(t *testing.T, path string) string {
 		return ""
 	}
 	return string(raw)
+}
+
+func seedCodexState(t *testing.T, codexHome, threadID, model string, tokensUsed int, contextWindow, effectivePct int) {
+	t.Helper()
+
+	statePath := filepath.Join(codexHome, "state_7.sqlite")
+	db, err := sql.Open("sqlite", statePath)
+	if err != nil {
+		t.Fatalf("open sqlite fixture: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(`
+CREATE TABLE threads (
+	id TEXT PRIMARY KEY,
+	tokens_used INTEGER NOT NULL DEFAULT 0,
+	model TEXT
+);`); err != nil {
+		t.Fatalf("create threads fixture: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO threads (id, tokens_used, model) VALUES (?, ?, ?)`, threadID, tokensUsed, model); err != nil {
+		t.Fatalf("insert thread fixture: %v", err)
+	}
+
+	modelsCache := codexModelsCache{
+		Models: []codexModelInfo{
+			{
+				Slug:                          model,
+				ContextWindow:                 contextWindow,
+				EffectiveContextWindowPercent: effectivePct,
+			},
+		},
+	}
+	raw, err := json.Marshal(modelsCache)
+	if err != nil {
+		t.Fatalf("marshal models cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "models_cache.json"), raw, 0o600); err != nil {
+		t.Fatalf("write models cache: %v", err)
+	}
 }
 
 func TestParsePaneArgsAndSkip(t *testing.T) {
@@ -123,6 +167,32 @@ exit 0
 	}
 	if !strings.Contains(log, "ingest --pane %1 --source opencode-plugin --kind wait") {
 		t.Fatalf("opencode ingest not logged: %s", log)
+	}
+}
+
+func TestRunCodexNotifySetsThreadMetricsFromCodexState(t *testing.T) {
+	bin, logPath := fakePanefleetBin(t, `#!/bin/sh
+echo "$@" >> "__LOG_PATH__"
+exit 0
+`)
+	codexHome := t.TempDir()
+	seedCodexState(t, codexHome, "thread-1", "gpt-5.4", 12345, 272000, 95)
+
+	t.Setenv("PANEFLEET_BIN", bin)
+	t.Setenv("PANEFLEET_EVENT_LOG_DIR", t.TempDir())
+	t.Setenv("PANEFLEET_PANE", "%6")
+	t.Setenv("CODEX_HOME", codexHome)
+
+	if err := runCodexNotify(context.Background(), []string{`{"type":"agent-turn-complete","thread-id":"thread-1"}`}); err != nil {
+		t.Fatalf("runCodexNotify: %v", err)
+	}
+
+	log := readLog(t, logPath)
+	if !strings.Contains(log, "ingest --pane %6 --source codex-notify --kind exit --exit-code 0") {
+		t.Fatalf("codex notify ingest not logged: %s", log)
+	}
+	if !strings.Contains(log, "metrics-set --pane %6 --tokens-used 12345 --context-window 258400 --context-left-pct 95") {
+		t.Fatalf("codex notify metrics not logged: %s", log)
 	}
 }
 

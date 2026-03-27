@@ -537,22 +537,27 @@ EOF
 }
 
 test_wrapper_uses_xdg_state_home_for_event_logs() {
-  local fake_bridge_root fake_bridge env_log expected_log_dir
+  local fake_bridge_root fake_bridge env_log expected_log_dir repo_root env_bin_log expected_panefleet_bin
 
   fake_bridge_root="${TEST_TMPDIR}/fake-bridge-xdg"
   fake_bridge="${fake_bridge_root}/panefleet-agent-bridge"
   env_log="${fake_bridge_root}/env.log"
+  env_bin_log="${fake_bridge_root}/bin.log"
   mkdir -p "$fake_bridge_root"
   cat >"$fake_bridge" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\${PANEFLEET_EVENT_LOG_DIR:-}" >"$env_log"
+printf '%s\n' "\${PANEFLEET_INGEST_BIN:-}" >"$env_bin_log"
 exit 0
 EOF
   chmod +x "$fake_bridge"
 
   expected_log_dir="${TEST_TMPDIR}/xdg-state/panefleet/events"
+  repo_root="$(cd -- "${REPO_ROOT}" && pwd)"
+  expected_panefleet_bin="${repo_root}/scripts/panefleet-go"
   XDG_STATE_HOME="${TEST_TMPDIR}/xdg-state" PANEFLEET_AGENT_BRIDGE_BIN="$fake_bridge" "${REPO_ROOT}/scripts/claude-code-hook" >/dev/null
   [[ "$(cat "$env_log")" == "$expected_log_dir" ]] || fail "wrapper should default PANEFLEET_EVENT_LOG_DIR from XDG_STATE_HOME"
+  [[ "$(cat "$env_bin_log")" == "$expected_panefleet_bin" ]] || fail "wrapper should export PANEFLEET_INGEST_BIN pointing to panefleet-go"
   pass "wrapper event logs honor XDG_STATE_HOME"
 }
 

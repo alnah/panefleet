@@ -48,17 +48,21 @@ func ingestState(ctx context.Context, pane, status, source string) error {
 	default:
 		return fmt.Errorf("unsupported mapped status: %s", status)
 	}
-	return runPanefleet(ctx, args...)
+	return runPanefleetBin(ctx, ingestPanefleetBin(), args...)
 }
 
 // runPanefleet applies a hard timeout to prevent provider hooks from hanging.
 // Fast failure keeps editor/agent workflows responsive even when tmux is busy.
 func runPanefleet(ctx context.Context, args ...string) error {
+	return runPanefleetBin(ctx, panefleetBin(), args...)
+}
+
+func runPanefleetBin(ctx context.Context, bin string, args ...string) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, bridgeTimeout())
 	defer cancel()
 
 	// #nosec G204,G702 -- the bridge intentionally executes the configured panefleet binary with fixed subcommands assembled in code.
-	cmd := exec.CommandContext(timeoutCtx, panefleetBin(), args...)
+	cmd := exec.CommandContext(timeoutCtx, bin, args...)
 	cmd.Stdout = nil
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -73,6 +77,13 @@ func runPanefleet(ctx context.Context, args ...string) error {
 		return fmt.Errorf("run panefleet %s: %w", strings.Join(args, " "), err)
 	}
 	return nil
+}
+
+func ingestPanefleetBin() string {
+	if bin := os.Getenv("PANEFLEET_INGEST_BIN"); bin != "" {
+		return bin
+	}
+	return panefleetBin()
 }
 
 // panefleetBin keeps a deterministic fallback path for source installs.
