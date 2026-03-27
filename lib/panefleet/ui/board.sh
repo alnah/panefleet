@@ -188,7 +188,7 @@ board_reload_action_payload() {
   local command
 
   command="$(board_reload_command)"
-  printf 'reload-sync(%s)' "$command"
+  printf 'reload(%s)' "$command"
 }
 
 post_board_action() {
@@ -728,7 +728,7 @@ open_board() {
     --bind "${reload_event}:${load_reload_action}(${repaint_command})"
   )
   poll_interval="$(board_poll_interval_seconds)"
-  if fzf_supports_reload_sync && fzf_supports_result_event; then
+  if ! fzf_supports_listen && fzf_supports_reload_sync && fzf_supports_result_event; then
     # Keep board data fresh even when the user does not interact.
     fzf_args+=(--bind "result:reload-sync(sleep \"${poll_interval}\"; ${repaint_command})")
   fi

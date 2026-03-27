@@ -305,8 +305,8 @@ test_sourced_helpers() {
   got="$(board_ticker_interval_seconds)"
   assert_eq "$got" "1" "board_ticker_interval_seconds should default to one second"
   got="$(board_reload_action_payload)"
-  [[ "$got" == *"reload-sync("*"list-deferred"* ]] || fail "board_reload_action_payload should trigger deferred list reloads"
-  pass "board ticker defaults to one-second deferred reloads"
+  [[ "$got" == *"reload("*"list-deferred"* ]] || fail "board_reload_action_payload should trigger asynchronous deferred list reloads"
+  pass "board ticker defaults to one-second async deferred reloads"
 
   if agent_status_is_fresh "$(date +%s)" 600 "$(date +%s)"; then
     pass "agent_status_is_fresh accepts current timestamp"
