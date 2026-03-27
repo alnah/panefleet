@@ -91,9 +91,6 @@ func (s *SQLiteStore) AppendAndProject(ctx context.Context, ev state.Event, st s
 	if err := ev.Validate(); err != nil {
 		return err
 	}
-	if !st.Status.Valid() {
-		return fmt.Errorf("invalid projection status: %s", st.Status)
-	}
 
 	payload, err := json.Marshal(map[string]any{
 		"exit_code":   ev.ExitCode,
@@ -124,6 +121,9 @@ VALUES(?, ?, ?, ?, ?, ?, ?)`,
 	// Duplicate event_id: idempotent no-op.
 	if affected == 0 {
 		return tx.Commit()
+	}
+	if err := validateProjection(ev, st); err != nil {
+		return err
 	}
 
 	var manualOverride *string
@@ -312,4 +312,35 @@ func expectsWAL(dsn string) bool {
 		return false
 	}
 	return !strings.Contains(lower, "mode=memory")
+}
+
+func validateProjection(ev state.Event, st state.PaneState) error {
+	if st.PaneID == "" {
+		return fmt.Errorf("projection pane_id is required")
+	}
+	if st.PaneID != ev.PaneID {
+		return fmt.Errorf("projection pane mismatch: event=%s projection=%s", ev.PaneID, st.PaneID)
+	}
+	if !st.Status.Valid() {
+		return fmt.Errorf("invalid projection status: %s", st.Status)
+	}
+	if st.ManualOverride != nil && !st.ManualOverride.Valid() {
+		return fmt.Errorf("invalid projection manual override: %s", *st.ManualOverride)
+	}
+	if st.Version == 0 {
+		return fmt.Errorf("projection version must be > 0")
+	}
+	if st.LastEventAt.IsZero() {
+		return fmt.Errorf("projection last_event_at is required")
+	}
+	if st.LastTransitionAt.IsZero() {
+		return fmt.Errorf("projection last_transition_at is required")
+	}
+	if !st.LastEventAt.Equal(ev.OccurredAt) {
+		return fmt.Errorf("projection last_event_at %s does not match event occurred_at %s", formatTime(st.LastEventAt), formatTime(ev.OccurredAt))
+	}
+	if st.LastTransitionAt.After(st.LastEventAt) {
+		return fmt.Errorf("projection last_transition_at %s cannot be after last_event_at %s", formatTime(st.LastTransitionAt), formatTime(st.LastEventAt))
+	}
+	return nil
 }
