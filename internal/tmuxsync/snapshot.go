@@ -76,6 +76,9 @@ func parsePaneSnapshotLine(line string, lineNo int) (PaneSnapshot, error) {
 	if len(parts) != 3 {
 		return PaneSnapshot{}, fmt.Errorf("line %d: expected 3 columns, got %d", lineNo, len(parts))
 	}
+	if strings.TrimSpace(parts[0]) == "" {
+		return PaneSnapshot{}, fmt.Errorf("line %d: pane_id is required", lineNo)
+	}
 	deadInt, err := strconv.Atoi(parts[1])
 	if err != nil {
 		return PaneSnapshot{}, fmt.Errorf("line %d: invalid pane_dead: %w", lineNo, err)
@@ -86,6 +89,9 @@ func parsePaneSnapshotLine(line string, lineNo int) (PaneSnapshot, error) {
 	deadStatus, err := strconv.Atoi(parts[2])
 	if err != nil {
 		return PaneSnapshot{}, fmt.Errorf("line %d: invalid pane_dead_status: %w", lineNo, err)
+	}
+	if deadStatus < 0 {
+		return PaneSnapshot{}, fmt.Errorf("line %d: invalid pane_dead_status value %d", lineNo, deadStatus)
 	}
 	return PaneSnapshot{
 		PaneID:     parts[0],

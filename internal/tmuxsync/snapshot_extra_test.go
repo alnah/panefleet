@@ -8,9 +8,11 @@ import (
 
 func TestParseListPanesOutputErrors(t *testing.T) {
 	cases := []string{
+		"\t0\t0",          // empty pane id
 		"%1\t0",          // missing column
 		"%1\tx\t0",       // bad dead
 		"%1\t2\t0",       // unexpected dead flag
+		"%1\t0\t-1",      // unexpected dead status
 		"%1\t0\tinvalid", // bad dead status
 	}
 	for _, raw := range cases {
