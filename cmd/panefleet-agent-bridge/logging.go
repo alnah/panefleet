@@ -3,14 +3,21 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 )
 
+var bridgeRunID = nextEventID()
+var eventSeq atomic.Uint64
+
 func nextEventID() string {
-	return strconv.FormatInt(time.Now().UTC().UnixNano(), 36)
+	seq := eventSeq.Add(1)
+	return fmt.Sprintf("%s-%s", strconv.FormatInt(time.Now().UTC().UnixNano(), 36), strconv.FormatUint(seq, 36))
 }
 
 func eventLogDir() string {
@@ -35,14 +42,17 @@ func appendJSONLogRecord(source string, record any) {
 	if !ensureEventLogDir(logDir) {
 		return
 	}
+	logPath := eventLogPath(logDir, source)
+	if logPath == "" {
+		return
+	}
 
 	encoded, err := json.Marshal(record)
 	if err != nil {
 		return
 	}
 
-	path := filepath.Join(logDir, source+".jsonl")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return
 	}
@@ -51,6 +61,42 @@ func appendJSONLogRecord(source string, record any) {
 		return
 	}
 	_, _ = file.Write(append(encoded, '\n'))
+}
+
+func eventLogPath(logDir, source string) string {
+	name := sanitizeLogSource(source)
+	if name == "" {
+		return ""
+	}
+	return filepath.Join(logDir, name+".jsonl")
+}
+
+func sanitizeLogSource(source string) string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, r := range source {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	name := strings.Trim(b.String(), "._-")
+	if name == "" {
+		return ""
+	}
+	return name
 }
 
 // logPayload writes raw provider payloads for post-mortem debugging.
@@ -63,6 +109,7 @@ func logPayload(source, pane, eventID string, raw []byte) {
 	record := struct {
 		Timestamp string          `json:"ts"`
 		Kind      string          `json:"kind"`
+		RunID     string          `json:"run_id"`
 		EventID   string          `json:"event_id"`
 		Source    string          `json:"source"`
 		Pane      string          `json:"pane,omitempty"`
@@ -70,6 +117,7 @@ func logPayload(source, pane, eventID string, raw []byte) {
 	}{
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Kind:      "payload",
+		RunID:     bridgeRunID,
 		EventID:   eventID,
 		Source:    source,
 		Pane:      pane,
@@ -85,6 +133,7 @@ func logDecision(source, pane, eventID, decision, status, reason, errText string
 	record := struct {
 		Timestamp string `json:"ts"`
 		Kind      string `json:"kind"`
+		RunID     string `json:"run_id"`
 		EventID   string `json:"event_id"`
 		Source    string `json:"source"`
 		Pane      string `json:"pane,omitempty"`
@@ -95,6 +144,7 @@ func logDecision(source, pane, eventID, decision, status, reason, errText string
 	}{
 		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
 		Kind:      "decision",
+		RunID:     bridgeRunID,
 		EventID:   eventID,
 		Source:    source,
 		Pane:      pane,

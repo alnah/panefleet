@@ -165,7 +165,7 @@ func TestMapOpenCodeEvent(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		payload    map[string]any
+		payload   map[string]any
 		lowerBlob string
 		want      string
 	}{
@@ -372,7 +372,7 @@ func TestDecodeLoggedJSONPayloadWritesCorrelatedLogs(t *testing.T) {
 		t.Fatalf("decoded hook_event_name = %q, want Stop", stringValue(payload["hook_event_name"]))
 	}
 
-	logDecision("claude-hook", "%42", eventID, "state_set", statusDone, "hook completion event", "")
+	logDecision("claude-hook", "%42", eventID, "ingest", statusDone, "hook completion event", "")
 
 	data, err := os.ReadFile(filepath.Join(logDir, "claude-hook.jsonl"))
 	if err != nil {
@@ -382,8 +382,11 @@ func TestDecodeLoggedJSONPayloadWritesCorrelatedLogs(t *testing.T) {
 	if !containsAny(text, `"kind":"payload"`, `"event_id":"`+eventID+`"`) {
 		t.Fatalf("payload log missing correlated event record: %s", text)
 	}
-	if !containsAny(text, `"kind":"decision"`, `"decision":"state_set"`, `"status":"DONE"`) {
-		t.Fatalf("decision log missing state_set record: %s", text)
+	if !containsAny(text, `"run_id":"`) {
+		t.Fatalf("payload log missing run_id correlation: %s", text)
+	}
+	if !containsAny(text, `"kind":"decision"`, `"decision":"ingest"`, `"status":"DONE"`) {
+		t.Fatalf("decision log missing ingest record: %s", text)
 	}
 }
 

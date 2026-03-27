@@ -1,6 +1,9 @@
 package state
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Status is the canonical pane state.
 type Status string
@@ -15,6 +18,8 @@ const (
 	StatusStale   Status = "STALE"
 )
 
+// Valid reports whether the status is one of the lifecycle values accepted by
+// reducers and storage.
 func (s Status) Valid() bool {
 	switch s {
 	case StatusUnknown, StatusIdle, StatusRun, StatusWait, StatusDone, StatusError, StatusStale:
@@ -24,10 +29,13 @@ func (s Status) Valid() bool {
 	}
 }
 
+// ParseStatus converts persisted/user status text to canonical enum values so
+// invalid statuses fail at boundaries instead of leaking into reducer logic.
 func ParseStatus(raw string) (Status, error) {
-	s := Status(raw)
+	normalized := strings.TrimSpace(raw)
+	s := Status(normalized)
 	if !s.Valid() {
-		return "", fmt.Errorf("invalid status: %s", raw)
+		return "", fmt.Errorf("invalid status: %q", raw)
 	}
 	return s, nil
 }

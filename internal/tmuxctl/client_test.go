@@ -67,6 +67,53 @@ func TestInvalidPaneID(t *testing.T) {
 	}
 }
 
+func TestSnapshotAndOutputErrors(t *testing.T) {
+	bin, _ := fakeTmux(t, `#!/bin/sh
+if [ "$1" = "list-panes" ]; then
+  printf "%s\n" "%1\tbad\t0"
+  exit 0
+fi
+echo "boom" >&2
+exit 2
+`)
+	c := New(bin)
+	if _, err := c.Snapshot(context.Background()); err == nil {
+		t.Fatalf("expected snapshot parse error")
+	}
+
+	if _, err := c.output(context.Background(), "kill-pane", "-t", "%1"); err == nil {
+		t.Fatalf("expected output command error")
+	}
+}
+
+func TestNewDefaultBinaryAndSnapshotCommandError(t *testing.T) {
+	if got := New("").Binary; got != "tmux" {
+		t.Fatalf("New(\"\").Binary = %q, want tmux", got)
+	}
+	if got := New("  ").Binary; got != "tmux" {
+		t.Fatalf("New(\"  \").Binary = %q, want tmux", got)
+	}
+
+	bin, _ := fakeTmux(t, `#!/bin/sh
+if [ "$1" = "list-panes" ]; then
+  echo "cannot list" >&2
+  exit 2
+fi
+exit 0
+`)
+	c := New(bin)
+	if _, err := c.Snapshot(context.Background()); err == nil {
+		t.Fatalf("expected snapshot command error")
+	}
+}
+
+func TestFormatCommandErrorOmitsEmptyOutput(t *testing.T) {
+	err := formatCommandError("tmux", []string{"list-panes"}, context.DeadlineExceeded, nil)
+	if strings.Contains(err.Error(), "()") {
+		t.Fatalf("unexpected empty output marker in error: %v", err)
+	}
+}
+
 func fakeTmux(t *testing.T, script string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
