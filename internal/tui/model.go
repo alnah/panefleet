@@ -12,6 +12,7 @@ import (
 	"github.com/alnah/panefleet/internal/state"
 )
 
+// StateReader defines the runtime operations needed by the fallback TUI.
 type StateReader interface {
 	StateList(ctx context.Context) ([]state.PaneState, error)
 	SetOverride(ctx context.Context, paneID string, target state.Status, source string) (state.PaneState, error)
@@ -31,16 +32,22 @@ type actionMsg struct {
 	err error
 }
 
+// Model stores UI state for the fallback Bubble Tea application.
 type Model struct {
 	reader      StateReader
 	interval    time.Duration
+	opTimeout   time.Duration
 	updates     <-chan state.PaneState
 	states      []state.PaneState
 	selected    int
 	lastRefresh time.Time
+	fetching    bool
+	acting      bool
 	err         error
 }
 
+// New constructs the lightweight fallback TUI model used by the Go runtime
+// path for direct state operations and diagnostics.
 func New(reader StateReader, interval time.Duration, updates <-chan state.PaneState) Model {
 	if interval <= 0 {
 		interval = 700 * time.Millisecond
@@ -48,11 +55,15 @@ func New(reader StateReader, interval time.Duration, updates <-chan state.PaneSt
 	return Model{
 		reader:   reader,
 		interval: interval,
+		opTimeout: 5 * time.Second,
 		updates:  updates,
 		states:   make([]state.PaneState, 0),
+		fetching: true,
 	}
 }
 
+// Init schedules first fetch + periodic updates so the view starts with live
+// state even when no key interaction happened yet.
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{m.fetchCmd(), tickCmd(m.interval)}
 	if m.updates != nil {
@@ -61,6 +72,8 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// Update applies key interactions and refresh messages while keeping action
+// commands side-effect isolated in tea.Cmd closures.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -75,44 +88,69 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.selected < len(m.states)-1 {
 				m.selected++
 			}
-		case "r":
-			return m, m.fetchCmd()
-		case "s":
-			if st, ok := m.selectedState(); ok {
-				return m, m.toggleStaleOverrideCmd(st)
+			case "r":
+				if !m.fetching {
+					m.fetching = true
+					return m, m.fetchCmd()
+				}
+			case "s":
+				if st, ok := m.selectedState(); ok && !m.acting {
+					m.acting = true
+					return m, m.toggleStaleOverrideCmd(st)
+				}
+			case "x":
+				if st, ok := m.selectedState(); ok && !m.acting {
+					m.acting = true
+					return m, m.respawnCmd(st.PaneID)
+				}
+			case "d":
+				if st, ok := m.selectedState(); ok && !m.acting {
+					m.acting = true
+					return m, m.killCmd(st.PaneID)
+				}
 			}
-		case "x":
-			if st, ok := m.selectedState(); ok {
-				return m, m.respawnCmd(st.PaneID)
-			}
-		case "d":
-			if st, ok := m.selectedState(); ok {
-				return m, m.killCmd(st.PaneID)
-			}
-		}
-	case statesMsg:
-		m.err = msg.err
-		if msg.err == nil {
-			m.states = msg.states
+		case statesMsg:
+			m.fetching = false
+			m.err = msg.err
+			if msg.err == nil {
+				m.states = msg.states
 			if m.selected >= len(m.states) && len(m.states) > 0 {
 				m.selected = len(m.states) - 1
 			}
 			m.lastRefresh = time.Now().UTC()
 		}
-	case tickMsg:
-		return m, tea.Batch(m.fetchCmd(), tickCmd(m.interval))
-	case stateUpdatedMsg:
-		if m.updates != nil {
-			return m, tea.Batch(m.fetchCmd(), waitForUpdateCmd(m.updates))
+		case tickMsg:
+			if m.fetching {
+				return m, tickCmd(m.interval)
+			}
+			m.fetching = true
+			return m, tea.Batch(m.fetchCmd(), tickCmd(m.interval))
+		case stateUpdatedMsg:
+			if m.fetching {
+				if m.updates != nil {
+					return m, waitForUpdateCmd(m.updates)
+				}
+				return m, nil
+			}
+			m.fetching = true
+			if m.updates != nil {
+				return m, tea.Batch(m.fetchCmd(), waitForUpdateCmd(m.updates))
+			}
+			return m, m.fetchCmd()
+		case actionMsg:
+			m.acting = false
+			m.err = msg.err
+			if m.fetching {
+				return m, nil
+			}
+			m.fetching = true
+			return m, m.fetchCmd()
 		}
-		return m, m.fetchCmd()
-	case actionMsg:
-		m.err = msg.err
-		return m, m.fetchCmd()
-	}
 	return m, nil
 }
 
+// View renders a stable tabular fallback UI that remains readable in plain
+// terminal themes and CI logs.
 func (m Model) View() string {
 	var b strings.Builder
 	b.WriteString("Panefleet TUI (v1)\n")
@@ -139,7 +177,10 @@ func (m Model) View() string {
 
 func (m Model) fetchCmd() tea.Cmd {
 	return func() tea.Msg {
-		states, err := m.reader.StateList(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), m.opTimeout)
+		defer cancel()
+
+		states, err := m.reader.StateList(ctx)
 		if err != nil {
 			return statesMsg{err: err}
 		}
@@ -178,7 +219,8 @@ func (m Model) selectedState() (state.PaneState, bool) {
 
 func (m Model) toggleStaleOverrideCmd(st state.PaneState) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), m.opTimeout)
+		defer cancel()
 		var err error
 		if st.ManualOverride != nil && *st.ManualOverride == state.StatusStale {
 			_, err = m.reader.ClearOverride(ctx, st.PaneID, "tui")
@@ -191,14 +233,18 @@ func (m Model) toggleStaleOverrideCmd(st state.PaneState) tea.Cmd {
 
 func (m Model) respawnCmd(paneID string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.reader.RespawnPane(context.Background(), paneID)
+		ctx, cancel := context.WithTimeout(context.Background(), m.opTimeout)
+		defer cancel()
+		err := m.reader.RespawnPane(ctx, paneID)
 		return actionMsg{err: err}
 	}
 }
 
 func (m Model) killCmd(paneID string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.reader.KillPane(context.Background(), paneID)
+		ctx, cancel := context.WithTimeout(context.Background(), m.opTimeout)
+		defer cancel()
+		err := m.reader.KillPane(ctx, paneID)
 		return actionMsg{err: err}
 	}
 }
