@@ -42,6 +42,10 @@ fzf_supports_result_event() {
   fzf_supports_bind_action 'result:abort'
 }
 
+fzf_supports_focus_event() {
+  fzf_supports_bind_action 'focus:abort'
+}
+
 preflight() {
   local quiet="${1:-}"
   local ok=0

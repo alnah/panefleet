@@ -65,9 +65,16 @@ main() {
   list-deferred)
     PANEFLEET_LIST_MODE=deferred-refresh list_rows
     ;;
+  list-board-fast)
+    list_board_fast_rows
+    ;;
   preview)
     shift
     preview_row "$@"
+    ;;
+  preview-refresh)
+    shift
+    preview_refresh_command "$@"
     ;;
   install)
     shift

@@ -154,6 +154,17 @@ board_cache_file_path() {
   printf '%s/rows-%s.tsv' "$(board_cache_dir_path)" "$board_token"
 }
 
+preview_cache_dir_path() {
+  printf '%s/panefleet/preview-cache' "$(user_state_home)"
+}
+
+preview_cache_file_path() {
+  local pane_id="${1:?pane id is required}"
+  local safe_pane_id="${pane_id//[^[:alnum:]]/_}"
+
+  printf '%s/%s.txt' "$(preview_cache_dir_path)" "$safe_pane_id"
+}
+
 board_state_file_path() {
   local board_token="${1:?board token is required}"
 
@@ -178,16 +189,18 @@ board_ticker_interval_seconds() {
 }
 
 board_reload_command() {
+  local board_token="${1:?board token is required}"
   local command
 
-  printf -v command 'PANEFLEET_LIST_MODE=deferred-refresh %q list-deferred' "$SELF"
+  printf -v command 'cat %q' "$(board_cache_file_path "$board_token")"
   printf '%s' "$command"
 }
 
 board_reload_action_payload() {
+  local board_token="${1:?board token is required}"
   local command
 
-  command="$(board_reload_command)"
+  command="$(board_reload_command "$board_token")"
   printf 'reload(%s)' "$command"
 }
 
@@ -205,7 +218,7 @@ post_board_action() {
 board_ticker_command() {
   local board_token=""
   local interval=""
-  local socket_file state_file payload
+  local socket_file state_file cache_file payload tmp_file
 
   while (($# > 0)); do
     case "$1" in
@@ -234,12 +247,18 @@ board_ticker_command() {
 
   socket_file="$(board_socket_file_path "$board_token")"
   state_file="$(board_state_file_path "$board_token")"
-  payload="$(board_reload_action_payload)"
+  cache_file="$(board_cache_file_path "$board_token")"
+  payload="$(board_reload_action_payload "$board_token")"
 
   while [[ -S "$socket_file" && -f "$state_file" ]]; do
     sleep "$interval" || break
     [[ -S "$socket_file" && -f "$state_file" ]] || break
-    "$SELF" queue-refresh --all >/dev/null 2>&1 || true
+    tmp_file="$(mktemp "${TMPDIR:-/tmp}/panefleet-board-tick.XXXXXX")"
+    if ! list_board_fast_rows >"$tmp_file"; then
+      rm -f "$tmp_file"
+      continue
+    fi
+    mv "$tmp_file" "$cache_file"
     post_board_action "$socket_file" "$payload" || break
   done
 }
@@ -248,6 +267,50 @@ list_deferred_refresh_mode_enabled() {
   local mode
   mode="$(list_mode_value)"
   [[ "$mode" == "deferred-refresh" ]]
+}
+
+resolve_fast_list_row_values() {
+  local pane_id="$1"
+  local cmd="$2"
+  local title="$3"
+  local dead="$4"
+  local dead_status="$5"
+  local activity="$6"
+  local signature="$7"
+  local local_status="$8"
+  local agent_status_value="$9"
+  local agent_tool_value="${10}"
+  local agent_updated_at_value="${11}"
+  local last_touch="${12}"
+  local last_done="${13}"
+  local cached_signature="${14}"
+  local cached_raw_status="${15}"
+  local cached_tool="${16}"
+  local tool raw_status status
+
+  tool="$(tool_kind "$cmd" "$title")"
+  if [[ -n "$cached_tool" && ("$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9]) ]]; then
+    tool="$cached_tool"
+  fi
+
+  if [[ -n "$local_status" ]]; then
+    raw_status="$local_status"
+  elif [[ "$dead" == "1" ]]; then
+    raw_status="$(inferred_status "$cmd" "$dead" "$dead_status")"
+  elif [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$PANEFLEET_AGENT_STATUS_MAX_AGE" "$PANEFLEET_NOW" && agent_state_matches_live_tool "$tool" "$agent_tool_value"; then
+    raw_status="$agent_status_value"
+    if [[ -n "$agent_tool_value" ]]; then
+      tool="$agent_tool_value"
+    fi
+  elif [[ -n "$cached_raw_status" && -n "$cached_signature" && "$cached_signature" == "$signature" ]]; then
+    raw_status="$cached_raw_status"
+  else
+    raw_status="$(fallback_raw_status "$cached_raw_status" "$tool" "$cmd" "$dead" "$dead_status")"
+  fi
+
+  status="$(effective_status_values "$raw_status" "${activity:-0}" "$last_done" "$last_touch" "$PANEFLEET_DONE_RECENT_MINUTES" "$PANEFLEET_STALE_MINUTES" "$PANEFLEET_NOW")"
+  PANEFLEET_RESOLVED_TOOL="$tool"
+  PANEFLEET_RESOLVED_STATUS="$status"
 }
 
 resolve_list_row_values() {
@@ -553,7 +616,45 @@ list_rows() {
   fi
 }
 
+list_board_fast_rows() {
+  require_runtime_support
+  resolve_theme
+  local rows_file
+  local pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool tokens_used context_left_pct
+  local tool status
+
+  list_runtime_defaults
+  board_layout_widths "$(board_viewport_columns)"
+
+  rows_file="$(mktemp "${TMPDIR:-/tmp}/panefleet-list-fast.XXXXXX")"
+  list_header >"$rows_file"
+  while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool tokens_used context_left_pct; do
+    : "${agent_source_value:=}" "${agent_updated_at_value:=}"
+    resolve_fast_list_row_values "$pane_id" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$signature" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$cached_signature" "$cached_raw_status" "$cached_tool"
+    tool="$PANEFLEET_RESOLVED_TOOL"
+    status="$PANEFLEET_RESOLVED_STATUS"
+    build_list_row "$pane_id" "$session_name" "$window_index" "$pane_index" "$path" "${activity:-0}" "$tool" "$status" "$window_name" "$tokens_used" "$context_left_pct" >>"$rows_file"
+  done < <(pane_records "$(list_pane_record_format)")
+
+  sort -t $'\t' -k3,3n -k4,4nr "$rows_file"
+  rm -f "$rows_file"
+}
+
 preview_row() {
+  local pane_id="${1:?pane_id is required}"
+  local cache_file
+
+  cache_file="$(preview_cache_file_path "$pane_id")"
+  if [[ -s "$cache_file" ]]; then
+    cat "$cache_file"
+    return
+  fi
+
+  "${SELF}" preview-refresh "$pane_id" >/dev/null 2>&1 &
+  printf 'loading preview for %s\n' "$pane_id"
+}
+
+render_preview_row_live() {
   local pane_id="${1:?pane_id is required}"
   local status cmd title path short_path session_name window_index pane_index window_name dead dead_status activity
   local agent_status_value agent_tool_value agent_updated_at_value
@@ -594,6 +695,24 @@ preview_row() {
   printf '\n'
   printf '%s\n' "$(paint_fg "pane output ────────────────────────────" "$THEME_BORDER_STRONG")"
   printf '%s\n' "$capture" | render_preview_capture
+}
+
+preview_refresh_command() {
+  local pane_id="${1:?pane_id is required}"
+  local cache_dir cache_file tmp_file
+
+  cache_dir="$(preview_cache_dir_path)"
+  cache_file="$(preview_cache_file_path "$pane_id")"
+  mkdir -p "$cache_dir" 2>/dev/null || true
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/panefleet-preview.XXXXXX")"
+  if render_preview_row_live "$pane_id" >"$tmp_file"; then
+    mv "$tmp_file" "$cache_file"
+    cat "$cache_file"
+    return
+  fi
+
+  rm -f "$tmp_file"
+  return 1
 }
 
 jump_to_pane() {
@@ -667,6 +786,7 @@ open_board() {
   local rc
   local cache_dir cache_file state_file warm_cache_file socket_file board_token
   local initial_generation repaint_command repaint_delay load_reload_action reload_event poll_interval ticker_interval
+  local preview_refresh_bind=""
   local -a fzf_args
 
   cache_dir="$(board_cache_dir_path)"
@@ -689,6 +809,9 @@ open_board() {
   repaint_command="\"${SELF}\" board-repaint-cache --cache-file \"${cache_file}\" --state-file \"${state_file}\""
   if [ "$repaint_delay" != "0" ] && [ "$repaint_delay" != "0.0" ]; then
     repaint_command="sleep \"${repaint_delay}\"; ${repaint_command}"
+  fi
+  if fzf_supports_focus_event; then
+    preview_refresh_bind='focus:execute-silent('"${SELF}"' preview-refresh {1})'
   fi
   load_reload_action="reload"
   reload_event="load"
@@ -721,12 +844,15 @@ open_board() {
     --preview "${SELF} preview {1}"
     --preview-window='bottom,55%,border-top,wrap,follow,~9'
     --bind "enter:execute-silent(${SELF} jump {1} {2})+abort"
-    --bind "up:up+execute-silent(${SELF} queue-refresh --pane {1})"
-    --bind "down:down+execute-silent(${SELF} queue-refresh --pane {1})"
+    --bind "up:up+execute-silent(${SELF} queue-refresh --pane {1})+execute-silent(${SELF} preview-refresh {1})"
+    --bind "down:down+execute-silent(${SELF} queue-refresh --pane {1})+execute-silent(${SELF} preview-refresh {1})"
     --bind "change:execute-silent(${SELF} queue-refresh --all)"
-    --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+execute-silent(${SELF} queue-refresh --pane {1})"
+    --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+execute-silent(${SELF} queue-refresh --pane {1})+execute-silent(${SELF} preview-refresh {1})"
     --bind "${reload_event}:${load_reload_action}(${repaint_command})"
   )
+  if [[ -n "$preview_refresh_bind" ]]; then
+    fzf_args+=(--bind "$preview_refresh_bind")
+  fi
   poll_interval="$(board_poll_interval_seconds)"
   if ! fzf_supports_listen && fzf_supports_reload_sync && fzf_supports_result_event; then
     # Keep board data fresh even when the user does not interact.
@@ -736,7 +862,7 @@ open_board() {
     rm -f "$socket_file"
     ticker_interval="$(board_ticker_interval_seconds)"
     fzf_args+=(--listen "$socket_file")
-    fzf_args+=(--bind "start:execute-silent(${SELF} board-ticker --token ${board_token} --interval ${ticker_interval} &)")
+    fzf_args+=(--bind "start:execute-silent(${SELF} preview-refresh {1})+execute-silent(${SELF} board-ticker --token ${board_token} --interval ${ticker_interval} &)")
   fi
   if fzf_supports_padding; then
     fzf_args+=(--padding="$(board_padding_spec)")

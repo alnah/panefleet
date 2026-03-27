@@ -268,8 +268,8 @@ test_sourced_helpers() {
   pass "bridge_bin_path defaults to user state home"
 
   board_file="${REPO_ROOT}/lib/panefleet/ui/board.sh"
-  rg -Fq -- '--bind "up:up+execute-silent(${SELF} queue-refresh --pane {1})"' "$board_file" || fail "board up binding should queue refresh asynchronously"
-  rg -Fq -- '--bind "down:down+execute-silent(${SELF} queue-refresh --pane {1})"' "$board_file" || fail "board down binding should queue refresh asynchronously"
+  rg -Fq -- '--bind "up:up+execute-silent(${SELF} queue-refresh --pane {1})+' "$board_file" || fail "board up binding should queue refresh asynchronously"
+  rg -Fq -- '--bind "down:down+execute-silent(${SELF} queue-refresh --pane {1})+' "$board_file" || fail "board down binding should queue refresh asynchronously"
   ! rg -Fq -- '--bind "up:up+execute-silent(${SELF} refresh-panes-cache {1})+reload(' "$board_file" || fail "board up binding should not run synchronous reloads"
   ! rg -Fq -- '--bind "down:down+execute-silent(${SELF} refresh-panes-cache {1})+reload(' "$board_file" || fail "board down binding should not run synchronous reloads"
   pass "board navigation stays decoupled from synchronous refresh"
@@ -304,9 +304,9 @@ test_sourced_helpers() {
 
   got="$(board_ticker_interval_seconds)"
   assert_eq "$got" "1" "board_ticker_interval_seconds should default to one second"
-  got="$(board_reload_action_payload)"
-  [[ "$got" == *"reload("*"list-deferred"* ]] || fail "board_reload_action_payload should trigger asynchronous deferred list reloads"
-  pass "board ticker defaults to one-second async deferred reloads"
+  got="$(board_reload_action_payload demo)"
+  [[ "$got" == *"reload("*"rows-demo.tsv"* ]] || fail "board_reload_action_payload should reload the per-board cache file"
+  pass "board ticker defaults to one-second async cache reloads"
 
   if agent_status_is_fresh "$(date +%s)" 600 "$(date +%s)"; then
     pass "agent_status_is_fresh accepts current timestamp"
