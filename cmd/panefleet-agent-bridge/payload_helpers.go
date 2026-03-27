@@ -1,10 +1,9 @@
 package main
 
-import (
-	"math"
-	"strconv"
-	"strings"
-)
+import "strings"
+
+// Payload helpers stay narrow on purpose: this bridge only needs lightweight
+// JSON shape probing and substring checks, not a shared utility grab bag.
 
 func stringValue(v any) string {
 	switch value := v.(type) {
@@ -44,28 +43,4 @@ func containsAny(haystack string, needles ...string) bool {
 		}
 	}
 	return false
-}
-
-func int64Value(v any) (int64, bool) {
-	switch value := v.(type) {
-	case int:
-		return int64(value), true
-	case int64:
-		return value, true
-	case int32:
-		return int64(value), true
-	case float64:
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return 0, false
-		}
-		return int64(value), true
-	case string:
-		parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-		if err != nil {
-			return 0, false
-		}
-		return parsed, true
-	default:
-		return 0, false
-	}
 }
