@@ -555,6 +555,10 @@ fzf_supports_reload_sync() {
   command_exists "${FZF_BIN}" && "${FZF_BIN}" --help 2>/dev/null | grep -Fq -- 'reload-sync'
 }
 
+fzf_supports_padding() {
+  command_exists "${FZF_BIN}" && "${FZF_BIN}" --help 2>/dev/null | grep -Fq -- '--padding'
+}
+
 preflight() {
   local quiet="${1:-}"
   local ok=0
@@ -738,7 +742,6 @@ resolve_theme() {
 derive_theme_tokens() {
   # Advanced visual tokens are derived from the base palette so all themes
   # receive the same UI semantics without expanding every theme definition.
-  THEME_BG_SURFACE="${THEME_BG_ALT}"
   THEME_FG_SUBTLE="${THEME_MUTED}"
   THEME_BORDER_SOFT="${THEME_BORDER}"
   THEME_BORDER_STRONG="${THEME_HEADER}"
@@ -2250,10 +2253,10 @@ context_left_color() {
 preview_pad_bg() {
   local text="$1"
   local fg="${2:-$THEME_FG}"
-  local bg="${3:-$THEME_BG_ALT}"
   local attrs="${4:-}"
 
-  paint_bgfg " $text " "$fg" "$bg" "$attrs"
+  # Avoid per-line background blocks to keep the preview panel visually flat.
+  paint_fg " $text " "$fg" "$attrs"
 }
 
 is_indented_code_like() {
@@ -2534,7 +2537,7 @@ fzf_color_spec() {
   printf 'bg:%s,fg:%s,preview-bg:%s,preview-fg:%s,bg+:%s,fg+:%s,hl:%s,hl+:%s,info:%s,border:%s,list-border:%s,preview-border:%s,header-border:%s,input-border:%s,separator:%s,prompt:%s,pointer:%s,marker:%s,spinner:%s,scrollbar:%s,header:%s,label:%s,gutter:%s' \
     "$(fzf_color_value "$THEME_BG")" \
     "$(fzf_color_value "$THEME_FG")" \
-    "$(fzf_color_value "$THEME_BG_SURFACE")" \
+    "$(fzf_color_value "$THEME_BG")" \
     "$(fzf_color_value "$THEME_FG")" \
     "$(fzf_color_value "$THEME_FOCUS_BG")" \
     "$(fzf_color_value "$THEME_FOCUS_FG")" \
@@ -3008,7 +3011,16 @@ board_header_navigation() {
   stale_hint="$(paint_fg "[ctrl-s]" "$THEME_ACCENT" "1") $(paint_fg "stale" "$THEME_MUTED")"
   sep="$(paint_fg " · " "$THEME_BORDER")"
 
-  printf '%s%s%s%s%s' "$enter_hint" "$sep" "$list_hint" "$sep" "$stale_hint"
+  # Keep one explicit spacer line between controls and table headers.
+  printf '%s%s%s%s%s\n%s' "$enter_hint" "$sep" "$list_hint" "$sep" "$stale_hint" " "
+}
+
+board_left_padding() {
+  printf '%s' ''
+}
+
+board_prompt_text() {
+  printf '%spanefleet ~ ' "$(board_left_padding)"
 }
 
 open_board() {
@@ -3067,7 +3079,7 @@ open_board() {
     --height=100%
     --border=none
     --info=inline-right
-    --prompt='panefleet> '
+    --prompt="$(board_prompt_text)"
     --header="$(board_header_navigation)"
     --separator='─'
     --pointer='▌'
@@ -3081,6 +3093,10 @@ open_board() {
     --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+execute-silent(${SELF} refresh-panes-cache {1})+reload(PANEFLEET_LIST_MODE=deferred-refresh ${SELF} list-deferred)"
     --bind "${reload_event}:${load_reload_action}(${repaint_command})"
   )
+  if fzf_supports_padding; then
+    # Use symmetric padding to keep prompt/controls/table visually aligned.
+    fzf_args+=(--padding='1,3,1,3')
+  fi
   "$SELF" queue-refresh --all >/dev/null 2>&1 || true
 
   set +e
@@ -3102,13 +3118,13 @@ open_board() {
 theme_popup_style() {
   resolve_theme
   resolve_color_mode
-  printf 'fg=%s,bg=%s' "$(tmux_style_color "$THEME_FG")" "$(tmux_style_color "$THEME_BG_SURFACE")"
+  printf 'fg=%s,bg=%s' "$(tmux_style_color "$THEME_FG")" "$(tmux_style_color "$THEME_BG")"
 }
 
 theme_popup_border_style() {
   resolve_theme
   resolve_color_mode
-  printf 'fg=%s,bg=%s' "$(tmux_style_color "$THEME_BORDER_STRONG")" "$(tmux_style_color "$THEME_BG_SURFACE")"
+  printf 'fg=%s,bg=%s' "$(tmux_style_color "$THEME_BORDER_STRONG")" "$(tmux_style_color "$THEME_BG")"
 }
 
 binding_state() {
