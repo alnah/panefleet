@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/alnah/panefleet/internal/board"
 	"github.com/alnah/panefleet/internal/state"
@@ -297,6 +298,25 @@ func TestBoardModelViewUsesFullScreenState(t *testing.T) {
 	}
 	if got := len(strings.Split(view, "\n")); got != 20 {
 		t.Fatalf("view line count = %d, want 20", got)
+	}
+}
+
+func TestRenderTableRowSelectedFillsViewportWidth(t *testing.T) {
+	m := NewBoard(&fakeBoardRuntime{}, time.Second, "dracula")
+	row := board.Row{
+		PaneID:      "%1",
+		Status:      state.StatusRun,
+		Tool:        "codex",
+		SessionName: "work",
+		WindowIndex: "1",
+		PaneIndex:   "0",
+		WindowName:  "clean",
+		Repo:        "panefleet",
+	}
+
+	rendered := m.renderTableRow(row, true, false, 100)
+	if got := ansi.StringWidth(rendered); got != 100 {
+		t.Fatalf("selected row width = %d, want 100", got)
 	}
 }
 

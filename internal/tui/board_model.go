@@ -466,7 +466,7 @@ func (m BoardModel) renderTable(width, height int) []string {
 	}
 	end := min(len(rows), start+max(1, height-1))
 	for i := start; i < end; i++ {
-		lines = append(lines, fitLine(m.renderTableRow(rows[i], i == selected, i%2 == 1, width), width))
+		lines = append(lines, m.renderTableRow(rows[i], i == selected, i%2 == 1, width))
 	}
 	return padLines(lines, height)
 }
@@ -486,30 +486,37 @@ func (m BoardModel) renderTableHeader(width int) string {
 	)
 }
 
-func (m BoardModel) renderTableRow(row board.Row, selected, alternate bool, width int) string {
+func (m BoardModel) renderTableRow(row board.Row, selected, _ bool, width int) string {
 	status, tool, target, session, window, repo, tokens, ctx := boardLayoutWidths(width)
 	marker := " "
+	markerStyle := m.styles.rowMarker
 	if selected {
 		marker = "┃"
+		markerStyle = m.selectedBackground(m.styles.selectedMarker)
 	}
-	line := marker + " " + joinColumns(
-		m.renderStatusCell(row.Status, status),
-		m.styles.value.Render(fitCell(row.Tool, tool)),
-		m.styles.value.Render(fitCell(row.TargetPane(), target)),
-		m.styles.value.Render(fitCell(row.SessionName, session)),
-		m.styles.value.Render(fitCell(row.WindowName, window)),
-		m.styles.value.Render(fitCell(row.Repo, repo)),
-		m.renderTokensCell(row.TokensUsed, tokens),
-		m.renderContextCell(row.ContextLeftPct, ctx),
-		m.styles.value.Render(prettyAge(row.WindowActivity)),
-	)
+	space := " "
 	if selected {
-		return m.styles.selectedRow.Render(line)
+		space = m.selectedBackground(m.styles.value).Render(" ")
 	}
-	if alternate {
-		return m.styles.tableRowAlt.Render(line)
+	separator := m.styles.separator.Render(" │ ")
+	if selected {
+		separator = m.selectedBackground(m.styles.separator).Render(" │ ")
 	}
-	return m.styles.tableRow.Render(line)
+	line := markerStyle.Render(marker) + space + strings.Join([]string{
+		m.renderStatusCell(row.Status, status, selected),
+		m.renderValueCell(row.Tool, tool, selected),
+		m.renderValueCell(row.TargetPane(), target, selected),
+		m.renderValueCell(row.SessionName, session, selected),
+		m.renderValueCell(row.WindowName, window, selected),
+		m.renderValueCell(row.Repo, repo, selected),
+		m.renderTokensCell(row.TokensUsed, tokens, selected),
+		m.renderContextCell(row.ContextLeftPct, ctx, selected),
+		m.renderValueCell(prettyAge(row.WindowActivity), 0, selected),
+	}, separator)
+	if selected {
+		return m.fitSelectedLine(line, width)
+	}
+	return fitLine(line, width)
 }
 
 func (m BoardModel) renderPreview(width, height int) []string {
@@ -587,10 +594,13 @@ func joinColumns(parts ...string) string {
 	return strings.Join(parts, " │ ")
 }
 
-func (m BoardModel) renderStatusCell(st state.Status, width int) string {
+func (m BoardModel) renderStatusCell(st state.Status, width int, selected bool) string {
 	style, ok := m.styles.statusByValue[st]
 	if !ok {
 		style = m.styles.value
+	}
+	if selected {
+		style = m.selectedBackground(style)
 	}
 	return style.Render(fitCell(string(st), width))
 }
@@ -742,30 +752,65 @@ func cloneStatusPtr(in *state.Status) *state.Status {
 	return &out
 }
 
-func (m BoardModel) renderTokensCell(tokensUsed *int, width int) string {
+func (m BoardModel) renderTokensCell(tokensUsed *int, width int, selected bool) string {
 	text := fitCell(optionalInt(tokensUsed), width)
 	if tokensUsed == nil {
-		return m.styles.info.Render(text)
+		style := m.styles.metricMuted
+		if selected {
+			style = m.selectedBackground(style)
+		}
+		return style.Render(text)
 	}
-	if *tokensUsed >= 100000 {
-		return m.styles.statusByValue[state.StatusWait].Render(text)
+	style := m.styles.metricValue
+	if selected {
+		style = m.selectedBackground(style)
 	}
-	return m.styles.value.Render(text)
+	return style.Render(text)
 }
 
-func (m BoardModel) renderContextCell(contextLeftPct *int, width int) string {
+func (m BoardModel) renderContextCell(contextLeftPct *int, width int, selected bool) string {
 	text := fitCell(optionalPercent(contextLeftPct), width)
+	var style lipgloss.Style
 	if contextLeftPct == nil {
-		return m.styles.info.Render(text)
+		style = m.styles.metricMuted
+	} else {
+		switch {
+		case *contextLeftPct >= 60:
+			style = m.styles.metricValue
+		case *contextLeftPct >= 30:
+			style = m.styles.metricWarn
+		default:
+			style = m.styles.metricDanger
+		}
 	}
-	switch {
-	case *contextLeftPct >= 60:
-		return m.styles.statusByValue[state.StatusRun].Render(text)
-	case *contextLeftPct >= 30:
-		return m.styles.statusByValue[state.StatusWait].Render(text)
-	default:
-		return m.styles.statusByValue[state.StatusError].Render(text)
+	if selected {
+		style = m.selectedBackground(style)
 	}
+	return style.Render(text)
+}
+
+func (m BoardModel) renderValueCell(text string, width int, selected bool) string {
+	style := m.styles.value
+	if selected {
+		style = m.selectedBackground(style).Foreground(m.styles.selectedRow.GetForeground()).Bold(true)
+	}
+	if width > 0 {
+		text = fitCell(text, width)
+	}
+	return style.Render(text)
+}
+
+func (m BoardModel) selectedBackground(style lipgloss.Style) lipgloss.Style {
+	return style.Copy().Background(m.styles.selectedRow.GetBackground())
+}
+
+func (m BoardModel) fitSelectedLine(text string, width int) string {
+	text = ansi.Truncate(text, width, "")
+	visible := lipgloss.Width(text)
+	if visible < width {
+		text += m.selectedBackground(m.styles.value).Render(strings.Repeat(" ", width-visible))
+	}
+	return text
 }
 
 func (m BoardModel) renderPreviewBodyLine(line string) string {
