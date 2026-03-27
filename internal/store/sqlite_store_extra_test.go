@@ -25,6 +25,24 @@ func TestAppendAndProjectValidationErrors(t *testing.T) {
 	}
 
 	err = s.AppendAndProject(ctx, state.Event{
+		ID:         "",
+		PaneID:     "%1",
+		Kind:       state.EventPaneStarted,
+		OccurredAt: now,
+	}, state.PaneState{
+		PaneID:           "%1",
+		Status:           state.StatusRun,
+		StatusSource:     "test",
+		ReasonCode:       "test",
+		Version:          1,
+		LastEventAt:      now,
+		LastTransitionAt: now,
+	})
+	if err == nil {
+		t.Fatalf("expected event_id validation error")
+	}
+
+	err = s.AppendAndProject(ctx, state.Event{
 		ID:         "bad-2",
 		PaneID:     "%1",
 		Kind:       state.EventPaneStarted,
@@ -151,6 +169,23 @@ VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	if _, _, err := s.GetPaneState(ctx, "%badtime"); err == nil {
 		t.Fatalf("expected parse time error")
 	}
+
+	_, err = s.db.ExecContext(ctx, `DELETE FROM pane_state WHERE pane_id = ?`, "%badtime")
+	if err != nil {
+		t.Fatalf("cleanup bad time row: %v", err)
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+INSERT INTO pane_state(pane_id, status, status_source, reason_code, version, last_event_at, last_transition_at, last_exit_code, manual_override)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"", "RUN", "source", "reason", 0, "2026-03-27T10:00:00Z", "2026-03-27T10:00:01Z", nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("insert invalid persisted row: %v", err)
+	}
+	if _, _, err := s.GetPaneState(ctx, ""); err == nil {
+		t.Fatalf("expected persisted state validation error")
+	}
 }
 
 func TestScanPaneStateInternalNoRows(t *testing.T) {
@@ -230,6 +265,52 @@ func TestAppendAndProjectDuplicateEventIsIdempotentAndList(t *testing.T) {
 	}
 	if list[0].PaneID != "%199" || list[1].PaneID != "%201" {
 		t.Fatalf("expected ASC pane ordering, got %q then %q", list[0].PaneID, list[1].PaneID)
+	}
+}
+
+func TestAppendAndProjectRejectsDuplicateEventIDWithDifferentPayload(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	firstEvent := state.Event{
+		ID:         "evt-conflict-1",
+		PaneID:     "%301",
+		Kind:       state.EventPaneStarted,
+		OccurredAt: now,
+		Source:     "test",
+	}
+	firstState := state.PaneState{
+		PaneID:           "%301",
+		Status:           state.StatusRun,
+		StatusSource:     "test",
+		ReasonCode:       "pane.started",
+		Version:          1,
+		LastEventAt:      now,
+		LastTransitionAt: now,
+	}
+	if err := s.AppendAndProject(ctx, firstEvent, firstState); err != nil {
+		t.Fatalf("append first event: %v", err)
+	}
+
+	secondEvent := state.Event{
+		ID:         "evt-conflict-1",
+		PaneID:     "%302",
+		Kind:       state.EventPaneWaiting,
+		OccurredAt: now,
+		Source:     "test",
+	}
+	secondState := state.PaneState{
+		PaneID:           "%302",
+		Status:           state.StatusWait,
+		StatusSource:     "test",
+		ReasonCode:       "pane.waiting",
+		Version:          1,
+		LastEventAt:      now,
+		LastTransitionAt: now,
+	}
+	if err := s.AppendAndProject(ctx, secondEvent, secondState); err == nil {
+		t.Fatalf("expected duplicate event_id conflict")
 	}
 }
 

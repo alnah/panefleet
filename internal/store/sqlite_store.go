@@ -91,6 +91,9 @@ func (s *SQLiteStore) AppendAndProject(ctx context.Context, ev state.Event, st s
 	if err := ev.Validate(); err != nil {
 		return err
 	}
+	if ev.ID == "" {
+		return fmt.Errorf("event_id is required for persistence")
+	}
 
 	payload, err := json.Marshal(map[string]any{
 		"exit_code":   ev.ExitCode,
@@ -120,6 +123,9 @@ VALUES(?, ?, ?, ?, ?, ?, ?)`,
 	}
 	// Duplicate event_id: idempotent no-op.
 	if affected == 0 {
+		if err := ensureDuplicateEventMatches(tx, ev, string(payload)); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 	if err := validateProjection(ev, st); err != nil {
@@ -277,7 +283,7 @@ func scanPaneStateInternal(row rowScanner) (state.PaneState, error) {
 		manualOverridePtr = &o
 	}
 
-	return state.PaneState{
+	st := state.PaneState{
 		PaneID:           paneID,
 		Status:           parsedStatus,
 		StatusSource:     statusSource,
@@ -287,7 +293,11 @@ func scanPaneStateInternal(row rowScanner) (state.PaneState, error) {
 		LastTransitionAt: lastTransitionAt,
 		LastExitCode:     exitCodePtr,
 		ManualOverride:   manualOverridePtr,
-	}, nil
+	}
+	if err := validateLoadedState(st); err != nil {
+		return state.PaneState{}, err
+	}
+	return st, nil
 }
 
 func formatTime(ts time.Time) string {
@@ -341,6 +351,57 @@ func validateProjection(ev state.Event, st state.PaneState) error {
 	}
 	if st.LastTransitionAt.After(st.LastEventAt) {
 		return fmt.Errorf("projection last_transition_at %s cannot be after last_event_at %s", formatTime(st.LastTransitionAt), formatTime(st.LastEventAt))
+	}
+	return nil
+}
+
+func validateLoadedState(st state.PaneState) error {
+	if st.PaneID == "" {
+		return fmt.Errorf("persisted pane_id is required")
+	}
+	if !st.Status.Valid() {
+		return fmt.Errorf("invalid persisted status: %s", st.Status)
+	}
+	if st.ManualOverride != nil && !st.ManualOverride.Valid() {
+		return fmt.Errorf("invalid persisted manual override: %s", *st.ManualOverride)
+	}
+	if st.Version == 0 {
+		return fmt.Errorf("persisted version must be > 0")
+	}
+	if st.LastEventAt.IsZero() {
+		return fmt.Errorf("persisted last_event_at is required")
+	}
+	if st.LastTransitionAt.IsZero() {
+		return fmt.Errorf("persisted last_transition_at is required")
+	}
+	if st.LastTransitionAt.After(st.LastEventAt) {
+		return fmt.Errorf("persisted last_transition_at %s cannot be after last_event_at %s", formatTime(st.LastTransitionAt), formatTime(st.LastEventAt))
+	}
+	return nil
+}
+
+func ensureDuplicateEventMatches(tx *sql.Tx, ev state.Event, payload string) error {
+	var (
+		paneID     string
+		kind       string
+		occurredAt string
+		source     sql.NullString
+		reasonCode sql.NullString
+		storedJSON string
+	)
+	if err := tx.QueryRow(
+		`SELECT pane_id, kind, occurred_at, source, reason_code, payload_json FROM events WHERE event_id = ?`,
+		ev.ID,
+	).Scan(&paneID, &kind, &occurredAt, &source, &reasonCode, &storedJSON); err != nil {
+		return err
+	}
+	if paneID != ev.PaneID ||
+		kind != string(ev.Kind) ||
+		occurredAt != formatTime(ev.OccurredAt) ||
+		source.String != ev.Source ||
+		reasonCode.String != ev.ReasonCode ||
+		storedJSON != payload {
+		return fmt.Errorf("event_id conflict: existing event %q does not match incoming payload", ev.ID)
 	}
 	return nil
 }

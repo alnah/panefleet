@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -265,8 +266,8 @@ func TestServiceDuplicateEventReturnsPersistedState(t *testing.T) {
 	second, err := svc.Ingest(ctx, state.Event{
 		ID:         "dup-event-1",
 		PaneID:     "%77",
-		Kind:       state.EventPaneWaiting,
-		OccurredAt: base.Add(time.Second),
+		Kind:       state.EventPaneStarted,
+		OccurredAt: base,
 		Source:     "adapter:test",
 	})
 	if err != nil {
@@ -286,6 +287,33 @@ func TestServiceDuplicateEventReturnsPersistedState(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("timeout waiting for duplicate publish")
+	}
+}
+
+func TestServiceRejectsConflictingDuplicateEventID(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	base := time.Now().UTC()
+
+	if _, err := svc.Ingest(ctx, state.Event{
+		ID:         "dup-event-conflict",
+		PaneID:     "%78",
+		Kind:       state.EventPaneStarted,
+		OccurredAt: base,
+		Source:     "adapter:test",
+	}); err != nil {
+		t.Fatalf("first ingest: %v", err)
+	}
+
+	_, err := svc.Ingest(ctx, state.Event{
+		ID:         "dup-event-conflict",
+		PaneID:     "%78",
+		Kind:       state.EventPaneWaiting,
+		OccurredAt: base.Add(time.Second),
+		Source:     "adapter:test",
+	})
+	if err == nil || !strings.Contains(err.Error(), "event_id conflict") {
+		t.Fatalf("expected conflicting duplicate event_id error, got %v", err)
 	}
 }
 
