@@ -290,3 +290,46 @@ func TestBoardModelErrorPaths(t *testing.T) {
 		t.Fatalf("expected fetch error, got %v", model.err)
 	}
 }
+
+func TestBoardModelKeepsLastGoodRowsOnRefreshError(t *testing.T) {
+	runtime := &fakeBoardRuntime{
+		rows: []board.Row{
+			{PaneID: "%1", Status: state.StatusRun, SessionName: "work", WindowIndex: "1", PaneIndex: "0"},
+			{PaneID: "%2", Status: state.StatusIdle, SessionName: "work", WindowIndex: "2", PaneIndex: "0"},
+		},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.rows = append([]board.Row(nil), runtime.rows...)
+	m.rowsLoaded = true
+	m.selectedPaneID = "%2"
+	m.rowsFetching = true
+
+	updated, _ := m.Update(boardRowsMsg{err: errors.New("tmux down"), priority: priorityBackground})
+	model := updated.(BoardModel)
+	if model.err == nil || !strings.Contains(model.err.Error(), "tmux down") {
+		t.Fatalf("expected rows error, got %v", model.err)
+	}
+	if len(model.rows) != 2 {
+		t.Fatalf("rows len = %d, want 2", len(model.rows))
+	}
+	if model.selectedPaneID != "%2" {
+		t.Fatalf("selectedPaneID = %q, want %%2", model.selectedPaneID)
+	}
+}
+
+func TestBoardModelKeepsLastGoodPreviewOnRefreshError(t *testing.T) {
+	runtime := &fakeBoardRuntime{}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.preview = board.Preview{PaneID: "%1", Status: state.StatusRun, Body: "stable preview"}
+	m.previewFetching = true
+	m.selectedPaneID = "%1"
+
+	updated, _ := m.Update(boardPreviewMsg{paneID: "%1", err: errors.New("capture failed")})
+	model := updated.(BoardModel)
+	if model.err == nil || !strings.Contains(model.err.Error(), "capture failed") {
+		t.Fatalf("expected preview error, got %v", model.err)
+	}
+	if model.preview.Body != "stable preview" {
+		t.Fatalf("preview body = %q, want stable preview", model.preview.Body)
+	}
+}
