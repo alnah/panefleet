@@ -66,7 +66,14 @@ func (s *Service) Ingest(ctx context.Context, ev state.Event) (state.PaneState, 
 	if err := s.store.AppendAndProject(ctx, ev, next); err != nil {
 		return state.PaneState{}, fmt.Errorf("ingest persist (%s): %w", errScope, err)
 	}
-	view := next.Effective()
+	persisted, ok, err := s.store.GetPaneState(ctx, ev.PaneID)
+	if err != nil {
+		return state.PaneState{}, fmt.Errorf("ingest reload (%s): %w", errScope, err)
+	}
+	if !ok {
+		return state.PaneState{}, fmt.Errorf("ingest reload (%s): pane state missing after persist", errScope)
+	}
+	view := persisted.Effective()
 	s.publish(view)
 	return view, nil
 }

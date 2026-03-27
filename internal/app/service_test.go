@@ -239,3 +239,52 @@ func TestServiceIngestSerializesByPane(t *testing.T) {
 		t.Fatalf("want WAIT after second event, got %s", got.Status)
 	}
 }
+
+func TestServiceDuplicateEventReturnsPersistedState(t *testing.T) {
+	svc := newService(t)
+	ctx := context.Background()
+	ch, cancel := svc.Subscribe()
+	defer cancel()
+
+	base := time.Now().UTC()
+	first, err := svc.Ingest(ctx, state.Event{
+		ID:         "dup-event-1",
+		PaneID:     "%77",
+		Kind:       state.EventPaneStarted,
+		OccurredAt: base,
+		Source:     "adapter:test",
+	})
+	if err != nil {
+		t.Fatalf("first ingest: %v", err)
+	}
+	if first.Version != 1 || first.Status != state.StatusRun {
+		t.Fatalf("unexpected first state: %+v", first)
+	}
+	<-ch
+
+	second, err := svc.Ingest(ctx, state.Event{
+		ID:         "dup-event-1",
+		PaneID:     "%77",
+		Kind:       state.EventPaneWaiting,
+		OccurredAt: base.Add(time.Second),
+		Source:     "adapter:test",
+	})
+	if err != nil {
+		t.Fatalf("duplicate ingest: %v", err)
+	}
+	if second.Version != 1 {
+		t.Fatalf("duplicate ingest should return persisted version 1, got %d", second.Version)
+	}
+	if second.Status != state.StatusRun {
+		t.Fatalf("duplicate ingest should return persisted RUN, got %s", second.Status)
+	}
+
+	select {
+	case got := <-ch:
+		if got.Version != 1 || got.Status != state.StatusRun {
+			t.Fatalf("published ghost state: %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for duplicate publish")
+	}
+}
