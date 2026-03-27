@@ -45,14 +45,21 @@ const maxIngestAttempts = 8
 // Ingest applies one event to the canonical pane stream and persists the
 // projected state atomically to keep runtime and storage aligned.
 func (s *Service) Ingest(ctx context.Context, ev state.Event) (state.PaneState, error) {
+	if ev.PaneID == "" {
+		return state.PaneState{}, errors.New("pane id is required")
+	}
+	unlock := s.lockPane(ev.PaneID)
+	defer unlock()
+	return s.ingestLocked(ctx, ev)
+}
+
+func (s *Service) ingestLocked(ctx context.Context, ev state.Event) (state.PaneState, error) {
 	if ev.ID == "" {
 		ev.ID = uuid.NewString()
 	}
 	if ev.OccurredAt.IsZero() {
 		ev.OccurredAt = time.Now().UTC()
 	}
-	unlock := s.lockPane(ev.PaneID)
-	defer unlock()
 
 	errScope := fmt.Sprintf("pane=%s kind=%s event_id=%s", ev.PaneID, ev.Kind, ev.ID)
 	for attempt := 0; attempt < maxIngestAttempts; attempt++ {
@@ -123,7 +130,13 @@ func (s *Service) StateList(ctx context.Context) ([]state.PaneState, error) {
 // SetOverride sets a manual status that intentionally wins over adapter events
 // until cleared, for operator-controlled recovery workflows.
 func (s *Service) SetOverride(ctx context.Context, paneID string, target state.Status, source string) (state.PaneState, error) {
-	occurredAt, err := s.controlOccurredAt(ctx, paneID)
+	if paneID == "" {
+		return state.PaneState{}, errors.New("pane id is required")
+	}
+	unlock := s.lockPane(paneID)
+	defer unlock()
+
+	occurredAt, err := s.controlOccurredAtLocked(ctx, paneID)
 	if err != nil {
 		return state.PaneState{}, fmt.Errorf("set-override pane=%s: %w", paneID, err)
 	}
@@ -135,13 +148,19 @@ func (s *Service) SetOverride(ctx context.Context, paneID string, target state.S
 		Source:     source,
 		ReasonCode: "override.set",
 	}
-	return s.Ingest(ctx, ev)
+	return s.ingestLocked(ctx, ev)
 }
 
 // ClearOverride removes a manual status so reducer time/event rules become
 // authoritative again.
 func (s *Service) ClearOverride(ctx context.Context, paneID, source string) (state.PaneState, error) {
-	occurredAt, err := s.controlOccurredAt(ctx, paneID)
+	if paneID == "" {
+		return state.PaneState{}, errors.New("pane id is required")
+	}
+	unlock := s.lockPane(paneID)
+	defer unlock()
+
+	occurredAt, err := s.controlOccurredAtLocked(ctx, paneID)
 	if err != nil {
 		return state.PaneState{}, fmt.Errorf("clear-override pane=%s: %w", paneID, err)
 	}
@@ -152,7 +171,7 @@ func (s *Service) ClearOverride(ctx context.Context, paneID, source string) (sta
 		Source:     source,
 		ReasonCode: "override.cleared",
 	}
-	return s.Ingest(ctx, ev)
+	return s.ingestLocked(ctx, ev)
 }
 
 // Subscribe exposes best-effort update notifications for UI refresh paths
@@ -207,7 +226,7 @@ func (s *Service) lockPane(paneID string) func() {
 	}
 }
 
-func (s *Service) controlOccurredAt(ctx context.Context, paneID string) (time.Time, error) {
+func (s *Service) controlOccurredAtLocked(ctx context.Context, paneID string) (time.Time, error) {
 	now := time.Now().UTC()
 	current, ok, err := s.store.GetPaneState(ctx, paneID)
 	if err != nil {
