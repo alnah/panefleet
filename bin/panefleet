@@ -1629,6 +1629,12 @@ board_repaint_cache_command() {
     last_generation=""
   fi
 
+  if [[ -s "$cache_file" ]]; then
+    if ! head -n 1 "$cache_file" | "${RG_BIN}" -Fq -- 'TOKENS' || ! head -n 1 "$cache_file" | "${RG_BIN}" -Fq -- 'CTX%'; then
+      rm -f "$cache_file"
+    fi
+  fi
+
   if [[ ! -s "$cache_file" || "$current_generation" != "$last_generation" ]]; then
     tmp="$(mktemp "${TMPDIR:-/tmp}/panefleet-board-cache.XXXXXX")"
     if ! PANEFLEET_LIST_MODE=deferred-refresh list_rows >"$tmp"; then
@@ -2939,6 +2945,11 @@ open_board() {
   state_file="${cache_dir}/state-${board_token}.txt"
   warm_cache_file="${cache_dir}/rows-last.tsv"
   initial_generation="$(current_refresh_generation)"
+  if [[ -s "$warm_cache_file" ]]; then
+    if ! head -n 1 "$warm_cache_file" | "${RG_BIN}" -Fq -- 'TOKENS' || ! head -n 1 "$warm_cache_file" | "${RG_BIN}" -Fq -- 'CTX%'; then
+      rm -f "$warm_cache_file"
+    fi
+  fi
   if [[ -s "$warm_cache_file" ]]; then
     cp "$warm_cache_file" "$cache_file" 2>/dev/null || PANEFLEET_LIST_MODE=deferred-refresh list_rows >"$cache_file"
   else
