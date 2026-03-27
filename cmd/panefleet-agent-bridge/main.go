@@ -67,12 +67,15 @@ func main() {
 // It is intentionally tolerant of missing/partial payloads so Claude flows are
 // not blocked when hooks misfire or emit unknown events.
 func runClaudeHook(ctx context.Context, args []string) error {
-	pane, _, skip, err := parsePaneOrSkip("claude-hook", args)
+	pane, rest, skip, err := parsePaneOrSkip("claude-hook", args)
 	if err != nil {
 		return err
 	}
 	if skip {
 		return nil
+	}
+	if err := rejectBridgeUnexpectedArgs(rest); err != nil {
+		return err
 	}
 
 	payload, raw, eventID, ok, err := readLoggedStdinJSONPayload("claude-hook", pane)
@@ -93,7 +96,7 @@ func runClaudeHook(ctx context.Context, args []string) error {
 		logDecision("claude-hook", pane, eventID, "ignored", "", "unmapped hook event", "")
 		return nil
 	}
-	return applyMappedState(ctx, pane, "claude", "claude-hook", eventID, state, reason)
+	return applyMappedState(ctx, pane, "claude-hook", eventID, state, reason)
 }
 
 // runCodexNotify handles one-shot Codex notifications that represent completion.
@@ -117,7 +120,7 @@ func runCodexNotify(ctx context.Context, args []string) error {
 	}
 
 	if stringValue(payload["type"]) == "agent-turn-complete" {
-		return applyMappedState(ctx, pane, "codex", "codex-notify", eventID, statusDone, "notify agent-turn-complete")
+		return applyMappedState(ctx, pane, "codex-notify", eventID, statusDone, "notify agent-turn-complete")
 	}
 	logDecision("codex-notify", pane, eventID, "ignored", "", "notify payload type not mapped", "")
 	return nil
@@ -126,12 +129,15 @@ func runCodexNotify(ctx context.Context, args []string) error {
 // runCodexAppServer consumes Codex status-change stream events and updates state.
 // Non-status events are logged and ignored to keep the state machine stable.
 func runCodexAppServer(ctx context.Context, args []string) error {
-	pane, _, skip, err := parsePaneOrSkip("codex-app-server", args)
+	pane, rest, skip, err := parsePaneOrSkip("codex-app-server", args)
 	if err != nil {
 		return err
 	}
 	if skip {
 		return nil
+	}
+	if err := rejectBridgeUnexpectedArgs(rest); err != nil {
+		return err
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -154,20 +160,11 @@ func runCodexAppServer(ctx context.Context, args []string) error {
 				logDecision("codex-app-server", pane, eventID, "ignored", "", "status payload unmapped", "")
 				continue
 			}
-			if err := applyMappedState(ctx, pane, "codex", "codex-app-server", eventID, state, "thread/status/changed"); err != nil {
+			if err := applyMappedState(ctx, pane, "codex-app-server", eventID, state, "thread/status/changed"); err != nil {
 				return err
 			}
 		case "thread/tokenUsage/updated":
-			tokensUsed, contextLeftPct, contextWindow, ok := codexTokenUsageMetrics(payload)
-			if !ok {
-				logDecision("codex-app-server", pane, eventID, "ignored", "", "token usage payload unmapped", "")
-				continue
-			}
-			if err := setMetrics(ctx, pane, tokensUsed, contextLeftPct, contextWindow); err != nil {
-				logDecision("codex-app-server", pane, eventID, "metrics_set_error", "", "thread/tokenUsage/updated", err.Error())
-				return err
-			}
-			logDecision("codex-app-server", pane, eventID, "metrics_set", "", "thread/tokenUsage/updated", "")
+			logDecision("codex-app-server", pane, eventID, "ignored", "", "token usage update unsupported by panefleet CLI", "")
 		default:
 			logDecision("codex-app-server", pane, eventID, "ignored", "", "unsupported app-server method", method)
 		}
@@ -182,12 +179,15 @@ func runCodexAppServer(ctx context.Context, args []string) error {
 // runOpenCodeEvent maps OpenCode plugin events to panefleet states.
 // It accepts shape variations in payloads to stay resilient across plugin changes.
 func runOpenCodeEvent(ctx context.Context, args []string) error {
-	pane, _, skip, err := parsePaneOrSkip("opencode-event", args)
+	pane, rest, skip, err := parsePaneOrSkip("opencode-event", args)
 	if err != nil {
 		return err
 	}
 	if skip {
 		return nil
+	}
+	if err := rejectBridgeUnexpectedArgs(rest); err != nil {
+		return err
 	}
 
 	payload, raw, eventID, ok, err := readLoggedStdinJSONPayload("opencode-event", pane)
@@ -204,10 +204,13 @@ func runOpenCodeEvent(ctx context.Context, args []string) error {
 		return nil
 	}
 
-	return applyMappedState(ctx, pane, "opencode", "opencode-plugin", eventID, state, "plugin event mapped")
+	return applyMappedState(ctx, pane, "opencode-plugin", eventID, state, "plugin event mapped")
 }
 
 func notificationPayload(args []string) ([]byte, error) {
+	if len(args) > 1 {
+		return nil, fmt.Errorf("unexpected arguments: %s", strings.Join(args[1:], " "))
+	}
 	if len(args) > 0 && strings.TrimSpace(args[0]) != "" {
 		return []byte(args[0]), nil
 	}
@@ -238,6 +241,13 @@ func parsePaneOrSkip(command string, args []string) (pane string, rest []string,
 	return pane, rest, false, nil
 }
 
+func rejectBridgeUnexpectedArgs(args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
+}
+
 func readLoggedStdinJSONPayload(source, pane string) (map[string]any, []byte, string, bool, error) {
 	raw, err := readAll(os.Stdin)
 	if err != nil {
@@ -264,52 +274,42 @@ func decodeLoggedJSONPayload(source, pane string, raw []byte) (map[string]any, s
 	return payload, eventID, true
 }
 
-// setState delegates writes to the panefleet CLI so bridge logic stays stateless
-// and all persistence rules remain in a single place.
-func setState(ctx context.Context, pane, status, tool, source string) error {
-	args := []string{
-		"state-set",
-		"--pane", pane,
-		"--status", status,
-		"--tool", tool,
-		"--source", source,
-		"--updated-at", strconv.FormatInt(time.Now().Unix(), 10),
-	}
-	return runPanefleet(ctx, args...)
-}
-
-func setMetrics(ctx context.Context, pane string, tokensUsed int64, contextLeftPct int64, contextWindow int64) error {
-	args := []string{
-		"metrics-set",
-		"--pane", pane,
-		"--tokens-used", strconv.FormatInt(tokensUsed, 10),
-	}
-	if contextLeftPct >= 0 {
-		args = append(args, "--context-left-pct", strconv.FormatInt(contextLeftPct, 10))
-	} else {
-		args = append(args, "--clear-context-left-pct")
-	}
-	if contextWindow > 0 {
-		args = append(args, "--context-window", strconv.FormatInt(contextWindow, 10))
-	} else {
-		args = append(args, "--clear-context-window")
-	}
-	return runPanefleet(ctx, args...)
-}
-
 // applyMappedState records why a mapping was applied (or skipped) before returning.
 // The extra logging is critical when users report "state stuck" issues.
-func applyMappedState(ctx context.Context, pane, tool, source, eventID, status, reason string) error {
+func applyMappedState(ctx context.Context, pane, source, eventID, status, reason string) error {
 	if status == "" {
 		logDecision(source, pane, eventID, "ignored", "", reason, "")
 		return nil
 	}
-	if err := setState(ctx, pane, status, tool, source); err != nil {
-		logDecision(source, pane, eventID, "state_set_error", status, reason, err.Error())
+	if err := ingestState(ctx, pane, status, source); err != nil {
+		logDecision(source, pane, eventID, "ingest_error", status, reason, err.Error())
 		return err
 	}
-	logDecision(source, pane, eventID, "state_set", status, reason, "")
+	logDecision(source, pane, eventID, "ingest", status, reason, "")
 	return nil
+}
+
+// ingestState maps provider lifecycle states onto panefleet ingest events so
+// bridge traffic updates the underlying stream instead of forcing overrides.
+func ingestState(ctx context.Context, pane, status, source string) error {
+	args := []string{
+		"ingest",
+		"--pane", pane,
+		"--source", source,
+	}
+	switch status {
+	case statusRun:
+		args = append(args, "--kind", "start")
+	case statusWait:
+		args = append(args, "--kind", "wait")
+	case statusDone:
+		args = append(args, "--kind", "exit", "--exit-code", "0")
+	case statusError:
+		args = append(args, "--kind", "exit", "--exit-code", "1")
+	default:
+		return fmt.Errorf("unsupported mapped status: %s", status)
+	}
+	return runPanefleet(ctx, args...)
 }
 
 // runPanefleet applies a hard timeout to prevent provider hooks from hanging.
@@ -320,10 +320,15 @@ func runPanefleet(ctx context.Context, args ...string) error {
 
 	cmd := exec.CommandContext(timeoutCtx, panefleetBin(), args...)
 	cmd.Stdout = nil
-	cmd.Stderr = nil
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
 			return fmt.Errorf("run panefleet %s: timeout after %s", strings.Join(args, " "), bridgeTimeout())
+		}
+		errText := strings.TrimSpace(stderr.String())
+		if errText != "" {
+			return fmt.Errorf("run panefleet %s: %w: %s", strings.Join(args, " "), err, errText)
 		}
 		return fmt.Errorf("run panefleet %s: %w", strings.Join(args, " "), err)
 	}
