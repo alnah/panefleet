@@ -51,7 +51,7 @@ func TestCodexTokenUsageMetrics(t *testing.T) {
 			payload: map[string]any{
 				"params": map[string]any{
 					"tokenUsage": map[string]any{
-						"totalTokens":       float64(64000),
+						"totalTokens":        float64(64000),
 						"modelContextWindow": float64(128000),
 					},
 				},

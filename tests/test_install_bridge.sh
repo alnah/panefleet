@@ -40,7 +40,7 @@ reset_logs() {
 }
 
 reset_behavior() {
-  unset GIT_TAG CURL_FAIL_MODE GO_SHOULD_FAIL TAR_SHOULD_FAIL || true
+  unset GIT_TAG CURL_FAIL_MODE GO_SHOULD_FAIL TAR_SHOULD_FAIL TAR_ENTRY || true
   export UNAME_S="Linux"
   export UNAME_M="x86_64"
 }
@@ -155,25 +155,23 @@ printf '%s\n' "$*" >>"$TAR_LOG"
 if [[ "${TAR_SHOULD_FAIL:-0}" == "1" ]]; then
   exit 1
 fi
+entry="${TAR_ENTRY:-panefleet-agent-bridge}"
 
-dest=""
-prev=""
-for arg in "$@"; do
-  if [[ "$prev" == "-C" ]]; then
-    dest="$arg"
-    break
-  fi
-  prev="$arg"
-done
-
-if [[ -z "$dest" ]]; then
-  printf 'fake tar: missing -C destination\n' >&2
-  exit 2
+if [[ "${1:-}" == "-tzf" ]]; then
+  printf '%s\n' "$entry"
+  exit 0
 fi
 
-mkdir -p "$dest"
-printf '#!/usr/bin/env bash\nexit 0\n' >"${dest}/panefleet-agent-bridge"
-chmod 755 "${dest}/panefleet-agent-bridge"
+if [[ "${1:-}" == "-xOf" ]]; then
+  if [[ "${3:-}" != "$entry" ]]; then
+    exit 1
+  fi
+  printf '#!/usr/bin/env bash\nexit 0\n'
+  exit 0
+fi
+
+printf 'fake tar: unsupported args: %s\n' "$*" >&2
+exit 2
 EOF
 chmod +x "${FAKE_BIN}/tar"
 
@@ -360,6 +358,44 @@ test_auto_errors_when_all_fallbacks_fail() {
   pass "auto mode reports clear failure when all fallbacks fail"
 }
 
+test_download_rejects_unsafe_tar_entry() {
+  local out_bin stdout_file stderr_file
+
+  reset_behavior
+  reset_logs
+  export TAR_ENTRY="../evil/panefleet-agent-bridge"
+  out_bin="${case_dir}/unsafe-entry/bridge"
+  stdout_file="${case_dir}/unsafe-entry/stdout"
+  stderr_file="${case_dir}/unsafe-entry/stderr"
+  mkdir -p "$(dirname "$out_bin")" "$(dirname "$stdout_file")"
+
+  if run_install_bridge "download" "$out_bin" "$stdout_file" "$stderr_file"; then
+    fail "download mode should reject unsafe tar entry paths"
+  fi
+  assert_contains "$stderr_file" "archive must contain exactly one panefleet-agent-bridge entry" "unsafe tar entry should be rejected"
+  pass "download mode rejects unsafe tar entries"
+}
+
+test_download_rejects_symlink_output_path() {
+  local out_bin real_target stdout_file stderr_file
+
+  reset_behavior
+  reset_logs
+  out_bin="${case_dir}/symlink-output/bridge"
+  real_target="${case_dir}/symlink-output/real-target"
+  stdout_file="${case_dir}/symlink-output/stdout"
+  stderr_file="${case_dir}/symlink-output/stderr"
+  mkdir -p "$(dirname "$out_bin")" "$(dirname "$stdout_file")"
+  : >"$real_target"
+  ln -sf "$real_target" "$out_bin"
+
+  if run_install_bridge "download" "$out_bin" "$stdout_file" "$stderr_file"; then
+    fail "download mode should reject symlinked output paths"
+  fi
+  assert_contains "$stderr_file" "refusing to install bridge through symlinked output path" "symlink output should be refused"
+  pass "download mode rejects symlinked output path"
+}
+
 test_unknown_mode_rejected
 test_auto_skips_when_bridge_already_exists
 test_auto_prefers_exact_tag_download
@@ -367,3 +403,5 @@ test_auto_falls_back_to_build_after_download_failure
 test_auto_falls_back_to_latest_download_after_build_failure
 test_force_modes_override_short_circuit
 test_auto_errors_when_all_fallbacks_fail
+test_download_rejects_unsafe_tar_entry
+test_download_rejects_symlink_output_path

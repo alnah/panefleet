@@ -17,6 +17,87 @@ bridge_ready() {
   [[ -x "$OUTPUT_BIN" ]]
 }
 
+is_safe_tar_path() {
+  local entry="$1"
+  local cleaned="${entry#./}"
+
+  if [[ -z "$cleaned" ]]; then
+    return 1
+  fi
+  if [[ "$cleaned" == /* ]]; then
+    return 1
+  fi
+  if [[ "$cleaned" == *'..'* ]]; then
+    case "$cleaned" in
+      *'/../'*|'../'*|*'/..'|'..')
+        return 1
+        ;;
+    esac
+  fi
+  return 0
+}
+
+extract_bridge_entry() {
+  local archive="$1"
+  local selected=""
+  local selected_count=0
+  local entry cleaned
+
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    cleaned="${entry#./}"
+    [[ "$cleaned" == */ ]] && continue
+    if ! is_safe_tar_path "$cleaned"; then
+      continue
+    fi
+    if [[ "$(basename "$cleaned")" == "panefleet-agent-bridge" ]]; then
+      selected="$entry"
+      selected_count=$((selected_count + 1))
+    fi
+  done < <(tar -tzf "$archive")
+
+  if (( selected_count != 1 )); then
+    printf 'panefleet: archive must contain exactly one panefleet-agent-bridge entry\n' >&2
+    return 1
+  fi
+
+  printf '%s\n' "$selected"
+}
+
+install_bridge_atomically() {
+  local source_bin="$1"
+  local output_dir tmp_out backup=""
+
+  output_dir="$(dirname "$OUTPUT_BIN")"
+  if [[ -L "$OUTPUT_BIN" ]]; then
+    printf 'panefleet: refusing to install bridge through symlinked output path %s\n' "$OUTPUT_BIN" >&2
+    return 1
+  fi
+
+  mkdir -p "$output_dir"
+  chmod 700 "$output_dir" 2>/dev/null || true
+  tmp_out="$(mktemp "${output_dir}/.panefleet-agent-bridge.XXXXXX")"
+  cp "$source_bin" "$tmp_out"
+  chmod 755 "$tmp_out"
+
+  if [[ -f "$OUTPUT_BIN" ]]; then
+    backup="$(mktemp "${output_dir}/.panefleet-agent-bridge.bak.XXXXXX")"
+    cp "$OUTPUT_BIN" "$backup"
+  fi
+
+  if ! mv -f "$tmp_out" "$OUTPUT_BIN"; then
+    rm -f "$tmp_out"
+    if [[ -n "$backup" && -f "$backup" ]]; then
+      mv -f "$backup" "$OUTPUT_BIN" 2>/dev/null || true
+    fi
+    printf 'panefleet: failed to install bridge binary atomically\n' >&2
+    return 1
+  fi
+
+  rm -f "$backup" 2>/dev/null || true
+  return 0
+}
+
 # normalize_os and normalize_arch restrict assets to known release targets.
 # Failing early avoids silent installs of incompatible binaries.
 normalize_os() {
@@ -64,7 +145,7 @@ download_bridge() {
   local version="$1"
   local os="$2"
   local arch="$3"
-  local asset url tmpdir extracted
+  local asset url tmpdir archive extracted_entry extracted_bin
 
   if ! command -v curl >/dev/null 2>&1; then
     printf 'curl is required to download a prebuilt panefleet bridge.\n' >&2
@@ -84,22 +165,29 @@ download_bridge() {
   fi
 
   tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/panefleet-bridge.XXXXXX")"
-  if ! curl -fsSL --retry 2 "$url" -o "${tmpdir}/${asset}"; then
+  archive="${tmpdir}/${asset}"
+  if ! curl -fsSL --retry 2 "$url" -o "$archive"; then
     rm -rf "$tmpdir"
     return 1
   fi
 
-  tar -xzf "${tmpdir}/${asset}" -C "$tmpdir"
-  extracted="$(find "$tmpdir" -type f -name 'panefleet-agent-bridge' | head -n 1)"
-  if [[ -z "$extracted" || ! -f "$extracted" ]]; then
+  if ! extracted_entry="$(extract_bridge_entry "$archive")"; then
     rm -rf "$tmpdir"
-    printf 'panefleet: downloaded archive did not contain panefleet-agent-bridge\n' >&2
     return 1
   fi
 
-  mkdir -p "$(dirname "$OUTPUT_BIN")"
-  cp "$extracted" "$OUTPUT_BIN"
-  chmod 755 "$OUTPUT_BIN"
+  extracted_bin="${tmpdir}/panefleet-agent-bridge"
+  if ! tar -xOf "$archive" "$extracted_entry" >"$extracted_bin"; then
+    rm -rf "$tmpdir"
+    printf 'panefleet: failed to extract panefleet-agent-bridge from archive\n' >&2
+    return 1
+  fi
+
+  if ! install_bridge_atomically "$extracted_bin"; then
+    rm -rf "$tmpdir"
+    return 1
+  fi
+
   rm -rf "$tmpdir"
   printf 'Installed prebuilt bridge %s\n' "$OUTPUT_BIN"
 }

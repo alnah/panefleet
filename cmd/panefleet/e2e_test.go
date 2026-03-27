@@ -12,6 +12,21 @@ import (
 	"github.com/alnah/panefleet/internal/state"
 )
 
+func TestCLIDurationValidation(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "panefleet.db")
+	t.Setenv("PANEFLEET_DB_PATH", dbPath)
+
+	err := run(context.Background(), []string{"tui", "--refresh", "0s"})
+	if err == nil || !strings.Contains(err.Error(), "refresh must be > 0") {
+		t.Fatalf("expected refresh validation error, got: %v", err)
+	}
+
+	err = run(context.Background(), []string{"run", "--sync-every", "0s", "--control-mode=false"})
+	if err == nil || !strings.Contains(err.Error(), "sync-every must be > 0") {
+		t.Fatalf("expected sync-every validation error, got: %v", err)
+	}
+}
+
 func TestCLIEndToEndSyncAndStateCommands(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "panefleet.db")
 	fakeTMUX := writeFakeTmux(t)

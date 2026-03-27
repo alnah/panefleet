@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -73,7 +74,7 @@ func newService(ctx context.Context) (*app.Service, func(), error) {
 		}
 		dbPath = filepath.Join(home, ".local", "state", "panefleet", "panefleet.db")
 	}
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 		return nil, nil, err
 	}
 
@@ -84,6 +85,12 @@ func newService(ctx context.Context) (*app.Service, func(), error) {
 	if err := st.Init(ctx); err != nil {
 		_ = st.Close()
 		return nil, nil, err
+	}
+	if shouldHardenDBPermissions(dbPath) {
+		if err := os.Chmod(dbPath, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			_ = st.Close()
+			return nil, nil, fmt.Errorf("secure db file permissions: %w", err)
+		}
 	}
 	reducer, err := state.NewReducer(state.Config{
 		DoneRecentWindow: 10 * time.Minute,
@@ -218,6 +225,9 @@ func cmdTUI(svc *app.Service, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if err := validatePositiveDuration("refresh", *refresh); err != nil {
+		return err
+	}
 	tmux := tmuxctl.New(os.Getenv("PANEFLEET_TMUX_BIN"))
 	updates, cancel := svc.Subscribe()
 	defer cancel()
@@ -266,6 +276,12 @@ func cmdRun(ctx context.Context, svc *app.Service, args []string) error {
 	source := fs.String("source", "adapter:tmux-runner", "event source")
 	controlMode := fs.Bool("control-mode", true, "enable tmux control-mode trigger stream")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := validatePositiveDuration("refresh", *refresh); err != nil {
+		return err
+	}
+	if err := validatePositiveDuration("sync-every", *syncEvery); err != nil {
 		return err
 	}
 	tmux := tmuxctl.New(os.Getenv("PANEFLEET_TMUX_BIN"))
@@ -358,6 +374,26 @@ func syncTmuxOnce(ctx context.Context, svc *app.Service, tmux *tmuxctl.ExecClien
 		applied++
 	}
 	return applied, nil
+}
+
+func validatePositiveDuration(name string, value time.Duration) error {
+	if value <= 0 {
+		return fmt.Errorf("%s must be > 0", name)
+	}
+	return nil
+}
+
+func shouldHardenDBPermissions(dbPath string) bool {
+	if dbPath == "" || dbPath == ":memory:" {
+		return false
+	}
+	if strings.HasPrefix(dbPath, "file:") {
+		return false
+	}
+	if strings.Contains(dbPath, "?") {
+		return false
+	}
+	return true
 }
 
 type runtimeAPI struct {

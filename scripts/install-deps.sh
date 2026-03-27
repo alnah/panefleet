@@ -34,7 +34,9 @@ run_install() {
     return
   fi
 
-  "$@"
+  printf 'elevation required to run: %s\n' "$*" >&2
+  printf 'install-deps: run as root or install sudo\n' >&2
+  return 1
 }
 
 # append_missing_package tracks missing commands first, then performs one package
