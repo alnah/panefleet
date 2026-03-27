@@ -241,6 +241,48 @@ run_doctor_install_in_fake_tmux() {
     "${PANEFLEET_BIN}" doctor --install
 }
 
+run_board_with_stub() {
+  local log_file="$1"
+  local backend="${2:-go}"
+  local stub_bin="${TEST_TMPDIR}/fake-go-board.sh"
+
+  cat >"$stub_bin" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" >>"${log_file}"
+EOF
+  chmod +x "$stub_bin"
+
+  TMUX=1 \
+    TMUX_BIN="${FAKE_TMUX_BIN}" \
+    FZF_BIN="${FZF_BIN:-fzf}" \
+    PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" \
+    PANEFLEET_BOARD_BACKEND="${backend}" \
+    PANEFLEET_GO_BOARD_BIN="${stub_bin}" \
+    "${PANEFLEET_BIN}" board
+}
+
+run_popup_with_stub() {
+  local log_file="$1"
+  local backend="${2:-go}"
+  local stub_bin="${TEST_TMPDIR}/fake-go-popup.sh"
+
+  cat >"$stub_bin" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" >>"${log_file}"
+EOF
+  chmod +x "$stub_bin"
+
+  TMUX=1 \
+    TMUX_BIN="${FAKE_TMUX_BIN}" \
+    FZF_BIN="${FZF_BIN:-fzf}" \
+    PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" \
+    PANEFLEET_BOARD_BACKEND="${backend}" \
+    PANEFLEET_GO_BOARD_BIN="${stub_bin}" \
+    "${PANEFLEET_BIN}" popup
+}
+
 assert_opencode_readyish() {
   local doctor_output="$1"
   local msg="$2"
@@ -293,6 +335,20 @@ test_sourced_helpers() {
   got="$(board_popup_height)"
   assert_eq "$got" "100%" "board popup height should default to full client height"
   pass "board popup defaults to full client size"
+
+  board_runner_log="${TEST_TMPDIR}/go-board.log"
+  : >"$board_runner_log"
+  run_board_with_stub "$board_runner_log"
+  [[ "$(cat "$board_runner_log")" == "tui --refresh 1s" ]] || fail "board should default to the Go-backed board runtime"
+  pass "board command defaults to Go board runtime"
+
+  popup_runner_log="${TEST_TMPDIR}/go-popup.log"
+  : >"$popup_runner_log"
+  run_popup_with_stub "$popup_runner_log"
+  fake_tmux_log="${TEST_TMPDIR}/fake-tmux/tmux.log"
+  rg -Fq -- "display-popup" "$fake_tmux_log" || fail "popup should still use tmux display-popup"
+  rg -Fq -- "tui --refresh 1s" "$fake_tmux_log" || fail "popup should launch the Go-backed board runtime inside tmux popup"
+  pass "popup command defaults to Go board runtime"
 
   got="$(FZF_BIN="$(command -v fzf)" fzf_supports_reload_sync && printf yes || printf no)"
   assert_eq "$got" "yes" "fzf_supports_reload_sync should probe runtime bind support"

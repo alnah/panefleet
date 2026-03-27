@@ -28,8 +28,11 @@ func ParseListPanesOutput(raw string) ([]PaneSnapshot, error) {
 	lineNo := 0
 	for sc.Scan() {
 		lineNo++
-		line := strings.TrimSpace(sc.Text())
+		line := strings.TrimRight(sc.Text(), "\r")
 		if line == "" {
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		item, err := parsePaneSnapshotLine(line, lineNo)
@@ -86,9 +89,12 @@ func parsePaneSnapshotLine(line string, lineNo int) (PaneSnapshot, error) {
 	if deadInt != 0 && deadInt != 1 {
 		return PaneSnapshot{}, fmt.Errorf("line %d: invalid pane_dead value %d", lineNo, deadInt)
 	}
-	deadStatus, err := strconv.Atoi(parts[2])
-	if err != nil {
-		return PaneSnapshot{}, fmt.Errorf("line %d: invalid pane_dead_status: %w", lineNo, err)
+	deadStatus := 0
+	if strings.TrimSpace(parts[2]) != "" {
+		deadStatus, err = strconv.Atoi(parts[2])
+		if err != nil {
+			return PaneSnapshot{}, fmt.Errorf("line %d: invalid pane_dead_status: %w", lineNo, err)
+		}
 	}
 	if deadStatus < 0 {
 		return PaneSnapshot{}, fmt.Errorf("line %d: invalid pane_dead_status value %d", lineNo, deadStatus)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/alnah/panefleet/internal/board"
 	"github.com/alnah/panefleet/internal/panes"
 	"github.com/alnah/panefleet/internal/state"
 	"github.com/alnah/panefleet/internal/tmuxctl"
@@ -39,11 +41,15 @@ func cmdTUI(svc *panes.Service, args []string) error {
 	if err := validatePositiveDuration("refresh", *refresh); err != nil {
 		return err
 	}
+	if err := requireTMUXSession(); err != nil {
+		return err
+	}
 	tmux := tmuxctl.New(os.Getenv("PANEFLEET_TMUX_BIN"))
-	updates, cancel := svc.Subscribe()
-	defer cancel()
-	api := runtimeAPI{svc: svc, tmux: tmux}
-	m := tui.New(api, *refresh, updates)
+	if _, err := syncTmuxOnce(context.Background(), svc, tmux, time.Now().UTC(), "adapter:tmux-tui"); err != nil {
+		fmt.Fprintf(os.Stderr, "panefleet: initial tmux sync failed: %v\n", err)
+	}
+	boardRuntime := board.NewService(svc, tmux, os.Getenv("TMUX_PANE"))
+	m := tui.NewBoard(boardRuntime, *refresh)
 	p := newTeaProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
@@ -68,11 +74,11 @@ func cmdRun(ctx context.Context, svc *panes.Service, args []string) error {
 	if err := validatePositiveDuration("sync-every", *syncEvery); err != nil {
 		return err
 	}
+	if err := requireTMUXSession(); err != nil {
+		return err
+	}
 	tmux := tmuxctl.New(os.Getenv("PANEFLEET_TMUX_BIN"))
 	runID := newRunID()
-
-	updates, cancel := svc.Subscribe()
-	defer cancel()
 
 	appliedInitial, err := syncTmuxOnce(ctx, svc, tmux, time.Now().UTC(), *source)
 	if err != nil {
@@ -132,8 +138,8 @@ func cmdRun(ctx context.Context, svc *panes.Service, args []string) error {
 		}
 	}()
 
-	api := runtimeAPI{svc: svc, tmux: tmux}
-	model := tui.New(api, *refresh, updates)
+	boardRuntime := board.NewService(svc, tmux, os.Getenv("TMUX_PANE"))
+	model := tui.NewBoard(boardRuntime, *refresh)
 	program := newTeaProgram(model, tea.WithAltScreen())
 	_, err = program.Run()
 	stop()
@@ -161,6 +167,13 @@ func runLogf(runID, format string, args ...any) {
 	prefixArgs := []any{runID, time.Now().UTC().Format(time.RFC3339)}
 	allArgs := append(prefixArgs, args...)
 	fmt.Fprintf(os.Stderr, "panefleet: run_id=%s ts=%s "+format+"\n", allArgs...)
+}
+
+func requireTMUXSession() error {
+	if strings.TrimSpace(os.Getenv("TMUX")) == "" {
+		return errors.New("panefleet must run inside tmux")
+	}
+	return nil
 }
 
 type runtimeAPI struct {

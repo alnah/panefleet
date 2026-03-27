@@ -292,6 +292,22 @@ func TestRunValidationErrors(t *testing.T) {
 	}
 }
 
+func TestCmdTUIAndRunRequireTMUXSession(t *testing.T) {
+	svc, closer, err := newService(context.Background())
+	if err != nil {
+		t.Fatalf("newService: %v", err)
+	}
+	defer closer()
+
+	t.Setenv("TMUX", "")
+	if err := cmdTUI(svc, []string{"--refresh", "10ms"}); err == nil || !strings.Contains(err.Error(), "inside tmux") {
+		t.Fatalf("expected tmux session error for tui, got %v", err)
+	}
+	if err := cmdRun(context.Background(), svc, []string{"--refresh", "10ms", "--sync-every", "10ms", "--control-mode=false"}); err == nil || !strings.Contains(err.Error(), "inside tmux") {
+		t.Fatalf("expected tmux session error for run, got %v", err)
+	}
+}
+
 func TestCLIRejectsUnexpectedArgs(t *testing.T) {
 	svc, closer, err := newService(context.Background())
 	if err != nil {
@@ -411,6 +427,7 @@ func TestCmdTUIAndRunWithInjectedProgram(t *testing.T) {
 		t.Fatalf("newService: %v", err)
 	}
 	defer closer()
+	t.Setenv("TMUX", "/tmp/tmux-test")
 
 	oldFactory := newTeaProgram
 	newTeaProgram = func(_ tea.Model, _ ...tea.ProgramOption) teaProgram {
@@ -435,6 +452,7 @@ func TestCmdRunControlModePath(t *testing.T) {
 		t.Fatalf("newService: %v", err)
 	}
 	defer closer()
+	t.Setenv("TMUX", "/tmp/tmux-test")
 
 	oldFactory := newTeaProgram
 	newTeaProgram = func(_ tea.Model, _ ...tea.ProgramOption) teaProgram {
@@ -459,6 +477,7 @@ func TestCmdRunLogsSyncErrors(t *testing.T) {
 		t.Fatalf("newService: %v", err)
 	}
 	defer closer()
+	t.Setenv("TMUX", "/tmp/tmux-test")
 
 	oldFactory := newTeaProgram
 	newTeaProgram = func(_ tea.Model, _ ...tea.ProgramOption) teaProgram {

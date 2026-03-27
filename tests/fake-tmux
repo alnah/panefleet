@@ -5,6 +5,12 @@ set -euo pipefail
 ROOT="${PANEFLEET_FAKE_TMUX_DIR:?PANEFLEET_FAKE_TMUX_DIR is required}"
 CURRENT_PANE="${PANEFLEET_FAKE_TMUX_CURRENT_PANE:-%101}"
 
+log_tmux_command() {
+  printf '%s\n' "$*" >>"${ROOT}/tmux.log"
+}
+
+log_tmux_command "$@"
+
 load_pane() {
   local pane_id="$1"
   # shellcheck disable=SC1090
@@ -377,6 +383,10 @@ capture_pane() {
   cat "${ROOT}/panes/${pane_id}/capture"
 }
 
+display_popup() {
+  return 0
+}
+
 case "${1:-}" in
 list-commands)
   printf 'display-popup\n'
@@ -420,6 +430,10 @@ list-panes)
 capture-pane)
   shift
   capture_pane "$@"
+  ;;
+display-popup)
+  shift
+  display_popup "$@"
   ;;
 *)
   printf 'fake-tmux unsupported command: %s\n' "${1:-}" >&2

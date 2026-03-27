@@ -57,6 +57,73 @@ exit 0
 	}
 }
 
+func TestBoardSnapshotAndPreview(t *testing.T) {
+	bin, logPath := fakeTmux(t, `#!/bin/sh
+echo "$@" >> "$PANEFLEET_FAKE_TMUX_LOG"
+if [ "$1" = "list-panes" ]; then
+  printf "%s\n" "%1	work	1	clean	0	codex-aarch64-a	cdx	/tmp/panefleet	0	0	1711533600		DONE	codex	1711533601	123	88"
+  exit 0
+fi
+if [ "$1" = "display-message" ]; then
+  printf "%s\n" "%1	work	1	clean	0	codex-aarch64-a	cdx	/tmp/panefleet	0		1711533600		DONE	codex	1711533601"
+  exit 0
+fi
+if [ "$1" = "capture-pane" ]; then
+  printf "%s\n" "hello"
+  printf "%s\n" "world"
+  exit 0
+fi
+if [ "$1" = "switch-client" ] || [ "$1" = "select-pane" ]; then
+  exit 0
+fi
+exit 0
+`)
+	c := New(bin)
+
+	rows, err := c.BoardSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("BoardSnapshot: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows len = %d, want 1", len(rows))
+	}
+	if rows[0].PaneID != "%1" || rows[0].TokensUsed == nil || *rows[0].TokensUsed != 123 {
+		t.Fatalf("unexpected board row: %+v", rows[0])
+	}
+	if rows[0].AgentStatus != "DONE" || rows[0].AgentTool != "codex" {
+		t.Fatalf("unexpected agent metadata: %+v", rows[0])
+	}
+	if rows[0].ContextLeftPct == nil || *rows[0].ContextLeftPct != 88 {
+		t.Fatalf("unexpected context_left_pct: %+v", rows[0])
+	}
+	if rows[0].WindowActivity.IsZero() {
+		t.Fatalf("window activity should be parsed")
+	}
+
+	preview, err := c.Preview(context.Background(), "%1")
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if preview.Body != "hello\nworld" {
+		t.Fatalf("preview body = %q, want hello\\nworld", preview.Body)
+	}
+
+	if err := c.JumpToPane(context.Background(), "%1", "work:1"); err != nil {
+		t.Fatalf("JumpToPane: %v", err)
+	}
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	log := string(raw)
+	if !strings.Contains(log, "switch-client -t work:1") {
+		t.Fatalf("missing switch-client invocation: %s", log)
+	}
+	if !strings.Contains(log, "select-pane -t %1") {
+		t.Fatalf("missing select-pane invocation: %s", log)
+	}
+}
+
 func TestInvalidPaneID(t *testing.T) {
 	c := New("tmux")
 	if err := c.KillPane(context.Background(), ""); err == nil {
@@ -83,6 +150,42 @@ exit 2
 
 	if _, err := c.output(context.Background(), "kill-pane", "-t", "%1"); err == nil {
 		t.Fatalf("expected output command error")
+	}
+}
+
+func TestBoardSnapshotAndPreviewValidationErrors(t *testing.T) {
+	bin, _ := fakeTmux(t, `#!/bin/sh
+if [ "$1" = "list-panes" ]; then
+  printf "%s\n" "%1	work	1	clean	0	codex	cdx	/tmp/panefleet	2	0	0					"
+  exit 0
+fi
+if [ "$1" = "display-message" ]; then
+  printf "%s\n" "%1\ttoo\tshort"
+  exit 0
+fi
+exit 0
+`)
+	c := New(bin)
+	if _, err := c.BoardSnapshot(context.Background()); err == nil {
+		t.Fatalf("expected BoardSnapshot parse error")
+	}
+
+	bin, _ = fakeTmux(t, `#!/bin/sh
+if [ "$1" = "display-message" ]; then
+  printf "%s\n" "%1\ttoo\tshort"
+  exit 0
+fi
+if [ "$1" = "capture-pane" ]; then
+  exit 0
+fi
+exit 0
+`)
+	c = New(bin)
+	if _, err := c.Preview(context.Background(), "%1"); err == nil {
+		t.Fatalf("expected Preview parse error")
+	}
+	if err := c.JumpToPane(context.Background(), "%1", ""); err == nil {
+		t.Fatalf("expected JumpToPane target validation error")
 	}
 }
 
