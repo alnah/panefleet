@@ -557,10 +557,10 @@ open_board() {
     --preview "${SELF} preview {1}"
     --preview-window='bottom,55%,border-top,wrap,follow,~9'
     --bind "enter:execute-silent(${SELF} jump {1} {2})+abort"
-    --bind "up:up+execute-silent(${SELF} refresh-panes-cache {1})+reload(PANEFLEET_LIST_MODE=deferred-refresh ${SELF} list-deferred)"
-    --bind "down:down+execute-silent(${SELF} refresh-panes-cache {1})+reload(PANEFLEET_LIST_MODE=deferred-refresh ${SELF} list-deferred)"
+    --bind "up:up+execute-silent(${SELF} queue-refresh --pane {1})"
+    --bind "down:down+execute-silent(${SELF} queue-refresh --pane {1})"
     --bind "change:execute-silent(${SELF} queue-refresh --all)"
-    --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+execute-silent(${SELF} refresh-panes-cache {1})+reload(PANEFLEET_LIST_MODE=deferred-refresh ${SELF} list-deferred)"
+    --bind "ctrl-s:execute-silent(${SELF} state-stale --pane {1})+execute-silent(${SELF} queue-refresh --pane {1})"
     --bind "${reload_event}:${load_reload_action}(${repaint_command})"
   )
   poll_interval="$(board_poll_interval_seconds)"

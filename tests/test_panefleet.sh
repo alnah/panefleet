@@ -258,6 +258,7 @@ assert_opencode_readyish() {
 test_sourced_helpers() {
   local got
   local original_codex_process_is_working
+  local board_file
 
   # shellcheck disable=SC1090
   PANEFLEET_SOURCE_ONLY=1 source "${PANEFLEET_BIN}"
@@ -265,6 +266,13 @@ test_sourced_helpers() {
   got="$(XDG_STATE_HOME="${TEST_TMPDIR}/state" PANEFLEET_AGENT_BRIDGE_BIN='' bridge_bin_path)"
   assert_eq "$got" "${TEST_TMPDIR}/state/panefleet/bin/panefleet-agent-bridge" "bridge_bin_path should default to user state home"
   pass "bridge_bin_path defaults to user state home"
+
+  board_file="${REPO_ROOT}/lib/panefleet/ui/board.sh"
+  rg -Fq -- '--bind "up:up+execute-silent(${SELF} queue-refresh --pane {1})"' "$board_file" || fail "board up binding should queue refresh asynchronously"
+  rg -Fq -- '--bind "down:down+execute-silent(${SELF} queue-refresh --pane {1})"' "$board_file" || fail "board down binding should queue refresh asynchronously"
+  ! rg -Fq -- '--bind "up:up+execute-silent(${SELF} refresh-panes-cache {1})+reload(' "$board_file" || fail "board up binding should not run synchronous reloads"
+  ! rg -Fq -- '--bind "down:down+execute-silent(${SELF} refresh-panes-cache {1})+reload(' "$board_file" || fail "board down binding should not run synchronous reloads"
+  pass "board navigation stays decoupled from synchronous refresh"
 
   if agent_status_is_fresh "$(date +%s)" 600 "$(date +%s)"; then
     pass "agent_status_is_fresh accepts current timestamp"
