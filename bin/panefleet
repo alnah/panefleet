@@ -2846,7 +2846,7 @@ open_board() {
   resolve_theme
   local rc
   local cache_dir cache_file state_file board_token
-  local initial_generation repaint_command
+  local initial_generation repaint_command repaint_delay
   local -a fzf_args
 
   cache_dir="$(user_state_home)/panefleet/board-cache"
@@ -2857,7 +2857,9 @@ open_board() {
   initial_generation="$(current_refresh_generation)"
   PANEFLEET_LIST_FAST=1 list_rows >"$cache_file"
   printf '%s\n' "$initial_generation" >"$state_file"
-  repaint_command="sleep 0.8; \"${SELF}\" board-repaint-cache --cache-file \"${cache_file}\" --state-file \"${state_file}\""
+  # Reduce popup perceived latency: delay before first repaint is configurable.
+  repaint_delay="${PANEFLEET_BOARD_REPAINT_DELAY:-0.1}"
+  repaint_command="sleep \"${repaint_delay}\"; \"${SELF}\" board-repaint-cache --cache-file \"${cache_file}\" --state-file \"${state_file}\""
 
   fzf_args=(
     --ansi
