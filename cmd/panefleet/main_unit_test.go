@@ -413,7 +413,7 @@ func TestCmdTUIAndRunWithInjectedProgram(t *testing.T) {
 	defer closer()
 
 	oldFactory := newTeaProgram
-	newTeaProgram = func(model tea.Model, opts ...tea.ProgramOption) teaProgram {
+	newTeaProgram = func(_ tea.Model, _ ...tea.ProgramOption) teaProgram {
 		return fakeTeaProgram{}
 	}
 	defer func() { newTeaProgram = oldFactory }()
@@ -437,7 +437,7 @@ func TestCmdRunControlModePath(t *testing.T) {
 	defer closer()
 
 	oldFactory := newTeaProgram
-	newTeaProgram = func(model tea.Model, opts ...tea.ProgramOption) teaProgram {
+	newTeaProgram = func(_ tea.Model, _ ...tea.ProgramOption) teaProgram {
 		return delayedFakeTeaProgram{wait: 40 * time.Millisecond}
 	}
 	defer func() { newTeaProgram = oldFactory }()
@@ -461,7 +461,7 @@ func TestCmdRunLogsSyncErrors(t *testing.T) {
 	defer closer()
 
 	oldFactory := newTeaProgram
-	newTeaProgram = func(model tea.Model, opts ...tea.ProgramOption) teaProgram {
+	newTeaProgram = func(_ tea.Model, _ ...tea.ProgramOption) teaProgram {
 		return delayedFakeTeaProgram{wait: 30 * time.Millisecond}
 	}
 	defer func() { newTeaProgram = oldFactory }()

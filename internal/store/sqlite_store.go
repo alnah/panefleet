@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/alnah/panefleet/internal/state"
+	// modernc.org/sqlite registers the pure-Go SQLite driver used by SQLiteStore.
 	_ "modernc.org/sqlite"
 )
 
@@ -187,16 +189,20 @@ FROM pane_state WHERE pane_id = ?`, paneID)
 }
 
 // ListPaneStates returns all pane projections in deterministic pane-id order.
-func (s *SQLiteStore) ListPaneStates(ctx context.Context) ([]state.PaneState, error) {
+func (s *SQLiteStore) ListPaneStates(ctx context.Context) (out []state.PaneState, err error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT pane_id, status, status_source, reason_code, version, last_event_at, last_transition_at, last_exit_code, manual_override
 FROM pane_state ORDER BY pane_id ASC`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 
-	out := make([]state.PaneState, 0)
+	out = make([]state.PaneState, 0)
 	for rows.Next() {
 		st, err := scanPaneStateFromRows(rows)
 		if err != nil {
@@ -216,7 +222,7 @@ type rowScanner interface {
 
 func scanPaneState(row rowScanner) (state.PaneState, bool, error) {
 	st, err := scanPaneStateInternal(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return state.PaneState{}, false, nil
 	}
 	if err != nil {

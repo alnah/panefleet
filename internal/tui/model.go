@@ -165,9 +165,9 @@ func (m Model) View() string {
 	b.WriteString("Panefleet TUI (v1)\n")
 	b.WriteString("q: quit  r: refresh  j/k: move  s: stale toggle  x: respawn  d: kill\n\n")
 	if m.err != nil {
-		b.WriteString(fmt.Sprintf("error: %v\n\n", m.err))
+		fmt.Fprintf(&b, "error: %v\n\n", m.err)
 	}
-	b.WriteString(fmt.Sprintf("panes: %d  last refresh: %s\n\n", len(m.states), formatRefresh(m.lastRefresh)))
+	fmt.Fprintf(&b, "panes: %d  last refresh: %s\n\n", len(m.states), formatRefresh(m.lastRefresh))
 	b.WriteString("sel pane   status   source             reason\n")
 	b.WriteString("--- ----   ------   -----------------  -----------------------\n")
 
@@ -176,7 +176,7 @@ func (m Model) View() string {
 		if i == m.selected {
 			marker = ">"
 		}
-		b.WriteString(fmt.Sprintf("%-3s %-6s %-7s %-18s %-24s\n", marker, st.PaneID, st.Status, trim(st.StatusSource, 18), trim(st.ReasonCode, 24)))
+		fmt.Fprintf(&b, "%-3s %-6s %-7s %-18s %-24s\n", marker, st.PaneID, st.Status, trim(st.StatusSource, 18), trim(st.ReasonCode, 24))
 	}
 	if len(m.states) == 0 {
 		b.WriteString("(no pane state yet)\n")
@@ -284,9 +284,9 @@ func formatRefresh(ts time.Time) string {
 	return ts.Format(time.RFC3339)
 }
 
-func trim(v string, max int) string {
-	if max <= 3 || len(v) <= max {
+func trim(v string, limit int) string {
+	if limit <= 3 || len(v) <= limit {
 		return v
 	}
-	return v[:max-3] + "..."
+	return v[:limit-3] + "..."
 }

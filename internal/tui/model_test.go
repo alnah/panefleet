@@ -224,8 +224,7 @@ func TestModelUpdateTickAndStateUpdatedAndQuit(t *testing.T) {
 		t.Fatalf("stateUpdated should trigger fetch command")
 	}
 
-	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	m = updated.(Model)
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd == nil {
 		t.Fatalf("quit key should return quit command")
 	}

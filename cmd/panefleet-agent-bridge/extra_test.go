@@ -53,14 +53,13 @@ func TestEnsureEventLogDirAndAppendJSONLogRecordFailures(t *testing.T) {
 }
 
 func TestEventLogPathSanitizesSource(t *testing.T) {
-	base := t.TempDir()
-	got := eventLogPath(base, "../codex/app-server")
-	want := filepath.Join(base, "codex_app-server.jsonl")
+	got := eventLogPath("../codex/app-server")
+	want := "codex_app-server.jsonl"
 	if got != want {
 		t.Fatalf("eventLogPath() = %q, want %q", got, want)
 	}
 
-	if path := eventLogPath(base, " \t "); path != "" {
+	if path := eventLogPath(" \t "); path != "" {
 		t.Fatalf("blank eventLogPath should be empty, got %q", path)
 	}
 }

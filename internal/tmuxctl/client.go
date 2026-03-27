@@ -52,10 +52,15 @@ func (c *ExecClient) RespawnPane(ctx context.Context, paneID string) error {
 }
 
 func (c *ExecClient) output(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, c.Binary, args...)
+	bin, err := resolveBinary(c.Binary)
+	if err != nil {
+		return "", err
+	}
+	// #nosec G204 -- tmux is an explicit operator-configured dependency and these arguments are fixed command verbs.
+	cmd := exec.CommandContext(ctx, bin, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", formatCommandError(c.Binary, args, err, out)
+		return "", formatCommandError(bin, args, err, out)
 	}
 	return string(out), nil
 }
@@ -65,6 +70,14 @@ func requirePaneID(paneID string) error {
 		return errors.New("pane id is required")
 	}
 	return nil
+}
+
+func resolveBinary(binary string) (string, error) {
+	binary = strings.TrimSpace(binary)
+	if binary == "" {
+		return "", errors.New("tmux binary is required")
+	}
+	return exec.LookPath(binary)
 }
 
 func formatCommandError(binary string, args []string, err error, output []byte) error {

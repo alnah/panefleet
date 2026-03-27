@@ -134,7 +134,7 @@ type overrideConcurrencyStore struct {
 func (s *overrideConcurrencyStore) Init(context.Context) error { return nil }
 func (s *overrideConcurrencyStore) Close() error               { return nil }
 
-func (s *overrideConcurrencyStore) GetPaneState(_ context.Context, paneID string) (state.PaneState, bool, error) {
+func (s *overrideConcurrencyStore) GetPaneState(_ context.Context, _ string) (state.PaneState, bool, error) {
 	s.enter()
 	defer s.leave()
 

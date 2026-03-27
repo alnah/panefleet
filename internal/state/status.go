@@ -9,13 +9,20 @@ import (
 type Status string
 
 const (
+	// StatusUnknown means no reliable lifecycle state has been observed yet.
 	StatusUnknown Status = "UNKNOWN"
-	StatusIdle    Status = "IDLE"
-	StatusRun     Status = "RUN"
-	StatusWait    Status = "WAIT"
-	StatusDone    Status = "DONE"
-	StatusError   Status = "ERROR"
-	StatusStale   Status = "STALE"
+	// StatusIdle means the pane is alive but currently inactive.
+	StatusIdle Status = "IDLE"
+	// StatusRun means the pane is actively running work.
+	StatusRun Status = "RUN"
+	// StatusWait means the pane is waiting on external input or approval.
+	StatusWait Status = "WAIT"
+	// StatusDone means the pane exited successfully and is still recent.
+	StatusDone Status = "DONE"
+	// StatusError means the pane exited with a non-zero status.
+	StatusError Status = "ERROR"
+	// StatusStale means no recent activity has been observed for the pane.
+	StatusStale Status = "STALE"
 )
 
 // Valid reports whether the status is one of the lifecycle values accepted by

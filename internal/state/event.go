@@ -10,13 +10,20 @@ import (
 type EventKind string
 
 const (
-	EventPaneStarted     EventKind = "PaneStarted"
-	EventPaneWaiting     EventKind = "PaneWaiting"
-	EventPaneExited      EventKind = "PaneExited"
-	EventPaneObserved    EventKind = "PaneObserved"
-	EventOverrideSet     EventKind = "PaneOverrideSet"
+	// EventPaneStarted marks a pane as actively running new work.
+	EventPaneStarted EventKind = "PaneStarted"
+	// EventPaneWaiting marks a pane as blocked on external input.
+	EventPaneWaiting EventKind = "PaneWaiting"
+	// EventPaneExited records a pane process exit and its exit code.
+	EventPaneExited EventKind = "PaneExited"
+	// EventPaneObserved requests timer-driven recomputation without a direct state change.
+	EventPaneObserved EventKind = "PaneObserved"
+	// EventOverrideSet applies a manual operator override.
+	EventOverrideSet EventKind = "PaneOverrideSet"
+	// EventOverrideCleared removes a manual operator override.
 	EventOverrideCleared EventKind = "PaneOverrideCleared"
-	EventTimerRecompute  EventKind = "TimerRecompute"
+	// EventTimerRecompute forces lifecycle timer transitions to be reapplied.
+	EventTimerRecompute EventKind = "TimerRecompute"
 )
 
 // Event is a validated input for a single pane stream.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +22,8 @@ func TestMainProcessUsageExit(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected non-zero exit for missing command")
 	}
-	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() == 0 {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() == 0 {
 		t.Fatalf("expected non-zero exit code, got %v", err)
 	}
 }
@@ -39,7 +41,7 @@ func TestMainProcessStateListExitZero(t *testing.T) {
 	}
 }
 
-func TestMainHelperProcess(t *testing.T) {
+func TestMainHelperProcess(_ *testing.T) {
 	if os.Getenv("GO_WANT_MAIN_HELPER") != "1" {
 		return
 	}

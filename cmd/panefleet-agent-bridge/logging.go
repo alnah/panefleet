@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -31,6 +30,7 @@ func ensureEventLogDir(logDir string) bool {
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return false
 	}
+	// #nosec G302 -- event log directories need execute permission; 0700 keeps them private to the current user.
 	if err := os.Chmod(logDir, 0o700); err != nil {
 		return false
 	}
@@ -42,7 +42,7 @@ func appendJSONLogRecord(source string, record any) {
 	if !ensureEventLogDir(logDir) {
 		return
 	}
-	logPath := eventLogPath(logDir, source)
+	logPath := eventLogPath(source)
 	if logPath == "" {
 		return
 	}
@@ -52,23 +52,41 @@ func appendJSONLogRecord(source string, record any) {
 		return
 	}
 
-	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	root, name, err := openEventLogRoot(logDir, source)
 	if err != nil {
 		return
 	}
-	defer file.Close()
+	defer func() { _ = root.Close() }()
+
+	file, err := root.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	defer func() { _ = file.Close() }()
 	if err := file.Chmod(0o600); err != nil {
 		return
 	}
 	_, _ = file.Write(append(encoded, '\n'))
 }
 
-func eventLogPath(logDir, source string) string {
+func eventLogPath(source string) string {
 	name := sanitizeLogSource(source)
 	if name == "" {
 		return ""
 	}
-	return filepath.Join(logDir, name+".jsonl")
+	return name + ".jsonl"
+}
+
+func openEventLogRoot(logDir, source string) (*os.Root, string, error) {
+	name := eventLogPath(source)
+	if name == "" {
+		return nil, "", fmt.Errorf("event log source is required")
+	}
+	root, err := os.OpenRoot(logDir)
+	if err != nil {
+		return nil, "", err
+	}
+	return root, name, nil
 }
 
 func sanitizeLogSource(source string) string {

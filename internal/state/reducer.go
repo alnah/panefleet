@@ -74,9 +74,9 @@ func (r *Reducer) Apply(current PaneState, ev Event) (PaneState, error) {
 		return next, nil
 	case EventOverrideCleared:
 		next.ManualOverride = nil
-		return r.applyTimers(next, ev.OccurredAt, source, "override.cleared")
+		return r.applyTimers(next, ev.OccurredAt, source)
 	case EventTimerRecompute:
-		return r.applyTimers(next, ev.OccurredAt, source, reason)
+		return r.applyTimers(next, ev.OccurredAt, source)
 	}
 
 	switch ev.Kind {
@@ -85,7 +85,7 @@ func (r *Reducer) Apply(current PaneState, ev Event) (PaneState, error) {
 	case EventPaneWaiting:
 		next = r.setStatus(next, StatusWait, source, reason, ev.OccurredAt)
 	case EventPaneObserved:
-		next, _ = r.applyTimers(next, ev.OccurredAt, source, reason)
+		next, _ = r.applyTimers(next, ev.OccurredAt, source)
 	case EventPaneExited:
 		exitCode := *ev.ExitCode
 		next.LastExitCode = &exitCode
@@ -101,7 +101,7 @@ func (r *Reducer) Apply(current PaneState, ev Event) (PaneState, error) {
 	return next, nil
 }
 
-func (r *Reducer) applyTimers(state PaneState, now time.Time, source, reason string) (PaneState, error) {
+func (r *Reducer) applyTimers(state PaneState, now time.Time, source string) (PaneState, error) {
 	if !state.Status.Valid() {
 		state = r.setStatus(state, StatusUnknown, source, "status.invalid", now)
 		return state, nil

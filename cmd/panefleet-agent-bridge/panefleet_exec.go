@@ -57,6 +57,7 @@ func runPanefleet(ctx context.Context, args ...string) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, bridgeTimeout())
 	defer cancel()
 
+	// #nosec G204,G702 -- the bridge intentionally executes the configured panefleet binary with fixed subcommands assembled in code.
 	cmd := exec.CommandContext(timeoutCtx, panefleetBin(), args...)
 	cmd.Stdout = nil
 	var stderr bytes.Buffer

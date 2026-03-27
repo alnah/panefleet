@@ -18,22 +18,22 @@ func (blockingReader) StateList(ctx context.Context) ([]state.PaneState, error) 
 	return nil, ctx.Err()
 }
 
-func (blockingReader) SetOverride(ctx context.Context, paneID string, target state.Status, source string) (state.PaneState, error) {
+func (blockingReader) SetOverride(ctx context.Context, _ string, _ state.Status, _ string) (state.PaneState, error) {
 	<-ctx.Done()
 	return state.PaneState{}, ctx.Err()
 }
 
-func (blockingReader) ClearOverride(ctx context.Context, paneID, source string) (state.PaneState, error) {
+func (blockingReader) ClearOverride(ctx context.Context, _, _ string) (state.PaneState, error) {
 	<-ctx.Done()
 	return state.PaneState{}, ctx.Err()
 }
 
-func (blockingReader) KillPane(ctx context.Context, paneID string) error {
+func (blockingReader) KillPane(ctx context.Context, _ string) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
 
-func (blockingReader) RespawnPane(ctx context.Context, paneID string) error {
+func (blockingReader) RespawnPane(ctx context.Context, _ string) error {
 	<-ctx.Done()
 	return ctx.Err()
 }

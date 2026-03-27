@@ -55,7 +55,7 @@ func TestReducerApplyTimersAndHelpers(t *testing.T) {
 	st.Status = Status("BROKEN")
 	st.LastTransitionAt = base
 
-	next, err := r.applyTimers(st, base.Add(time.Second), "src", "")
+	next, err := r.applyTimers(st, base.Add(time.Second), "src")
 	if err != nil {
 		t.Fatalf("applyTimers invalid status: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestReducerApplyTimersAndHelpers(t *testing.T) {
 	st = NewPaneState("%9")
 	st.Status = StatusDone
 	st.LastTransitionAt = base
-	if _, err := r.applyTimers(st, base.Add(-time.Second), "src", "reason"); err == nil {
+	if _, err := r.applyTimers(st, base.Add(-time.Second), "src"); err == nil {
 		t.Fatalf("expected negative duration error")
 	}
 

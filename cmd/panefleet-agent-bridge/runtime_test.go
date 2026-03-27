@@ -19,7 +19,11 @@ func withStdinText(t *testing.T, text string, fn func()) {
 	if err != nil {
 		t.Fatalf("open stdin fixture: %v", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			t.Fatalf("close stdin fixture: %v", err)
+		}
+	}()
 	os.Stdin = file
 	defer func() { os.Stdin = old }()
 	fn()

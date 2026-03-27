@@ -316,6 +316,6 @@ func TestAppendAndProjectRejectsDuplicateEventIDWithDifferentPayload(t *testing.
 
 type rowNoRows struct{}
 
-func (rowNoRows) Scan(dest ...any) error {
+func (rowNoRows) Scan(_ ...any) error {
 	return sql.ErrNoRows
 }

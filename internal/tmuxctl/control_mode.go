@@ -68,7 +68,12 @@ func (c *ExecClient) WatchControlMode(ctx context.Context, onEvent func(ControlE
 	}()
 
 	args := []string{"-C", "attach-session"}
-	cmd := exec.CommandContext(ctx, c.Binary, args...)
+	bin, err := resolveBinary(c.Binary)
+	if err != nil {
+		return err
+	}
+	// #nosec G204 -- tmux is an explicit operator-configured dependency and control-mode uses a fixed attach-session command.
+	cmd := exec.CommandContext(ctx, bin, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
