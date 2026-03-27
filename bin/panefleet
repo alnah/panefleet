@@ -1602,13 +1602,13 @@ board_repaint_cache_command() {
 
   if [[ ! -s "$cache_file" || "$current_generation" != "$last_generation" ]]; then
     tmp="$(mktemp "${TMPDIR:-/tmp}/panefleet-board-cache.XXXXXX")"
-    if ! PANEFLEET_LIST_FAST=1 list_rows >"$tmp"; then
+    if ! PANEFLEET_LIST_MODE=deferred-refresh list_rows >"$tmp"; then
       rm -f "$tmp"
       if [[ -s "$cache_file" ]]; then
         cat "$cache_file"
         return
       fi
-      PANEFLEET_LIST_FAST=1 list_rows
+      PANEFLEET_LIST_MODE=deferred-refresh list_rows
       return
     fi
     mv "$tmp" "$cache_file"
@@ -2553,8 +2553,23 @@ list_runtime_defaults() {
   fi
 }
 
-list_fast_mode_enabled() {
-  [[ "${PANEFLEET_LIST_FAST:-0}" == "1" ]]
+list_mode_value() {
+  if [[ -n "${PANEFLEET_LIST_MODE:-}" ]]; then
+    printf '%s' "${PANEFLEET_LIST_MODE}"
+    return
+  fi
+  # Backward compatibility for legacy env name.
+  if [[ "${PANEFLEET_LIST_FAST:-0}" == "1" ]]; then
+    printf 'deferred-refresh'
+  else
+    printf 'full'
+  fi
+}
+
+list_deferred_refresh_mode_enabled() {
+  local mode
+  mode="$(list_mode_value)"
+  [[ "$mode" == "deferred-refresh" ]]
 }
 
 resolve_list_row_values() {
@@ -2591,7 +2606,7 @@ resolve_list_row_values() {
   fi
 
   if [[ -n "$local_status" || "$dead" == "1" || -n "$agent_status_value" ]]; then
-    if list_fast_mode_enabled && [[ -z "$local_status" ]] && [[ "$dead" != "1" ]] && [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$PANEFLEET_AGENT_STATUS_MAX_AGE" "$PANEFLEET_NOW" && agent_state_matches_live_tool "$tool" "$agent_tool_value"; then
+    if list_deferred_refresh_mode_enabled && [[ -z "$local_status" ]] && [[ "$dead" != "1" ]] && [[ -n "$agent_status_value" ]] && agent_status_is_fresh "$agent_updated_at_value" "$PANEFLEET_AGENT_STATUS_MAX_AGE" "$PANEFLEET_NOW" && agent_state_matches_live_tool "$tool" "$agent_tool_value"; then
       raw_status="$agent_status_value"
       if [[ -n "$agent_tool_value" ]]; then
         tool="$agent_tool_value"
@@ -2618,15 +2633,15 @@ resolve_list_row_values() {
   fi
 
   if [[ "$force_live_refresh" == "1" ]] || cache_refresh_needed "$local_status" "$cached_signature" "$signature" "$cached_raw_status"; then
-    if list_fast_mode_enabled; then
+    if list_deferred_refresh_mode_enabled; then
       PANEFLEET_REFRESH_QUEUE+="$pane_id"$'\n'
       raw_status="$(fallback_raw_status "$cached_raw_status" "$tool" "$cmd" "$dead" "$dead_status")"
       if [[ -n "$cached_raw_status" ]]; then
         source="heuristic-cache"
-        reason="deferred refresh in fast mode"
+        reason="deferred refresh mode"
       else
         source="default"
-        reason="fast mode without cache"
+        reason="deferred refresh without cache"
       fi
     elif should_sync_refresh_now "$PANEFLEET_NOW" "${activity:-0}" "$cached_raw_status" "$PANEFLEET_SYNC_REFRESH_COUNT"; then
       refresh_record="$(refresh_pane_cache_record "$pane_id" "${activity:-0}" "$signature" "$cmd" "$title" "$dead" "$dead_status" "$last_done")"
@@ -2796,7 +2811,7 @@ list_rows() {
 
   sort -t $'\t' -k3,3n -k4,4nr "$rows_file"
   rm -f "$rows_file"
-  if ! list_fast_mode_enabled; then
+  if ! list_deferred_refresh_mode_enabled; then
     schedule_refresh_panes "$PANEFLEET_REFRESH_QUEUE"
   fi
 }
@@ -2879,9 +2894,9 @@ open_board() {
   warm_cache_file="${cache_dir}/rows-last.tsv"
   initial_generation="$(current_refresh_generation)"
   if [[ -s "$warm_cache_file" ]]; then
-    cp "$warm_cache_file" "$cache_file" 2>/dev/null || PANEFLEET_LIST_FAST=1 list_rows >"$cache_file"
+    cp "$warm_cache_file" "$cache_file" 2>/dev/null || PANEFLEET_LIST_MODE=deferred-refresh list_rows >"$cache_file"
   else
-    PANEFLEET_LIST_FAST=1 list_rows >"$cache_file"
+    PANEFLEET_LIST_MODE=deferred-refresh list_rows >"$cache_file"
     cp "$cache_file" "$warm_cache_file" 2>/dev/null || true
   fi
   printf '%s\n' "$initial_generation" >"$state_file"
@@ -3620,8 +3635,8 @@ main() {
     list)
       list_rows
       ;;
-    list-fast)
-      PANEFLEET_LIST_FAST=1 list_rows
+    list-fast|list-deferred)
+      PANEFLEET_LIST_MODE=deferred-refresh list_rows
       ;;
     preview)
       shift
