@@ -755,9 +755,11 @@ pane_record_format() {
 }
 
 list_pane_record_format() {
-  printf '%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\n' \
     "$(pane_record_format)" \
-    'stable:#{history_size}:#{cursor_x}:#{cursor_y}:#{pane_current_command}:#{pane_title}:#{pane_dead}:#{pane_dead_status}	#{@panefleet_status}	#{@panefleet_agent_status}	#{@panefleet_agent_tool}	#{@panefleet_agent_source}	#{@panefleet_agent_updated_at}	#{@panefleet_last_touch}	#{@panefleet_last_done}	#{@panefleet_auto_signature}	#{@panefleet_auto_raw_status}	#{@panefleet_auto_tool}'
+    'stable:#{history_size}:#{cursor_x}:#{cursor_y}:#{pane_current_command}:#{pane_title}:#{pane_dead}:#{pane_dead_status}	#{@panefleet_status}	#{@panefleet_agent_status}	#{@panefleet_agent_tool}	#{@panefleet_agent_source}	#{@panefleet_agent_updated_at}	#{@panefleet_last_touch}	#{@panefleet_last_done}	#{@panefleet_auto_signature}	#{@panefleet_auto_raw_status}	#{@panefleet_auto_tool}' \
+    '#{@panefleet_tokens_used}' \
+    '#{@panefleet_context_left_pct}'
 }
 
 cache_refresh_record_format() {
@@ -1064,6 +1066,33 @@ clear_agent_state() {
   unset_pane_option "$pane_id" @panefleet_agent_source 2>/dev/null || true
   unset_pane_option "$pane_id" @panefleet_agent_updated_at 2>/dev/null || true
   runtime_log_event "agent_state_cleared" pane "$pane_id"
+}
+
+set_usage_metrics() {
+  local pane_id="$1"
+  local tokens_used="${2:-}"
+  local context_left_pct="${3:-}"
+  local context_window="${4:-}"
+
+  if [[ -n "$tokens_used" ]]; then
+    set_pane_option "$pane_id" @panefleet_tokens_used "$tokens_used"
+  fi
+  if [[ -n "$context_left_pct" ]]; then
+    set_pane_option "$pane_id" @panefleet_context_left_pct "$context_left_pct"
+  fi
+  if [[ -n "$context_window" ]]; then
+    set_pane_option "$pane_id" @panefleet_context_window "$context_window"
+  fi
+  runtime_log_event "usage_metrics_set" pane "$pane_id" tokens "$tokens_used" ctx_left_pct "$context_left_pct" ctx_window "$context_window"
+}
+
+clear_usage_metrics() {
+  local pane_id="$1"
+
+  unset_pane_option "$pane_id" @panefleet_tokens_used 2>/dev/null || true
+  unset_pane_option "$pane_id" @panefleet_context_left_pct 2>/dev/null || true
+  unset_pane_option "$pane_id" @panefleet_context_window 2>/dev/null || true
+  runtime_log_event "usage_metrics_cleared" pane "$pane_id"
 }
 
 pane_recent_capture() {
@@ -2694,8 +2723,10 @@ build_list_row() {
   local tool="$7"
   local status="$8"
   local window_name="$9"
+  local tokens_used="${10:-}"
+  local context_left_pct="${11:-}"
   local repo target_window target_pane short_path age
-  local tool_cell target_cell session_cell window_cell repo_cell colored_status display rank sep
+  local tool_cell target_cell session_cell window_cell repo_cell tokens_cell ctx_cell colored_status display rank sep
 
   repo="${path##*/}"
   if [[ -z "$repo" ]]; then
@@ -2710,11 +2741,23 @@ build_list_row() {
   fit_cell_into session_cell "$session_name" 14
   fit_cell_into window_cell "$window_name" 18
   fit_cell_into repo_cell "$repo" 14
+  if [[ "$tokens_used" =~ ^[0-9]+$ ]]; then
+    tokens_cell="$tokens_used"
+  else
+    tokens_cell="-"
+  fi
+  fit_cell_into tokens_cell "$tokens_cell" 8
+  if [[ "$context_left_pct" =~ ^[0-9]+$ ]]; then
+    ctx_cell="${context_left_pct}%"
+  else
+    ctx_cell="-"
+  fi
+  fit_cell_into ctx_cell "$ctx_cell" 4
   colored_status="$(colored_status_cell "$status")"
   status_rank_value "$status"
   rank="$REPLY"
   sep="$(separator_cell)"
-  display="$(printf '%b%s%s%s%s%s%s%s%s%s%s%s%4s' \
+  display="$(printf '%b%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%4s' \
     "$colored_status" \
     "$sep" \
     "$tool_cell" \
@@ -2726,6 +2769,10 @@ build_list_row() {
     "$window_cell" \
     "$sep" \
     "$repo_cell" \
+    "$sep" \
+    "$tokens_cell" \
+    "$sep" \
+    "$ctx_cell" \
     "$sep" \
     "$age")"
 
@@ -2739,8 +2786,8 @@ build_list_row() {
 }
 
 list_header() {
-  local status_text tool_text target_text session_text window_text repo_text
-  local status_cell tool_cell target_cell session_cell window_cell repo_cell display sep
+  local status_text tool_text target_text session_text window_text repo_text tokens_text ctx_text
+  local status_cell tool_cell target_cell session_cell window_cell repo_cell tokens_cell ctx_cell display sep
 
   fit_cell_into status_text "STATE" 5
   fit_cell_into tool_text "TOOL" 8
@@ -2748,14 +2795,18 @@ list_header() {
   fit_cell_into session_text "SESSION" 14
   fit_cell_into window_text "WINDOW" 18
   fit_cell_into repo_text "REPO" 14
+  fit_cell_into tokens_text "TOKENS" 8
+  fit_cell_into ctx_text "CTX%" 4
   status_cell="$(header_cell "$status_text")"
   tool_cell="$(header_cell "$tool_text")"
   target_cell="$(header_cell "$target_text")"
   session_cell="$(header_cell "$session_text")"
   window_cell="$(header_cell "$window_text")"
   repo_cell="$(header_cell "$repo_text")"
+  tokens_cell="$(header_cell "$tokens_text")"
+  ctx_cell="$(header_cell "$ctx_text")"
   sep="$(separator_cell)"
-  display="$(printf '%s%s%s%s%s%s%s%s%s%s%s%s%4s' \
+  display="$(printf '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%4s' \
     "$status_cell" \
     "$sep" \
     "$tool_cell" \
@@ -2767,6 +2818,10 @@ list_header() {
     "$window_cell" \
     "$sep" \
     "$repo_cell" \
+    "$sep" \
+    "$tokens_cell" \
+    "$sep" \
+    "$ctx_cell" \
     "$sep" \
     "$(header_cell "AGE")")"
 
@@ -2783,7 +2838,7 @@ list_rows() {
   require_runtime_support
   resolve_theme
   local rows_file
-  local pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool
+  local pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool tokens_used context_left_pct
   local tool status
 
   list_runtime_defaults
@@ -2792,12 +2847,12 @@ list_rows() {
 
   rows_file="$(mktemp "${TMPDIR:-/tmp}/panefleet-list.XXXXXX")"
   list_header >"$rows_file"
-  while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool; do
+  while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool tokens_used context_left_pct; do
     : "${agent_source_value:=}" "${agent_updated_at_value:=}"
     resolve_list_row_values "$pane_id" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$signature" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$cached_signature" "$cached_raw_status" "$cached_tool" "$agent_source_value"
     tool="$PANEFLEET_RESOLVED_TOOL"
     status="$PANEFLEET_RESOLVED_STATUS"
-    build_list_row "$pane_id" "$session_name" "$window_index" "$pane_index" "$path" "${activity:-0}" "$tool" "$status" "$window_name" >>"$rows_file"
+    build_list_row "$pane_id" "$session_name" "$window_index" "$pane_index" "$path" "${activity:-0}" "$tool" "$status" "$window_name" "$tokens_used" "$context_left_pct" >>"$rows_file"
   done < <(pane_records "$(list_pane_record_format)")
 
   sort -t $'\t' -k3,3n -k4,4nr "$rows_file"
@@ -3328,6 +3383,82 @@ state_clear_command() {
   clear_agent_state "$pane_id"
 }
 
+usage_metrics_set_command() {
+  local pane_id=""
+  local tokens_used=""
+  local context_left_pct=""
+  local context_window=""
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --pane)
+        pane_id="${2:-}"
+        shift 2
+        ;;
+      --tokens-used)
+        tokens_used="${2:-}"
+        shift 2
+        ;;
+      --context-left-pct)
+        context_left_pct="${2:-}"
+        shift 2
+        ;;
+      --context-window)
+        context_window="${2:-}"
+        shift 2
+        ;;
+      *)
+        printf 'unknown metrics-set option: %s\n' "$1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  if [[ -z "$tokens_used" && -z "$context_left_pct" && -z "$context_window" ]]; then
+    printf 'metrics-set requires at least one metric flag\n' >&2
+    exit 1
+  fi
+  if [[ -n "$tokens_used" && ! "$tokens_used" =~ ^[0-9]+$ ]]; then
+    printf 'metrics-set requires --tokens-used as non-negative integer\n' >&2
+    exit 1
+  fi
+  if [[ -n "$context_left_pct" ]]; then
+    if [[ ! "$context_left_pct" =~ ^[0-9]+$ ]] || (( context_left_pct < 0 || context_left_pct > 100 )); then
+      printf 'metrics-set requires --context-left-pct in range 0..100\n' >&2
+      exit 1
+    fi
+  fi
+  if [[ -n "$context_window" ]]; then
+    if [[ ! "$context_window" =~ ^[0-9]+$ ]] || (( context_window <= 0 )); then
+      printf 'metrics-set requires --context-window as positive integer\n' >&2
+      exit 1
+    fi
+  fi
+
+  pane_id="$(resolve_target_pane "$pane_id")"
+  set_usage_metrics "$pane_id" "$tokens_used" "$context_left_pct" "$context_window"
+}
+
+usage_metrics_clear_command() {
+  local pane_id=""
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --pane)
+        pane_id="${2:-}"
+        shift 2
+        ;;
+      *)
+        printf 'unknown metrics-clear option: %s\n' "$1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  pane_id="$(resolve_target_pane "$pane_id")"
+  clear_usage_metrics "$pane_id"
+}
+
 # state_stale_command lets operators force STALE as a temporary override.
 # The override is intentionally toggle-based to keep manual recovery quick.
 state_stale_command() {
@@ -3370,11 +3501,11 @@ agent_freshness_label() {
 
 state_inspect_values() {
   local pane_id="${1:?pane_id is required}"
-  local session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool
+  local session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool _tokens_used _context_left_pct
 
   require_runtime_support
   list_runtime_defaults
-  IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool <<<"$(full_pane_record "$pane_id")"
+  IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool _tokens_used _context_left_pct <<<"$(full_pane_record "$pane_id")"
   resolve_list_row_values "$pane_id" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$signature" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$cached_signature" "$cached_raw_status" "$cached_tool" "$agent_source_value"
 
   PANEFLEET_INSPECT_SESSION_NAME="$session_name"
@@ -3459,12 +3590,12 @@ state_show_command() {
 }
 
 render_state_snapshot() {
-  local pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool
+  local pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool _tokens_used _context_left_pct
   local rows_file tool status fresh updated_age target task
 
   rows_file="$(mktemp "${TMPDIR:-/tmp}/panefleet-state-snapshot.XXXXXX")"
 
-  while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool; do
+  while IFS="$PANEFIELD_SEP" read -r pane_id session_name window_index window_name pane_index cmd title path dead dead_status activity signature local_status agent_status_value agent_tool_value agent_source_value agent_updated_at_value last_touch last_done cached_signature cached_raw_status cached_tool _tokens_used _context_left_pct; do
     resolve_list_row_values "$pane_id" "$cmd" "$title" "$dead" "$dead_status" "${activity:-0}" "$signature" "$local_status" "$agent_status_value" "$agent_tool_value" "$agent_updated_at_value" "$last_touch" "$last_done" "$cached_signature" "$cached_raw_status" "$cached_tool" "$agent_source_value"
     tool="$PANEFLEET_RESOLVED_TOOL"
     status="$PANEFLEET_RESOLVED_STATUS"
@@ -3648,6 +3779,14 @@ main() {
     state-clear)
       shift
       state_clear_command "$@"
+      ;;
+    metrics-set)
+      shift
+      usage_metrics_set_command "$@"
+      ;;
+    metrics-clear)
+      shift
+      usage_metrics_clear_command "$@"
       ;;
     state-stale)
       shift

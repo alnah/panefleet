@@ -87,6 +87,7 @@ Board behavior:
 - The preview pane shows the selected pane metadata plus as many visible trailing lines as fit.
 - Board content refreshes automatically while the popup stays open.
 - `bin/panefleet state-clear --pane <pane_id>` clears manual and adapter overrides for one pane.
+- Board includes `TOKENS` and `CTX%` columns when provider-native usage is available (otherwise `-`).
 
 ## Status model
 
