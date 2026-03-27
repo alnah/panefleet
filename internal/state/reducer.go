@@ -85,7 +85,8 @@ func (r *Reducer) Apply(current PaneState, ev Event) (PaneState, error) {
 	case EventPaneObserved:
 		next, _ = r.applyTimers(next, ev.OccurredAt, source, reason)
 	case EventPaneExited:
-		next.LastExitCode = ev.ExitCode
+		exitCode := *ev.ExitCode
+		next.LastExitCode = &exitCode
 		if *ev.ExitCode == 0 {
 			next = r.setStatus(next, StatusDone, source, reason, ev.OccurredAt)
 		} else {
@@ -133,13 +134,6 @@ func (r *Reducer) setStatus(state PaneState, s Status, source, reason string, ts
 	state.StatusSource = source
 	state.ReasonCode = reason
 	return state
-}
-
-func reasonIfEmpty(val, fallback string) string {
-	if val != "" {
-		return val
-	}
-	return fallback
 }
 
 func defaultReason(ev Event) string {
