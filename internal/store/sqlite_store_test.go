@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -175,5 +176,35 @@ func TestSQLiteStoreListPaneStates(t *testing.T) {
 	}
 	if all[0].PaneID != "%1" || all[1].PaneID != "%2" {
 		t.Fatalf("expected sorted pane ids, got=%s,%s", all[0].PaneID, all[1].PaneID)
+	}
+}
+
+func TestSQLiteStoreInitConfiguresBusyTimeoutAndWAL(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "panefleet.db")
+	s, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("new sqlite store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = s.Close()
+	})
+	if err := s.Init(context.Background()); err != nil {
+		t.Fatalf("init sqlite store: %v", err)
+	}
+
+	var busyTimeout int
+	if err := s.db.QueryRowContext(context.Background(), `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+		t.Fatalf("query busy_timeout: %v", err)
+	}
+	if busyTimeout != 5000 {
+		t.Fatalf("busy_timeout=%d, want 5000", busyTimeout)
+	}
+
+	var journalMode string
+	if err := s.db.QueryRowContext(context.Background(), `PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+		t.Fatalf("query journal_mode: %v", err)
+	}
+	if journalMode != "wal" {
+		t.Fatalf("journal_mode=%q, want wal", journalMode)
 	}
 }

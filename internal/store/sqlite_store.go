@@ -11,10 +11,13 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// SQLiteStore is the default local Store implementation for Panefleet.
 type SQLiteStore struct {
 	db *sql.DB
 }
 
+// NewSQLiteStore creates a single-writer sqlite handle tuned for local,
+// ordered event streams.
 func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -26,11 +29,16 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	return &SQLiteStore{db: db}, nil
 }
 
+// Close releases the underlying DB handle.
 func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
 
+// Init ensures the event log and projection schema exist before writes.
 func (s *SQLiteStore) Init(ctx context.Context) error {
+	if err := s.configureConnection(ctx); err != nil {
+		return err
+	}
 	const ddl = `
 CREATE TABLE IF NOT EXISTS events (
   event_id TEXT PRIMARY KEY,
@@ -58,6 +66,22 @@ CREATE INDEX IF NOT EXISTS idx_events_pane_time ON events (pane_id, occurred_at)
 	return err
 }
 
+func (s *SQLiteStore) configureConnection(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `PRAGMA busy_timeout = 5000`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `PRAGMA synchronous = NORMAL`); err != nil {
+		return err
+	}
+	var mode string
+	if err := s.db.QueryRowContext(ctx, `PRAGMA journal_mode = WAL`).Scan(&mode); err != nil {
+		return err
+	}
+	return nil
+}
+
+// AppendAndProject persists one event and its resulting projection in a single
+// transaction to keep idempotence and projection consistency.
 func (s *SQLiteStore) AppendAndProject(ctx context.Context, ev state.Event, st state.PaneState) error {
 	if err := ev.Validate(); err != nil {
 		return err
@@ -133,6 +157,7 @@ ON CONFLICT(pane_id) DO UPDATE SET
 	return tx.Commit()
 }
 
+// GetPaneState returns one pane projection by id, plus a found flag.
 func (s *SQLiteStore) GetPaneState(ctx context.Context, paneID string) (state.PaneState, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT pane_id, status, status_source, reason_code, version, last_event_at, last_transition_at, last_exit_code, manual_override
@@ -142,6 +167,7 @@ FROM pane_state WHERE pane_id = ?`, paneID)
 	return st, ok, err
 }
 
+// ListPaneStates returns all pane projections in deterministic pane-id order.
 func (s *SQLiteStore) ListPaneStates(ctx context.Context) ([]state.PaneState, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT pane_id, status, status_source, reason_code, version, last_event_at, last_transition_at, last_exit_code, manual_override
