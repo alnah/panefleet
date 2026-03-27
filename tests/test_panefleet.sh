@@ -243,7 +243,8 @@ run_doctor_install_in_fake_tmux() {
 
 run_board_with_stub() {
   local log_file="$1"
-  local backend="${2:-go}"
+  local backend="${2:-shell}"
+  local command="${3:-board}"
   local stub_bin="${TEST_TMPDIR}/fake-go-board.sh"
 
   cat >"$stub_bin" <<EOF
@@ -259,12 +260,13 @@ EOF
     PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" \
     PANEFLEET_BOARD_BACKEND="${backend}" \
     PANEFLEET_GO_BOARD_BIN="${stub_bin}" \
-    "${PANEFLEET_BIN}" board
+    "${PANEFLEET_BIN}" "${command}"
 }
 
 run_popup_with_stub() {
   local log_file="$1"
-  local backend="${2:-go}"
+  local backend="${2:-shell}"
+  local command="${3:-popup}"
   local stub_bin="${TEST_TMPDIR}/fake-go-popup.sh"
 
   cat >"$stub_bin" <<EOF
@@ -280,7 +282,7 @@ EOF
     PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" \
     PANEFLEET_BOARD_BACKEND="${backend}" \
     PANEFLEET_GO_BOARD_BIN="${stub_bin}" \
-    "${PANEFLEET_BIN}" popup
+    "${PANEFLEET_BIN}" "${command}"
 }
 
 assert_opencode_readyish() {
@@ -339,16 +341,27 @@ test_sourced_helpers() {
   board_runner_log="${TEST_TMPDIR}/go-board.log"
   : >"$board_runner_log"
   run_board_with_stub "$board_runner_log"
-  [[ "$(cat "$board_runner_log")" == "tui --refresh 1s" ]] || fail "board should default to the Go-backed board runtime"
-  pass "board command defaults to Go board runtime"
+  [[ ! -s "$board_runner_log" ]] || fail "board should default to the shell board runtime"
+  pass "board command defaults to the shell board runtime"
 
   popup_runner_log="${TEST_TMPDIR}/go-popup.log"
   : >"$popup_runner_log"
   run_popup_with_stub "$popup_runner_log"
   fake_tmux_log="${TEST_TMPDIR}/fake-tmux/tmux.log"
   rg -Fq -- "display-popup" "$fake_tmux_log" || fail "popup should still use tmux display-popup"
-  rg -Fq -- "tui --refresh 1s" "$fake_tmux_log" || fail "popup should launch the Go-backed board runtime inside tmux popup"
-  pass "popup command defaults to Go board runtime"
+  rg -Fq -- "${PANEFLEET_BIN} board" "$fake_tmux_log" || fail "popup should launch the shell board inside tmux popup by default"
+  pass "popup command defaults to the shell board runtime"
+
+  : >"$board_runner_log"
+  run_board_with_stub "$board_runner_log" shell board-go
+  [[ "$(cat "$board_runner_log")" == "tui --refresh 1s" ]] || fail "board-go should run the Go-backed board runtime"
+  pass "board-go runs the Go-backed board runtime"
+
+  : >"$fake_tmux_log"
+  run_popup_with_stub "$popup_runner_log" shell popup-go
+  rg -Fq -- "display-popup" "$fake_tmux_log" || fail "popup-go should use tmux display-popup"
+  rg -Fq -- "tui --refresh 1s" "$fake_tmux_log" || fail "popup-go should launch the Go-backed board runtime inside tmux popup"
+  pass "popup-go runs the Go-backed board runtime"
 
   got="$(FZF_BIN="$(command -v fzf)" fzf_supports_reload_sync && printf yes || printf no)"
   assert_eq "$got" "yes" "fzf_supports_reload_sync should probe runtime bind support"

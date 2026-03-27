@@ -64,6 +64,9 @@ main() {
       ;;
     esac
     ;;
+  board-go)
+    run_go_board
+    ;;
   board-shell)
     open_board
     ;;
@@ -84,6 +87,9 @@ main() {
       exit 1
       ;;
     esac
+    ;;
+  popup-go)
+    open_go_popup
     ;;
   popup-shell)
     open_popup

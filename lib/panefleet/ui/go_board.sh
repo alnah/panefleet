@@ -3,7 +3,7 @@
 # Go-backed board launcher and popup integration.
 
 board_backend() {
-  printf '%s' "${PANEFLEET_BOARD_BACKEND:-go}"
+  printf '%s' "${PANEFLEET_BOARD_BACKEND:-shell}"
 }
 
 go_board_refresh_interval() {
