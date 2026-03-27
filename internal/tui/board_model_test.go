@@ -88,7 +88,7 @@ func TestBoardModelStartupAndSelection(t *testing.T) {
 			"%1": {PaneID: "%1", Status: state.StatusRun, SessionName: "work", WindowIndex: "1", PaneIndex: "0", WindowName: "clean", Body: "hello"},
 		},
 	}
-	m := NewBoard(runtime, time.Second)
+	m := NewBoard(runtime, time.Second, "dracula")
 	updated, cmd := m.Update(boardRowsMsg{rows: runtime.rows})
 	model := updated.(BoardModel)
 	if cmd == nil {
@@ -112,7 +112,7 @@ func TestBoardModelNavigationQueuesPreviewOnly(t *testing.T) {
 			{PaneID: "%2", Status: state.StatusIdle, SessionName: "work", WindowIndex: "2", PaneIndex: "0"},
 		},
 	}
-	m := NewBoard(runtime, time.Second)
+	m := NewBoard(runtime, time.Second, "dracula")
 	m.rows = runtime.rows
 	m.selectedPaneID = "%1"
 	m.rowsFetching = false
@@ -131,7 +131,7 @@ func TestBoardModelNavigationQueuesPreviewOnly(t *testing.T) {
 }
 
 func TestBoardModelCoalescesBackgroundRefresh(t *testing.T) {
-	m := NewBoard(&fakeBoardRuntime{}, time.Second)
+	m := NewBoard(&fakeBoardRuntime{}, time.Second, "dracula")
 	m.rowsFetching = true
 	m.selectedPaneID = "%1"
 
@@ -158,7 +158,7 @@ func TestBoardModelTickRefreshesSelectedPreview(t *testing.T) {
 			"%1": {PaneID: "%1", Status: state.StatusRun, Body: "preview"},
 		},
 	}
-	m := NewBoard(runtime, time.Second)
+	m := NewBoard(runtime, time.Second, "dracula")
 	m.rows = runtime.rows
 	m.rowsLoaded = true
 	m.selectedPaneID = "%1"
@@ -184,7 +184,7 @@ func TestBoardModelTickRefreshesSelectedPreview(t *testing.T) {
 }
 
 func TestBoardModelLatestWinsPreviewQueue(t *testing.T) {
-	m := NewBoard(&fakeBoardRuntime{}, time.Second)
+	m := NewBoard(&fakeBoardRuntime{}, time.Second, "dracula")
 	m.previewFetching = true
 
 	if cmd := m.requestPreviewCmd("%1"); cmd != nil {
@@ -211,7 +211,7 @@ func TestBoardModelActions(t *testing.T) {
 	runtime := &fakeBoardRuntime{
 		rows: []board.Row{{PaneID: "%1", SessionName: "work", WindowIndex: "1", PaneIndex: "0"}},
 	}
-	m := NewBoard(runtime, time.Second)
+	m := NewBoard(runtime, time.Second, "dracula")
 	m.rows = runtime.rows
 	m.selectedPaneID = "%1"
 
@@ -247,7 +247,7 @@ func TestBoardModelViewUsesFullScreenState(t *testing.T) {
 			"%1": {PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "work", WindowIndex: "1", PaneIndex: "0", WindowName: "clean", Body: "hello"},
 		},
 	}
-	m := NewBoard(runtime, time.Second)
+	m := NewBoard(runtime, time.Second, "dracula")
 	m.rows = runtime.rows
 	m.selectedPaneID = "%1"
 	m.preview = runtime.previews["%1"]
@@ -259,13 +259,16 @@ func TestBoardModelViewUsesFullScreenState(t *testing.T) {
 	if !strings.Contains(view, "Panefleet Board") || !strings.Contains(view, "TOKENS") || !strings.Contains(view, "hello") {
 		t.Fatalf("view missing expected content: %q", view)
 	}
+	if !strings.Contains(view, "▌ RUN") {
+		t.Fatalf("view should highlight the selected row, got %q", view)
+	}
 	if got := len(strings.Split(view, "\n")); got != 20 {
 		t.Fatalf("view line count = %d, want 20", got)
 	}
 }
 
 func TestBoardModelViewShowsLoadingBeforeFirstRows(t *testing.T) {
-	m := NewBoard(&fakeBoardRuntime{}, time.Second)
+	m := NewBoard(&fakeBoardRuntime{}, time.Second, "dracula")
 	m.width = 100
 	m.height = 12
 
@@ -280,7 +283,7 @@ func TestBoardModelViewShowsLoadingBeforeFirstRows(t *testing.T) {
 
 func TestBoardModelErrorPaths(t *testing.T) {
 	runtime := &fakeBoardRuntime{rowsErr: errors.New("boom")}
-	m := NewBoard(runtime, time.Second)
+	m := NewBoard(runtime, time.Second, "dracula")
 	updated, _ := m.Update(m.fetchRowsCmd(priorityStartup)())
 	model := updated.(BoardModel)
 	if model.err == nil || !strings.Contains(model.err.Error(), "boom") {

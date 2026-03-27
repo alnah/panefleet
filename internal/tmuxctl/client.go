@@ -76,6 +76,19 @@ func (c *ExecClient) Snapshot(ctx context.Context) ([]tmuxsync.PaneSnapshot, err
 	return tmuxsync.ParseListPanesOutput(out)
 }
 
+// GlobalOption reads one global tmux option value and trims its trailing line
+// ending so callers can use it directly in Go logic.
+func (c *ExecClient) GlobalOption(ctx context.Context, name string) (string, error) {
+	if strings.TrimSpace(name) == "" {
+		return "", errors.New("option name is required")
+	}
+	out, err := c.output(ctx, "show-options", "-gqv", name)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // BoardSnapshot captures the richer pane metadata required by the Go board.
 func (c *ExecClient) BoardSnapshot(ctx context.Context) ([]BoardPane, error) {
 	out, err := c.output(ctx, "list-panes", "-a", "-F", boardListPanesFormat)

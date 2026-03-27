@@ -243,7 +243,7 @@ run_doctor_install_in_fake_tmux() {
 
 run_board_with_stub() {
   local log_file="$1"
-  local backend="${2:-shell}"
+  local backend="${2:-go}"
   local command="${3:-board}"
   local stub_bin="${TEST_TMPDIR}/fake-go-board.sh"
 
@@ -265,7 +265,7 @@ EOF
 
 run_popup_with_stub() {
   local log_file="$1"
-  local backend="${2:-shell}"
+  local backend="${2:-go}"
   local command="${3:-popup}"
   local stub_bin="${TEST_TMPDIR}/fake-go-popup.sh"
 
@@ -341,16 +341,16 @@ test_sourced_helpers() {
   board_runner_log="${TEST_TMPDIR}/go-board.log"
   : >"$board_runner_log"
   run_board_with_stub "$board_runner_log"
-  [[ ! -s "$board_runner_log" ]] || fail "board should default to the shell board runtime"
-  pass "board command defaults to the shell board runtime"
+  [[ "$(cat "$board_runner_log")" == "tui --refresh 1s" ]] || fail "board should default to the Go-backed board runtime"
+  pass "board command defaults to the Go board runtime"
 
   popup_runner_log="${TEST_TMPDIR}/go-popup.log"
   : >"$popup_runner_log"
   run_popup_with_stub "$popup_runner_log"
   fake_tmux_log="${TEST_TMPDIR}/fake-tmux/tmux.log"
   rg -Fq -- "display-popup" "$fake_tmux_log" || fail "popup should still use tmux display-popup"
-  rg -Fq -- "${PANEFLEET_BIN} board" "$fake_tmux_log" || fail "popup should launch the shell board inside tmux popup by default"
-  pass "popup command defaults to the shell board runtime"
+  rg -Fq -- "tui --refresh 1s" "$fake_tmux_log" || fail "popup should launch the Go-backed board runtime inside tmux popup"
+  pass "popup command defaults to the Go board runtime"
 
   : >"$board_runner_log"
   run_board_with_stub "$board_runner_log" shell board-go

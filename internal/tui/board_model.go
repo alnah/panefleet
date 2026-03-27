@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/alnah/panefleet/internal/board"
 	"github.com/alnah/panefleet/internal/state"
@@ -60,6 +61,7 @@ type boardActionMsg struct {
 // refreshes.
 type BoardModel struct {
 	runtime         BoardRuntime
+	styles          boardStyles
 	interval        time.Duration
 	opTimeout       time.Duration
 	previewTimeout  time.Duration
@@ -80,13 +82,14 @@ type BoardModel struct {
 }
 
 // NewBoard constructs the primary Bubble Tea board model.
-func NewBoard(runtime BoardRuntime, interval time.Duration) BoardModel {
+func NewBoard(runtime BoardRuntime, interval time.Duration, themeName string) BoardModel {
 	if interval <= 0 {
 		interval = time.Second
 	}
 	updates, cancel := runtime.Subscribe()
 	return BoardModel{
 		runtime:        runtime,
+		styles:         newBoardStyles(themeName),
 		interval:       interval,
 		opTimeout:      5 * time.Second,
 		previewTimeout: 3 * time.Second,
@@ -241,21 +244,21 @@ func (m BoardModel) View() string {
 	}
 
 	lines := make([]string, 0, height)
-	lines = append(lines, fitLine("Panefleet Board", width))
-	lines = append(lines, fitLine("enter: jump  j/k,up/down: move  ctrl+s: stale  x: respawn  d: kill  r: refresh  q: quit", width))
+	lines = append(lines, fitLine(m.styles.title.Render("Panefleet Board"), width))
+	lines = append(lines, fitLine(m.styles.help.Render("enter: jump  j/k,up/down: move  ctrl+s: stale  x: respawn  d: kill  r: refresh  q: quit"), width))
 	if m.err != nil {
-		lines = append(lines, fitLine("error: "+m.err.Error(), width))
+		lines = append(lines, fitLine(m.styles.error.Render("error: "+m.err.Error()), width))
 	} else if !m.rowsLoaded {
-		lines = append(lines, fitLine("loading panes...", width))
+		lines = append(lines, fitLine(m.styles.info.Render("loading panes..."), width))
 	} else {
-		lines = append(lines, fitLine(fmt.Sprintf("rows: %d  last refresh: %s", len(m.rows), formatRefresh(m.lastRowsRefresh)), width))
+		lines = append(lines, fitLine(m.styles.info.Render(fmt.Sprintf("rows: %d  last refresh: %s", len(m.rows), formatRefresh(m.lastRowsRefresh))), width))
 	}
-	lines = append(lines, fitLine(strings.Repeat("─", width), width))
+	lines = append(lines, fitLine(m.styles.borderStrong.Render(strings.Repeat("─", width)), width))
 
 	topHeight := max(8, height/2)
 	tableLines := m.renderTable(width, max(3, topHeight-len(lines)-1))
 	lines = append(lines, tableLines...)
-	lines = append(lines, fitLine(strings.Repeat("─", width), width))
+	lines = append(lines, fitLine(m.styles.borderStrong.Render(strings.Repeat("─", width)), width))
 	previewLines := m.renderPreview(width, height-len(lines))
 	lines = append(lines, previewLines...)
 
@@ -437,13 +440,13 @@ func (m BoardModel) selectedRow() (board.Row, bool) {
 }
 
 func (m BoardModel) renderTable(width, height int) []string {
-	lines := []string{fitLine(renderTableHeader(width), width)}
+	lines := []string{fitLine(m.renderTableHeader(width), width)}
 	if !m.rowsLoaded {
-		lines = append(lines, fitLine("loading panes...", width))
+		lines = append(lines, fitLine(m.styles.info.Render("loading panes..."), width))
 		return padLines(lines, height)
 	}
 	if len(m.rows) == 0 {
-		lines = append(lines, fitLine("(no panes)", width))
+		lines = append(lines, fitLine(m.styles.info.Render("(no panes)"), width))
 		return padLines(lines, height)
 	}
 
@@ -454,67 +457,71 @@ func (m BoardModel) renderTable(width, height int) []string {
 	}
 	end := min(len(m.rows), start+max(1, height-1))
 	for i := start; i < end; i++ {
-		lines = append(lines, fitLine(renderTableRow(m.rows[i], i == selected, width), width))
+		lines = append(lines, fitLine(m.renderTableRow(m.rows[i], i == selected, width), width))
 	}
 	return padLines(lines, height)
 }
 
-func renderTableHeader(width int) string {
+func (m BoardModel) renderTableHeader(width int) string {
 	status, tool, target, session, window, repo, tokens, ctx := boardLayoutWidths(width)
 	return joinColumns(
-		fitCell("STATE", status),
-		fitCell("TOOL", tool),
-		fitCell("TARGET", target),
-		fitCell("SESSION", session),
-		fitCell("WINDOW", window),
-		fitCell("REPO", repo),
-		fitCell("TOKENS", tokens),
-		fitCell("CTX%", ctx),
-		"AGE",
+		m.styles.headerCell.Render(fitCell("STATE", status)),
+		m.styles.headerCell.Render(fitCell("TOOL", tool)),
+		m.styles.headerCell.Render(fitCell("TARGET", target)),
+		m.styles.headerCell.Render(fitCell("SESSION", session)),
+		m.styles.headerCell.Render(fitCell("WINDOW", window)),
+		m.styles.headerCell.Render(fitCell("REPO", repo)),
+		m.styles.headerCell.Render(fitCell("TOKENS", tokens)),
+		m.styles.headerCell.Render(fitCell("CTX%", ctx)),
+		m.styles.headerCell.Render("AGE"),
 	)
 }
 
-func renderTableRow(row board.Row, selected bool, width int) string {
+func (m BoardModel) renderTableRow(row board.Row, selected bool, width int) string {
 	status, tool, target, session, window, repo, tokens, ctx := boardLayoutWidths(width)
 	marker := " "
 	if selected {
-		marker = ">"
+		marker = "▌"
 	}
-	return marker + " " + joinColumns(
-		fitCell(string(row.Status), status),
-		fitCell(row.Tool, tool),
-		fitCell(row.TargetPane(), target),
-		fitCell(row.SessionName, session),
-		fitCell(row.WindowName, window),
-		fitCell(row.Repo, repo),
-		fitCell(optionalInt(row.TokensUsed), tokens),
-		fitCell(optionalPercent(row.ContextLeftPct), ctx),
-		prettyAge(row.WindowActivity),
+	line := marker + " " + joinColumns(
+		m.renderStatusCell(row.Status, status),
+		m.styles.value.Render(fitCell(row.Tool, tool)),
+		m.styles.value.Render(fitCell(row.TargetPane(), target)),
+		m.styles.value.Render(fitCell(row.SessionName, session)),
+		m.styles.value.Render(fitCell(row.WindowName, window)),
+		m.styles.value.Render(fitCell(row.Repo, repo)),
+		m.renderTokensCell(row.TokensUsed, tokens),
+		m.renderContextCell(row.ContextLeftPct, ctx),
+		m.styles.value.Render(prettyAge(row.WindowActivity)),
 	)
+	if selected {
+		return m.styles.selectedRow.Render(line)
+	}
+	return line
 }
 
 func (m BoardModel) renderPreview(width, height int) []string {
 	lines := make([]string, 0, height)
 	if !m.rowsLoaded {
-		return padLines([]string{"loading preview..."}, height)
+		return padLines([]string{m.styles.info.Render("loading preview...")}, height)
 	}
 	if m.selectedPaneID == "" {
-		return padLines([]string{"(no preview)"}, height)
+		return padLines([]string{m.styles.info.Render("(no preview)")}, height)
 	}
 	if m.preview.PaneID == "" || m.preview.PaneID != m.selectedPaneID {
-		return padLines([]string{fmt.Sprintf("loading preview for %s", m.selectedPaneID)}, height)
+		return padLines([]string{m.styles.info.Render(fmt.Sprintf("loading preview for %s", m.selectedPaneID))}, height)
 	}
-	lines = append(lines, fitLine(fmt.Sprintf("status: %s  tool: %s  target: %s:%s.%s", m.preview.Status, m.preview.Tool, m.preview.SessionName, m.preview.WindowIndex, m.preview.PaneIndex), width))
-	lines = append(lines, fitLine(fmt.Sprintf("window: %s  cmd: %s  title: %s", m.preview.WindowName, m.preview.Command, m.preview.Title), width))
-	lines = append(lines, fitLine(fmt.Sprintf("path: %s", m.preview.Path), width))
-	lines = append(lines, fitLine(strings.Repeat("─", width), width))
+	lines = append(lines, fitLine(m.previewLine("status", string(m.preview.Status), "tool", m.preview.Tool, "target", fmt.Sprintf("%s:%s.%s", m.preview.SessionName, m.preview.WindowIndex, m.preview.PaneIndex)), width))
+	lines = append(lines, fitLine(m.previewLine("window", m.preview.WindowName, "cmd", m.preview.Command, "title", m.preview.Title), width))
+	lines = append(lines, fitLine(m.styles.label.Render("path:")+" "+m.styles.accentValue.Render(m.preview.Path), width))
+	lines = append(lines, fitLine(m.styles.borderStrong.Render(strings.Repeat("─", width)), width))
 	bodyLines := strings.Split(m.preview.Body, "\n")
 	remaining := max(0, height-len(lines))
 	for _, line := range bodyLines {
 		if remaining == 0 {
 			break
 		}
-		lines = append(lines, fitLine(line, width))
+		lines = append(lines, fitLine(m.renderPreviewBodyLine(line), width))
 		remaining--
 	}
 	return padLines(lines, height)
@@ -552,11 +559,83 @@ func fitCell(text string, width int) string {
 }
 
 func fitLine(text string, width int) string {
-	return fitCell(text, width)
+	if width <= 0 {
+		return text
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Width(width).Render(text)
 }
 
 func joinColumns(parts ...string) string {
 	return strings.Join(parts, " │ ")
+}
+
+func (m BoardModel) renderStatusCell(st state.Status, width int) string {
+	style, ok := m.styles.statusByValue[st]
+	if !ok {
+		style = m.styles.value
+	}
+	return style.Render(fitCell(string(st), width))
+}
+
+func (m BoardModel) renderTokensCell(tokensUsed *int, width int) string {
+	text := fitCell(optionalInt(tokensUsed), width)
+	if tokensUsed == nil {
+		return m.styles.info.Render(text)
+	}
+	if *tokensUsed >= 100000 {
+		return m.styles.statusByValue[state.StatusWait].Render(text)
+	}
+	return m.styles.value.Render(text)
+}
+
+func (m BoardModel) renderContextCell(contextLeftPct *int, width int) string {
+	text := fitCell(optionalPercent(contextLeftPct), width)
+	if contextLeftPct == nil {
+		return m.styles.info.Render(text)
+	}
+	switch {
+	case *contextLeftPct >= 60:
+		return m.styles.statusByValue[state.StatusRun].Render(text)
+	case *contextLeftPct >= 30:
+		return m.styles.statusByValue[state.StatusWait].Render(text)
+	default:
+		return m.styles.statusByValue[state.StatusError].Render(text)
+	}
+}
+
+func (m BoardModel) previewLine(k1, v1, k2, v2, k3, v3 string) string {
+	return strings.Join([]string{
+		m.styles.label.Render(k1 + ":"),
+		m.styles.value.Render(v1),
+		m.styles.label.Render(k2 + ":"),
+		m.styles.mutedValue.Render(v2),
+		m.styles.label.Render(k3 + ":"),
+		m.styles.accentValue.Render(v3),
+	}, "  ")
+}
+
+func (m BoardModel) renderPreviewBodyLine(line string) string {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	switch {
+	case lower == "":
+		return ""
+	case strings.HasPrefix(lower, "diff --git"), strings.HasPrefix(lower, "@@ "), strings.HasPrefix(lower, "+++ "), strings.HasPrefix(lower, "--- "):
+		return m.styles.previewHeading.Render(line)
+	case strings.HasPrefix(lower, "#"):
+		return m.styles.previewHeading.Render(line)
+	case strings.HasPrefix(lower, ">"):
+		return m.styles.previewQuote.Render(line)
+	case strings.HasPrefix(lower, "- "), strings.HasPrefix(lower, "* "), strings.HasPrefix(lower, "+ "):
+		return m.styles.previewList.Render(line)
+	case strings.HasPrefix(lower, "• "), strings.HasPrefix(lower, "› "), strings.HasPrefix(lower, "$ "):
+		return m.styles.previewShell.Render(line)
+	case strings.Contains(lower, "warning"):
+		return m.styles.previewWarning.Render(line)
+	case strings.Contains(lower, "error"):
+		return m.styles.previewError.Render(line)
+	default:
+		return m.styles.previewCode.Render(line)
+	}
 }
 
 func padLines(lines []string, height int) []string {

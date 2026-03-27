@@ -124,6 +124,25 @@ exit 0
 	}
 }
 
+func TestGlobalOption(t *testing.T) {
+	bin, _ := fakeTmux(t, `#!/bin/sh
+if [ "$1" = "show-options" ]; then
+  printf "%s\n" "dracula"
+  exit 0
+fi
+exit 0
+`)
+	c := New(bin)
+
+	got, err := c.GlobalOption(context.Background(), "@panefleet-theme")
+	if err != nil {
+		t.Fatalf("GlobalOption: %v", err)
+	}
+	if got != "dracula" {
+		t.Fatalf("GlobalOption = %q, want dracula", got)
+	}
+}
+
 func TestInvalidPaneID(t *testing.T) {
 	c := New("tmux")
 	if err := c.KillPane(context.Background(), ""); err == nil {

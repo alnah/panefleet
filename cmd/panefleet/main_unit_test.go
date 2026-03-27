@@ -521,6 +521,29 @@ func TestParseOptionalRFC3339TimeAndRunVerbose(t *testing.T) {
 	}
 }
 
+func TestResolveBoardTheme(t *testing.T) {
+	t.Setenv("PANEFLEET_THEME", "rose-pine")
+	if got := resolveBoardTheme(context.Background(), nil); got != "rose-pine" {
+		t.Fatalf("resolveBoardTheme env = %q, want rose-pine", got)
+	}
+
+	t.Setenv("PANEFLEET_THEME", "")
+	fakeTMUX := filepath.Join(t.TempDir(), "tmux-theme")
+	if err := os.WriteFile(fakeTMUX, []byte(`#!/bin/sh
+if [ "$1" = "show-options" ]; then
+  printf "%s\n" "dracula"
+  exit 0
+fi
+exit 0
+`), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	tmux := tmuxctl.New(fakeTMUX)
+	if got := resolveBoardTheme(context.Background(), tmux); got != "dracula" {
+		t.Fatalf("resolveBoardTheme tmux = %q, want dracula", got)
+	}
+}
+
 func TestNewServiceCreatesSecureDBPath(t *testing.T) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "state", "panefleet.db")

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -429,34 +430,51 @@ func (s *Service) captureStatus(ctx context.Context, pane tmuxctl.BoardPane, now
 	if capture == "" {
 		return "", false
 	}
+	recent := tailLines(capture, 20)
+	focus := tailLines(recent, 12)
 	switch tool {
 	case "codex":
-		if captureContains(capture, "Enter to confirm", "approval required", "waiting on approval", "select model", "choose model", "/permissions", "/models") {
+		if captureContains(recent, "Enter to confirm", "Esc to cancel", "waiting on approval", "approval required", "select model", "choose model", "model to change", "permission mode", "approval mode", "/permissions", "/models") {
 			return state.StatusWait, true
 		}
-		if captureContains(capture, "OpenAI Codex", "gpt-5.", "tokens", "ctx") {
+		if captureContains(recent, "permission denied", "access denied", "fatal:", "traceback", "exception", "command failed", "request failed") {
+			return state.StatusError, true
+		}
+		if captureContains(recent, "working (", "esc to interrupt", "background terminal running", "background terminals running") {
 			return state.StatusRun, true
 		}
+		if matchAnyLine(recent, `^\s*›\s`) {
+			return effectiveStatus(state.StatusDone, pane.WindowActivity, now), true
+		}
+		return state.StatusIdle, true
 	case "claude":
-		if captureContains(capture, "Enter to confirm", "approval required", "waiting on approval", "choose an option", "/permissions", "Allow Ask Deny") {
+		if captureContains(focus, "Enter to confirm", "Esc to cancel", "Do you want to", "approval required", "waiting on approval", "choose an option", "select an option", "Yes, proceed", "No, cancel", "/permissions", "Allow Ask Deny", "Press", "allow all edits", "allow once", "deny once", "deny all") {
 			return state.StatusWait, true
 		}
-		if captureContains(capture, "⏺ ", "Bash(", "Read(", "Write(", "Edit(", "MultiEdit(", "Glob(", "Grep(", "LS(", "Task(", "Running", "Processing") {
-			return state.StatusRun, true
+		if captureContains(focus, "permission denied", "access denied", "fatal:", "traceback", "exception", "command failed", "tool failed") {
+			return state.StatusError, true
 		}
-		if strings.Contains(capture, "\n❯\n") || strings.HasSuffix(capture, "\n❯") || strings.HasSuffix(capture, "❯") {
+		if matchAnyLine(focus, `^\s*❯\s*$`) {
 			return effectiveStatus(state.StatusDone, pane.WindowActivity, now), true
 		}
+		if captureContains(focus, "⏺ ", "Bash(", "Read(", "Write(", "Edit(", "MultiEdit(", "Glob(", "Grep(", "LS(", "Task(", "Running", "Processing") {
+			return state.StatusRun, true
+		}
+		return state.StatusIdle, true
 	case "opencode":
-		if captureContains(capture, "Enter to confirm", "approval", "permission", "confirm", "cancel", "select model", "select variant") {
+		if captureContains(focus, "Enter to confirm", "Esc to cancel", "approval", "permission", "confirm", "cancel", "select model", "select variant") {
 			return state.StatusWait, true
 		}
-		if captureContains(capture, "Thinking:", "Preparing patch", "Applying patch", "Running", "Generating", "Writing", "Tool execution") {
-			return state.StatusRun, true
-		}
-		if captureContains(capture, "Ask anything...", "ctrl+p commands", "tab agents") {
+		if captureContains(focus, "Ask anything...", "ctrl+p commands", "tab agents") && !captureContains(focus, "Thinking:", "Preparing patch", "Applying patch", "Running", "Generating", "Writing", "Tool execution", "esc interrupt") {
 			return effectiveStatus(state.StatusDone, pane.WindowActivity, now), true
 		}
+		if captureContains(focus, "permission denied", "access denied", "fatal:", "traceback", "exception", "command failed", "request failed") {
+			return state.StatusError, true
+		}
+		if captureContains(recent, "Thinking:", "Preparing patch", "Applying patch", "Running", "Generating", "Writing", "Tool execution", "esc interrupt") {
+			return state.StatusRun, true
+		}
+		return state.StatusIdle, true
 	}
 	return "", false
 }
@@ -465,6 +483,27 @@ func captureContains(capture string, needles ...string) bool {
 	lower := strings.ToLower(capture)
 	for _, needle := range needles {
 		if strings.Contains(lower, strings.ToLower(needle)) {
+			return true
+		}
+	}
+	return false
+}
+
+func tailLines(input string, maxLines int) string {
+	if maxLines <= 0 {
+		return input
+	}
+	lines := strings.Split(strings.ReplaceAll(input, "\r\n", "\n"), "\n")
+	if len(lines) <= maxLines {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[len(lines)-maxLines:], "\n")
+}
+
+func matchAnyLine(input, pattern string) bool {
+	re := regexp.MustCompile(pattern)
+	for _, line := range strings.Split(input, "\n") {
+		if re.MatchString(line) {
 			return true
 		}
 	}

@@ -367,6 +367,61 @@ func TestRowsUseCaptureHeuristicWhenNoBetterStatusExists(t *testing.T) {
 	}
 }
 
+func TestRowsUseCodexDoneAndClaudeErrorHeuristics(t *testing.T) {
+	now := time.Now().UTC()
+	svc := NewService(
+		&fakeStateSource{},
+		&fakeTMUX{
+			snapshot: []tmuxctl.BoardPane{
+				{
+					PaneID:         "%1",
+					SessionName:    "work",
+					WindowIndex:    "1",
+					WindowName:     "codex",
+					PaneIndex:      "0",
+					Command:        "codex-aarch64-a",
+					Title:          "cdx",
+					WindowActivity: now,
+				},
+				{
+					PaneID:         "%2",
+					SessionName:    "work",
+					WindowIndex:    "2",
+					WindowName:     "claude",
+					PaneIndex:      "0",
+					Command:        "claude",
+					Title:          "claude",
+					WindowActivity: now,
+				},
+			},
+			captures: map[string]string{
+				"%1": "some output\n› continue",
+				"%2": "tool failed while applying patch",
+			},
+		},
+		"",
+	)
+
+	rows, err := svc.Rows(context.Background())
+	if err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows len = %d, want 2", len(rows))
+	}
+
+	statuses := map[string]state.Status{}
+	for _, row := range rows {
+		statuses[row.PaneID] = row.Status
+	}
+	if statuses["%1"] != state.StatusDone {
+		t.Fatalf("codex status = %s, want DONE", statuses["%1"])
+	}
+	if statuses["%2"] != state.StatusError {
+		t.Fatalf("claude status = %s, want ERROR", statuses["%2"])
+	}
+}
+
 func TestRowsRepoNameHandlesTrailingSlash(t *testing.T) {
 	svc := NewService(
 		&fakeStateSource{},

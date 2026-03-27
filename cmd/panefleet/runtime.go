@@ -49,7 +49,7 @@ func cmdTUI(svc *panes.Service, args []string) error {
 		fmt.Fprintf(os.Stderr, "panefleet: initial tmux sync failed: %v\n", err)
 	}
 	boardRuntime := board.NewService(svc, tmux, os.Getenv("TMUX_PANE"))
-	m := tui.NewBoard(boardRuntime, *refresh)
+	m := tui.NewBoard(boardRuntime, *refresh, resolveBoardTheme(context.Background(), tmux))
 	p := newTeaProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
@@ -139,7 +139,7 @@ func cmdRun(ctx context.Context, svc *panes.Service, args []string) error {
 	}()
 
 	boardRuntime := board.NewService(svc, tmux, os.Getenv("TMUX_PANE"))
-	model := tui.NewBoard(boardRuntime, *refresh)
+	model := tui.NewBoard(boardRuntime, *refresh, resolveBoardTheme(ctx, tmux))
 	program := newTeaProgram(model, tea.WithAltScreen())
 	_, err = program.Run()
 	stop()
@@ -174,6 +174,20 @@ func requireTMUXSession() error {
 		return errors.New("panefleet must run inside tmux")
 	}
 	return nil
+}
+
+func resolveBoardTheme(ctx context.Context, tmux *tmuxctl.ExecClient) string {
+	if theme := strings.TrimSpace(os.Getenv("PANEFLEET_THEME")); theme != "" {
+		return theme
+	}
+	if tmux == nil {
+		return ""
+	}
+	theme, err := tmux.GlobalOption(ctx, "@panefleet-theme")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(theme)
 }
 
 type runtimeAPI struct {
