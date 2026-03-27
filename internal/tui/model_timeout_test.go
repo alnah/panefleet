@@ -77,6 +77,9 @@ func TestModelSkipsOverlappingRefreshAndActions(t *testing.T) {
 	if !m.fetching {
 		t.Fatalf("fetching flag should remain set")
 	}
+	if !m.refreshQueued {
+		t.Fatalf("manual refresh should queue a follow-up fetch")
+	}
 
 	m.states = []state.PaneState{{PaneID: "%1", Status: state.StatusRun}}
 	m.acting = true
@@ -87,5 +90,32 @@ func TestModelSkipsOverlappingRefreshAndActions(t *testing.T) {
 	}
 	if !m.acting {
 		t.Fatalf("acting flag should remain set")
+	}
+}
+
+func TestModelQueuesRefreshWhenActionFinishesDuringFetch(t *testing.T) {
+	m := New(&fakeReader{}, time.Millisecond, nil)
+	m.fetching = true
+	m.acting = true
+
+	updated, cmd := m.Update(actionMsg{err: nil})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("action completion should not start a second fetch immediately while one is in flight")
+	}
+	if !m.refreshQueued {
+		t.Fatalf("action completion should queue a refresh")
+	}
+
+	updated, cmd = m.Update(statesMsg{states: []state.PaneState{{PaneID: "%1", Status: state.StatusRun}}})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("queued refresh should trigger once the in-flight fetch finishes")
+	}
+	if !m.fetching {
+		t.Fatalf("model should mark fetch as in-flight again")
+	}
+	if m.refreshQueued {
+		t.Fatalf("queued refresh should be consumed")
 	}
 }

@@ -43,6 +43,7 @@ type Model struct {
 	lastRefresh time.Time
 	fetching    bool
 	acting      bool
+	refreshQueued bool
 	err         error
 }
 
@@ -93,6 +94,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.fetching = true
 					return m, m.fetchCmd()
 				}
+				m.refreshQueued = true
 			case "s":
 				if st, ok := m.selectedState(); ok && !m.acting {
 					m.acting = true
@@ -116,9 +118,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.states = msg.states
 			if m.selected >= len(m.states) && len(m.states) > 0 {
 				m.selected = len(m.states) - 1
+				}
+				m.lastRefresh = time.Now().UTC()
 			}
-			m.lastRefresh = time.Now().UTC()
-		}
+			if m.refreshQueued {
+				m.refreshQueued = false
+				m.fetching = true
+				return m, m.fetchCmd()
+			}
 		case tickMsg:
 			if m.fetching {
 				return m, tickCmd(m.interval)
@@ -127,6 +134,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(m.fetchCmd(), tickCmd(m.interval))
 		case stateUpdatedMsg:
 			if m.fetching {
+				m.refreshQueued = true
 				if m.updates != nil {
 					return m, waitForUpdateCmd(m.updates)
 				}
@@ -141,6 +149,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.acting = false
 			m.err = msg.err
 			if m.fetching {
+				m.refreshQueued = true
 				return m, nil
 			}
 			m.fetching = true
