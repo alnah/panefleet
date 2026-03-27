@@ -88,6 +88,8 @@ type Service struct {
 	tmux          TMUX
 	currentPaneID string
 	codexMetrics  *codexMetricsResolver
+	claudeMetrics *claudeMetricsResolver
+	openMetrics   *openCodeMetricsResolver
 	now           func() time.Time
 }
 
@@ -102,6 +104,8 @@ func NewService(states StateSource, tmux TMUX, currentPaneID string) *Service {
 		tmux:          tmux,
 		currentPaneID: strings.TrimSpace(currentPaneID),
 		codexMetrics:  newCodexMetricsResolver(),
+		claudeMetrics: newClaudeMetricsResolver(),
+		openMetrics:   newOpenCodeMetricsResolver(),
 		now:           func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -183,11 +187,34 @@ func (s *Service) Rows(ctx context.Context) ([]Row, error) {
 func (s *Service) resolveRowMetrics(ctx context.Context, pane tmuxctl.BoardPane, tool string) (*int, *int) {
 	tokensUsed := pane.TokensUsed
 	contextLeftPct := pane.ContextLeftPct
-	if tool != "codex" || s.codexMetrics == nil || (tokensUsed != nil && contextLeftPct != nil) {
+	if tokensUsed != nil && contextLeftPct != nil {
 		return tokensUsed, contextLeftPct
 	}
 
-	metrics, ok, err := s.codexMetrics.resolve(ctx, pane)
+	var (
+		metrics codexMetrics
+		ok      bool
+		err     error
+	)
+	switch tool {
+	case "codex":
+		if s.codexMetrics == nil {
+			return tokensUsed, contextLeftPct
+		}
+		metrics, ok, err = s.codexMetrics.resolve(ctx, pane)
+	case "claude":
+		if s.claudeMetrics == nil {
+			return tokensUsed, contextLeftPct
+		}
+		metrics, ok, err = s.claudeMetrics.resolve(ctx, pane)
+	case "opencode":
+		if s.openMetrics == nil {
+			return tokensUsed, contextLeftPct
+		}
+		metrics, ok, err = s.openMetrics.resolve(ctx, pane)
+	default:
+		return tokensUsed, contextLeftPct
+	}
 	if err != nil || !ok {
 		return tokensUsed, contextLeftPct
 	}

@@ -665,10 +665,10 @@ EOF
 
   expected_log_dir="${TEST_TMPDIR}/xdg-state/panefleet/events"
   repo_root="$(cd -- "${REPO_ROOT}" && pwd)"
-  expected_panefleet_bin="${repo_root}/bin/panefleet"
+  expected_panefleet_bin="${repo_root}/scripts/panefleet-go"
   XDG_STATE_HOME="${TEST_TMPDIR}/xdg-state" PANEFLEET_AGENT_BRIDGE_BIN="$fake_bridge" "${REPO_ROOT}/scripts/claude-code-hook" >/dev/null
   [[ "$(cat "$env_log")" == "$expected_log_dir" ]] || fail "wrapper should default PANEFLEET_EVENT_LOG_DIR from XDG_STATE_HOME"
-  [[ "$(cat "$env_bin_log")" == "$expected_panefleet_bin" ]] || fail "wrapper should export PANEFLEET_INGEST_BIN pointing to the panefleet CLI"
+  [[ "$(cat "$env_bin_log")" == "$expected_panefleet_bin" ]] || fail "wrapper should export PANEFLEET_INGEST_BIN pointing to panefleet-go"
   pass "wrapper event logs honor XDG_STATE_HOME"
 }
 

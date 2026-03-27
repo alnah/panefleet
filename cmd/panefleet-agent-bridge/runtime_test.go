@@ -170,6 +170,82 @@ exit 0
 	}
 }
 
+func TestRunClaudeHookSetsTranscriptMetrics(t *testing.T) {
+	bin, logPath := fakePanefleetBin(t, `#!/bin/sh
+echo "$@" >> "__LOG_PATH__"
+exit 0
+`)
+	transcript := filepath.Join(t.TempDir(), "claude.jsonl")
+	rawTranscript := strings.Join([]string{
+		`{"type":"user","message":{"role":"user","content":"hello"}}`,
+		`{"type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4-6","usage":{"input_tokens":3,"cache_creation_input_tokens":18896,"cache_read_input_tokens":0,"output_tokens":659}}}`,
+	}, "\n")
+	if err := os.WriteFile(transcript, []byte(rawTranscript), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	t.Setenv("PANEFLEET_BIN", bin)
+	t.Setenv("PANEFLEET_EVENT_LOG_DIR", t.TempDir())
+	t.Setenv("PANEFLEET_PANE", "%11")
+
+	withStdinText(t, `{"hook_event_name":"Stop","transcript_path":"`+transcript+`"}`, func() {
+		if err := runClaudeHook(context.Background(), nil); err != nil {
+			t.Fatalf("runClaudeHook: %v", err)
+		}
+	})
+
+	log := readLog(t, logPath)
+	if !strings.Contains(log, "ingest --pane %11 --source claude-hook --kind exit --exit-code 0") {
+		t.Fatalf("claude hook ingest not logged: %s", log)
+	}
+	if !strings.Contains(log, "metrics-set --pane %11 --tokens-used 19558 --context-window 200000 --context-left-pct 90") {
+		t.Fatalf("claude hook metrics not logged: %s", log)
+	}
+}
+
+func TestRunOpenCodeEventSetsUsageMetricsWithoutMappedState(t *testing.T) {
+	bin, logPath := fakePanefleetBin(t, `#!/bin/sh
+echo "$@" >> "__LOG_PATH__"
+exit 0
+`)
+	codexHome := t.TempDir()
+	modelsCache := codexModelsCache{
+		Models: []codexModelInfo{
+			{
+				Slug:                          "gpt-5.4",
+				ContextWindow:                 272000,
+				EffectiveContextWindowPercent: 95,
+			},
+		},
+	}
+	rawModels, err := json.Marshal(modelsCache)
+	if err != nil {
+		t.Fatalf("marshal models cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "models_cache.json"), rawModels, 0o600); err != nil {
+		t.Fatalf("write models cache: %v", err)
+	}
+
+	t.Setenv("PANEFLEET_BIN", bin)
+	t.Setenv("PANEFLEET_EVENT_LOG_DIR", t.TempDir())
+	t.Setenv("PANEFLEET_PANE", "%12")
+	t.Setenv("CODEX_HOME", codexHome)
+
+	withStdinText(t, `{"event":{"type":"message.updated","properties":{"info":{"modelID":"gpt-5.4","tokens":{"total":15608}}}}}`, func() {
+		if err := runOpenCodeEvent(context.Background(), nil); err != nil {
+			t.Fatalf("runOpenCodeEvent: %v", err)
+		}
+	})
+
+	log := readLog(t, logPath)
+	if !strings.Contains(log, "metrics-set --pane %12 --tokens-used 15608 --context-window 258400 --context-left-pct 94") {
+		t.Fatalf("opencode metrics not logged: %s", log)
+	}
+	if strings.Contains(log, "ingest --pane %12") {
+		t.Fatalf("unexpected ingest for unmapped opencode event: %s", log)
+	}
+}
+
 func TestRunCodexNotifySetsThreadMetricsFromCodexState(t *testing.T) {
 	bin, logPath := fakePanefleetBin(t, `#!/bin/sh
 echo "$@" >> "__LOG_PATH__"

@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -134,5 +137,76 @@ exit 0
 
 	if log := readLog(t, logPath); !strings.Contains(log, "metrics-set --pane %7 --tokens-used 321 --context-window 1000 --context-left-pct 68") {
 		t.Fatalf("expected metrics-set invocation, got %q", log)
+	}
+}
+
+func TestLookupClaudeTranscriptMetrics(t *testing.T) {
+	transcript := filepath.Join(t.TempDir(), "claude.jsonl")
+	raw := strings.Join([]string{
+		`{"type":"user","message":{"role":"user","content":"hello"}}`,
+		`{"type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4-6","usage":{"input_tokens":3,"cache_creation_input_tokens":18896,"cache_read_input_tokens":0,"output_tokens":659}}}`,
+	}, "\n")
+	if err := os.WriteFile(transcript, []byte(raw), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	metrics, ok, err := lookupClaudeTranscriptMetrics(map[string]any{
+		"transcript_path": transcript,
+	})
+	if err != nil {
+		t.Fatalf("lookupClaudeTranscriptMetrics: %v", err)
+	}
+	if !ok {
+		t.Fatalf("lookupClaudeTranscriptMetrics should return metrics")
+	}
+	if !metrics.hasTokens || metrics.tokensUsed != 19558 {
+		t.Fatalf("tokens = %d hasTokens=%v, want 19558/true", metrics.tokensUsed, metrics.hasTokens)
+	}
+	if !metrics.hasContextWindowInfo || metrics.contextWindow != 200000 || metrics.contextLeftPercent != 90 {
+		t.Fatalf("context = (%d, %d, %v), want (200000, 90, true)", metrics.contextWindow, metrics.contextLeftPercent, metrics.hasContextWindowInfo)
+	}
+}
+
+func TestOpenCodeUsageMetrics(t *testing.T) {
+	codexHome := t.TempDir()
+	models := codexModelsCache{
+		Models: []codexModelInfo{
+			{
+				Slug:                          "gpt-5.4",
+				ContextWindow:                 272000,
+				EffectiveContextWindowPercent: 95,
+			},
+		},
+	}
+	raw, err := json.Marshal(models)
+	if err != nil {
+		t.Fatalf("marshal models cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "models_cache.json"), raw, 0o600); err != nil {
+		t.Fatalf("write models cache: %v", err)
+	}
+	t.Setenv("CODEX_HOME", codexHome)
+
+	metrics, ok := openCodeUsageMetrics(map[string]any{
+		"event": map[string]any{
+			"type": "message.updated",
+			"properties": map[string]any{
+				"info": map[string]any{
+					"modelID": "gpt-5.4",
+					"tokens": map[string]any{
+						"total": float64(15608),
+					},
+				},
+			},
+		},
+	})
+	if !ok {
+		t.Fatalf("openCodeUsageMetrics should return metrics")
+	}
+	if !metrics.hasTokens || metrics.tokensUsed != 15608 {
+		t.Fatalf("tokens = %d hasTokens=%v, want 15608/true", metrics.tokensUsed, metrics.hasTokens)
+	}
+	if !metrics.hasContextWindowInfo || metrics.contextWindow != 258400 || metrics.contextLeftPercent != 94 {
+		t.Fatalf("context = (%d, %d, %v), want (258400, 94, true)", metrics.contextWindow, metrics.contextLeftPercent, metrics.hasContextWindowInfo)
 	}
 }

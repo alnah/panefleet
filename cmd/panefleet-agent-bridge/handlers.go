@@ -41,7 +41,13 @@ func runClaudeHook(ctx context.Context, args []string) error {
 		logDecision("claude-hook", pane, eventID, "ignored", "", "unmapped hook event", "")
 		return nil
 	}
-	return applyMappedState(ctx, pane, "claude-hook", eventID, state, reason)
+	if err := applyMappedState(ctx, pane, "claude-hook", eventID, state, reason); err != nil {
+		return err
+	}
+	if state == statusDone {
+		return applyClaudeTranscriptMetrics(ctx, pane, "claude-hook", eventID, payload)
+	}
+	return nil
 }
 
 // runCodexNotify handles one-shot Codex notifications that represent completion.
@@ -149,6 +155,9 @@ func runOpenCodeEvent(ctx context.Context, args []string) error {
 	}
 
 	state := mapOpenCodeEvent(payload, strings.ToLower(string(raw)))
+	if err := applyOpenCodeUsageMetrics(ctx, pane, "opencode-event", eventID, payload); err != nil {
+		return err
+	}
 	if state == "" {
 		logDecision("opencode-event", pane, eventID, "ignored", "", "event payload unmapped", "")
 		return nil
