@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/alnah/panefleet/internal/app"
 	"github.com/alnah/panefleet/internal/state"
 	"github.com/alnah/panefleet/internal/store"
+	"github.com/alnah/panefleet/internal/tmuxsync"
 	"github.com/alnah/panefleet/internal/tui"
 )
 
@@ -43,6 +45,8 @@ func run(ctx context.Context, args []string) error {
 		return cmdStateShow(ctx, svc, args[1:])
 	case "state-list":
 		return cmdStateList(ctx, svc, args[1:])
+	case "sync-tmux":
+		return cmdSyncTmux(ctx, svc, args[1:])
 	case "tui":
 		return cmdTUI(svc, args[1:])
 	default:
@@ -175,6 +179,49 @@ func cmdTUI(svc *app.Service, args []string) error {
 	return err
 }
 
+func cmdSyncTmux(ctx context.Context, svc *app.Service, args []string) error {
+	fs := flag.NewFlagSet("sync-tmux", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	atRaw := fs.String("at", "", "RFC3339 timestamp (default: now)")
+	source := fs.String("source", "adapter:tmux-snapshot", "event source")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	at := time.Now().UTC()
+	if *atRaw != "" {
+		parsed, err := time.Parse(time.RFC3339, *atRaw)
+		if err != nil {
+			return fmt.Errorf("invalid --at: %w", err)
+		}
+		at = parsed
+	}
+
+	cmd := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F", tmuxsync.ListPanesFormat)
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("tmux list-panes failed: %w", err)
+	}
+	snapshot, err := tmuxsync.ParseListPanesOutput(string(out))
+	if err != nil {
+		return err
+	}
+	events := tmuxsync.EventsFromSnapshot(snapshot, at, *source)
+
+	applied := 0
+	for _, ev := range events {
+		if _, err := svc.Ingest(ctx, ev); err != nil {
+			return fmt.Errorf("ingest pane %s: %w", ev.PaneID, err)
+		}
+		applied++
+	}
+	return printJSON(map[string]any{
+		"applied": applied,
+		"source":  *source,
+		"at":      at,
+	})
+}
+
 func parseKind(raw string) (state.EventKind, error) {
 	switch raw {
 	case "start":
@@ -203,5 +250,5 @@ func printJSON(v any) error {
 }
 
 func usageError() error {
-	return errors.New("usage: panefleet <ingest|state-show|state-list|tui> [flags]")
+	return errors.New("usage: panefleet <ingest|state-show|state-list|sync-tmux|tui> [flags]")
 }
