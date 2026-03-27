@@ -28,6 +28,26 @@ func TestReducerApplyTimerAndMismatchBranches(t *testing.T) {
 	}
 }
 
+func TestReducerApplyEmptyStateDoesNotDependOnWallClock(t *testing.T) {
+	r := mustReducer(t)
+	base := time.Date(2000, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	next, err := r.Apply(PaneState{}, Event{
+		PaneID:     "%clock",
+		Kind:       EventPaneStarted,
+		OccurredAt: base,
+	})
+	if err != nil {
+		t.Fatalf("Apply on empty state should accept first event regardless of wall clock: %v", err)
+	}
+	if next.LastEventAt != base {
+		t.Fatalf("LastEventAt = %s, want %s", next.LastEventAt, base)
+	}
+	if next.LastTransitionAt != base {
+		t.Fatalf("LastTransitionAt = %s, want %s", next.LastTransitionAt, base)
+	}
+}
+
 func TestReducerApplyTimersAndHelpers(t *testing.T) {
 	r := mustReducer(t)
 	base := time.Date(2026, 3, 27, 13, 0, 0, 0, time.UTC)

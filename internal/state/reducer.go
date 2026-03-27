@@ -44,6 +44,8 @@ func (r *Reducer) Apply(current PaneState, ev Event) (PaneState, error) {
 	}
 	if current.PaneID == "" {
 		current = NewPaneState(ev.PaneID)
+		current.LastEventAt = ev.OccurredAt
+		current.LastTransitionAt = ev.OccurredAt
 	}
 	if current.PaneID != ev.PaneID {
 		return current, fmt.Errorf("pane mismatch: state=%s event=%s", current.PaneID, ev.PaneID)
