@@ -66,6 +66,9 @@ func TestReducerLifecycle(t *testing.T) {
 	if idleState.Status != StatusIdle {
 		t.Fatalf("want IDLE, got %s", idleState.Status)
 	}
+	if idleState.ReasonCode != "timer.done_to_idle" {
+		t.Fatalf("want timer.done_to_idle, got %s", idleState.ReasonCode)
+	}
 
 	staleState, err := r.Apply(idleState, Event{
 		PaneID:     paneID,
@@ -78,6 +81,9 @@ func TestReducerLifecycle(t *testing.T) {
 	}
 	if staleState.Status != StatusStale {
 		t.Fatalf("want STALE, got %s", staleState.Status)
+	}
+	if staleState.ReasonCode != "timer.idle_to_stale" {
+		t.Fatalf("want timer.idle_to_stale, got %s", staleState.ReasonCode)
 	}
 }
 
@@ -189,5 +195,38 @@ func TestReducerRejectsOutOfOrderEvent(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected out-of-order error")
+	}
+}
+
+func TestReducerClearOverrideKeepsTimerReason(t *testing.T) {
+	r := mustReducer(t)
+	base := time.Date(2026, 3, 27, 15, 0, 0, 0, time.UTC)
+	override := StatusStale
+	st := PaneState{
+		PaneID:           "%5",
+		Status:           StatusDone,
+		StatusSource:     "adapter:tmux",
+		ReasonCode:       "pane.exited",
+		Version:          3,
+		LastEventAt:      base,
+		LastTransitionAt: base.Add(-11 * time.Minute),
+		ManualOverride:   &override,
+	}
+
+	cleared, err := r.Apply(st, Event{
+		PaneID:     "%5",
+		Kind:       EventOverrideCleared,
+		OccurredAt: base,
+		Source:     "manual",
+		ReasonCode: "override.cleared",
+	})
+	if err != nil {
+		t.Fatalf("clear override: %v", err)
+	}
+	if cleared.Status != StatusIdle {
+		t.Fatalf("want IDLE, got %s", cleared.Status)
+	}
+	if cleared.ReasonCode != "timer.done_to_idle" {
+		t.Fatalf("want timer.done_to_idle, got %s", cleared.ReasonCode)
 	}
 }

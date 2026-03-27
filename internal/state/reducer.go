@@ -112,11 +112,11 @@ func (r *Reducer) applyTimers(state PaneState, now time.Time, source, reason str
 	switch state.Status {
 	case StatusDone:
 		if delta >= r.cfg.DoneRecentWindow {
-			state = r.setStatus(state, StatusIdle, source, reasonIfEmpty(reason, "timer.done_to_idle"), now)
+			state = r.setStatus(state, StatusIdle, source, "timer.done_to_idle", now)
 		}
 	case StatusIdle:
 		if delta >= r.cfg.StaleWindow {
-			state = r.setStatus(state, StatusStale, source, reasonIfEmpty(reason, "timer.idle_to_stale"), now)
+			state = r.setStatus(state, StatusStale, source, "timer.idle_to_stale", now)
 		}
 	}
 	return state, nil
