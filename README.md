@@ -71,6 +71,7 @@ Install output contract:
 - Pane states for Codex, Claude Code, OpenCode, and shell panes
 - State inspection with `state-show`, `state-list`, and `doctor --verbose`
 - Theme palettes with truecolor, 256-color, and ANSI fallback
+- Experimental Go runtime (`cmd/panefleet`) with deterministic reducer + SQLite store + Bubble Tea TUI
 
 ## Usage
 
@@ -249,6 +250,24 @@ make bridge
 make bridge-download
 make release-check
 ```
+
+## Experimental Go Runtime (WIP)
+
+The repo now includes a Go-first runtime skeleton in `cmd/panefleet`:
+
+```bash
+go run ./cmd/panefleet ingest --pane %1 --kind start
+go run ./cmd/panefleet state-show --pane %1
+go run ./cmd/panefleet state-list
+go run ./cmd/panefleet sync-tmux
+go run ./cmd/panefleet tui
+```
+
+Notes:
+
+- this is an implementation path toward strict no-heuristic state handling
+- the legacy shell runtime (`bin/panefleet`) is still present during migration
+- module currently targets `go 1.24.x`
 
 Release readiness checklist (maintainers):
 
