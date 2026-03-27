@@ -265,7 +265,7 @@ go run ./cmd/panefleet sync-tmux
 go run ./cmd/panefleet pane-kill --pane %1
 go run ./cmd/panefleet pane-respawn --pane %1
 go run ./cmd/panefleet tui
-go run ./cmd/panefleet run
+go run ./cmd/panefleet run --sync-every 1200ms --control-mode=true
 ```
 
 Notes:
@@ -277,12 +277,19 @@ Notes:
 `run` mode behavior:
 
 - runs periodic tmux snapshot sync (`list-panes`) and ingests deterministic events
+- listens to tmux control-mode events as immediate sync triggers
 - opens Bubble Tea UI with live updates from service subscriptions
 - supports actions in TUI:
   - `j/k` or arrows: selection
   - `s`: toggle manual `STALE` override
   - `x`: respawn selected pane
   - `d`: kill selected pane
+
+Go runtime test coverage:
+
+- reducer/store/service unit tests
+- tmux parser/client tests
+- CLI E2E tests on fake tmux (`cmd/panefleet/e2e_test.go`)
 
 Release readiness checklist (maintainers):
 
