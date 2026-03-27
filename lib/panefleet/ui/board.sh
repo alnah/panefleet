@@ -144,6 +144,106 @@ board_padding_spec() {
   printf '%s' "${PANEFLEET_BOARD_PADDING:-0,1,0,1}"
 }
 
+board_cache_dir_path() {
+  printf '%s/panefleet/board-cache' "$(user_state_home)"
+}
+
+board_cache_file_path() {
+  local board_token="${1:?board token is required}"
+
+  printf '%s/rows-%s.tsv' "$(board_cache_dir_path)" "$board_token"
+}
+
+board_state_file_path() {
+  local board_token="${1:?board token is required}"
+
+  printf '%s/state-%s.txt' "$(board_cache_dir_path)" "$board_token"
+}
+
+board_socket_file_path() {
+  local board_token="${1:?board token is required}"
+
+  printf '%s/fzf-%s.sock' "$(board_cache_dir_path)" "$board_token"
+}
+
+board_ticker_interval_seconds() {
+  local poll_interval="${PANEFLEET_BOARD_TICK_INTERVAL_SECONDS:-1}"
+
+  if [[ "$poll_interval" =~ ^[0-9]+([.][0-9]+)?$ ]] && [[ ! "$poll_interval" =~ ^0([.]0+)?$ ]]; then
+    printf '%s' "$poll_interval"
+    return
+  fi
+
+  printf '1'
+}
+
+board_reload_command() {
+  local command
+
+  printf -v command 'PANEFLEET_LIST_MODE=deferred-refresh %q list-deferred' "$SELF"
+  printf '%s' "$command"
+}
+
+board_reload_action_payload() {
+  local command
+
+  command="$(board_reload_command)"
+  printf 'reload-sync(%s)' "$command"
+}
+
+post_board_action() {
+  local socket_file="${1:?socket file is required}"
+  local payload="${2:?payload is required}"
+
+  if ! command -v curl >/dev/null 2>&1; then
+    return 1
+  fi
+
+  curl -fsS --unix-socket "$socket_file" -X POST http://localhost/ --data-binary "$payload" >/dev/null
+}
+
+board_ticker_command() {
+  local board_token=""
+  local interval=""
+  local socket_file state_file payload
+
+  while (($# > 0)); do
+    case "$1" in
+    --token)
+      board_token="${2:-}"
+      shift 2
+      ;;
+    --interval)
+      interval="${2:-}"
+      shift 2
+      ;;
+    *)
+      printf 'unknown board-ticker option: %s\n' "$1" >&2
+      exit 1
+      ;;
+    esac
+  done
+
+  if [[ -z "$board_token" ]]; then
+    printf 'board-ticker requires --token\n' >&2
+    exit 1
+  fi
+  if [[ -z "$interval" ]]; then
+    interval="$(board_ticker_interval_seconds)"
+  fi
+
+  socket_file="$(board_socket_file_path "$board_token")"
+  state_file="$(board_state_file_path "$board_token")"
+  payload="$(board_reload_action_payload)"
+
+  while [[ -S "$socket_file" && -f "$state_file" ]]; do
+    sleep "$interval" || break
+    [[ -S "$socket_file" && -f "$state_file" ]] || break
+    "$SELF" queue-refresh --all >/dev/null 2>&1 || true
+    post_board_action "$socket_file" "$payload" || break
+  done
+}
+
 list_deferred_refresh_mode_enabled() {
   local mode
   mode="$(list_mode_value)"
@@ -565,15 +665,16 @@ open_board() {
   require_runtime_support
   resolve_theme
   local rc
-  local cache_dir cache_file state_file warm_cache_file board_token
-  local initial_generation repaint_command repaint_delay load_reload_action reload_event poll_interval
+  local cache_dir cache_file state_file warm_cache_file socket_file board_token
+  local initial_generation repaint_command repaint_delay load_reload_action reload_event poll_interval ticker_interval
   local -a fzf_args
 
-  cache_dir="$(user_state_home)/panefleet/board-cache"
+  cache_dir="$(board_cache_dir_path)"
   mkdir -p "$cache_dir" 2>/dev/null || true
   board_token="${$}-$(now_epoch)"
-  cache_file="${cache_dir}/rows-${board_token}.tsv"
-  state_file="${cache_dir}/state-${board_token}.txt"
+  cache_file="$(board_cache_file_path "$board_token")"
+  state_file="$(board_state_file_path "$board_token")"
+  socket_file="$(board_socket_file_path "$board_token")"
   warm_cache_file="${cache_dir}/rows-last.tsv"
   initial_generation="$(current_refresh_generation)"
   "$SELF" queue-refresh --all >/dev/null 2>&1 || true
@@ -602,6 +703,8 @@ open_board() {
     --ansi
     --color="$(fzf_color_spec)"
     --delimiter=$'\t'
+    --track
+    --id-nth=1
     --with-nth=6
     --header-lines=1
     --header-lines-border=line
@@ -629,6 +732,12 @@ open_board() {
     # Keep board data fresh even when the user does not interact.
     fzf_args+=(--bind "result:reload-sync(sleep \"${poll_interval}\"; ${repaint_command})")
   fi
+  if fzf_supports_listen; then
+    rm -f "$socket_file"
+    ticker_interval="$(board_ticker_interval_seconds)"
+    fzf_args+=(--listen "$socket_file")
+    fzf_args+=(--bind "start:execute-silent(${SELF} board-ticker --token ${board_token} --interval ${ticker_interval} &)")
+  fi
   if fzf_supports_padding; then
     fzf_args+=(--padding="$(board_padding_spec)")
   fi
@@ -636,7 +745,7 @@ open_board() {
   "${FZF_BIN}" "${fzf_args[@]}" <"$cache_file"
   rc=$?
   set -e
-  rm -f "$cache_file" "$state_file"
+  rm -f "$cache_file" "$state_file" "$socket_file"
 
   case "$rc" in
   0 | 1 | 130)

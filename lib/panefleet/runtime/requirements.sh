@@ -34,6 +34,10 @@ fzf_supports_padding() {
   command_exists "${FZF_BIN}" && "${FZF_BIN}" --help 2>/dev/null | grep -Fq -- '--padding'
 }
 
+fzf_supports_listen() {
+  command_exists "${FZF_BIN}" && "${FZF_BIN}" --help 2>/dev/null | grep -Fq -- '--listen'
+}
+
 fzf_supports_result_event() {
   fzf_supports_bind_action 'result:abort'
 }

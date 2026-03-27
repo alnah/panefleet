@@ -298,7 +298,15 @@ test_sourced_helpers() {
   assert_eq "$got" "yes" "fzf_supports_reload_sync should probe runtime bind support"
   got="$(FZF_BIN="$(command -v fzf)" fzf_supports_result_event && printf yes || printf no)"
   assert_eq "$got" "yes" "fzf_supports_result_event should probe runtime bind support"
+  got="$(FZF_BIN="$(command -v fzf)" fzf_supports_listen && printf yes || printf no)"
+  assert_eq "$got" "yes" "fzf_supports_listen should detect listen support"
   pass "fzf capability probes detect live bind support"
+
+  got="$(board_ticker_interval_seconds)"
+  assert_eq "$got" "1" "board_ticker_interval_seconds should default to one second"
+  got="$(board_reload_action_payload)"
+  [[ "$got" == *"reload-sync("*"list-deferred"* ]] || fail "board_reload_action_payload should trigger deferred list reloads"
+  pass "board ticker defaults to one-second deferred reloads"
 
   if agent_status_is_fresh "$(date +%s)" 600 "$(date +%s)"; then
     pass "agent_status_is_fresh accepts current timestamp"

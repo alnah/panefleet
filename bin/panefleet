@@ -52,6 +52,10 @@ main() {
   board)
     open_board
     ;;
+  board-ticker)
+    shift
+    board_ticker_command "$@"
+    ;;
   popup)
     open_popup
     ;;
