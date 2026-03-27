@@ -259,8 +259,13 @@ The repo now includes a Go-first runtime skeleton in `cmd/panefleet`:
 go run ./cmd/panefleet ingest --pane %1 --kind start
 go run ./cmd/panefleet state-show --pane %1
 go run ./cmd/panefleet state-list
+go run ./cmd/panefleet state-set --pane %1 --status STALE
+go run ./cmd/panefleet state-clear --pane %1
 go run ./cmd/panefleet sync-tmux
+go run ./cmd/panefleet pane-kill --pane %1
+go run ./cmd/panefleet pane-respawn --pane %1
 go run ./cmd/panefleet tui
+go run ./cmd/panefleet run
 ```
 
 Notes:
@@ -268,6 +273,16 @@ Notes:
 - this is an implementation path toward strict no-heuristic state handling
 - the legacy shell runtime (`bin/panefleet`) is still present during migration
 - module currently targets `go 1.24.x`
+
+`run` mode behavior:
+
+- runs periodic tmux snapshot sync (`list-panes`) and ingests deterministic events
+- opens Bubble Tea UI with live updates from service subscriptions
+- supports actions in TUI:
+  - `j/k` or arrows: selection
+  - `s`: toggle manual `STALE` override
+  - `x`: respawn selected pane
+  - `d`: kill selected pane
 
 Release readiness checklist (maintainers):
 
