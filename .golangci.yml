@@ -1,0 +1,40 @@
+version: "2"
+
+run:
+  tests: true
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - errorlint
+    - gosec
+    - govet
+    - ineffassign
+    - revive
+    - sqlclosecheck
+    - staticcheck
+    - unused
+  exclusions:
+    rules:
+      - path: '.*_test\.go'
+        linters:
+          - gosec
+  settings:
+    revive:
+      enable-all-rules: false
+      rules:
+        - name: blank-imports
+        - name: exported
+        - name: package-comments
+        - name: redefines-builtin-id
+        - name: unused-parameter
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
