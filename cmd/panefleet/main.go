@@ -10,9 +10,12 @@ import (
 	"path/filepath"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/alnah/panefleet/internal/app"
 	"github.com/alnah/panefleet/internal/state"
 	"github.com/alnah/panefleet/internal/store"
+	"github.com/alnah/panefleet/internal/tui"
 )
 
 func main() {
@@ -40,6 +43,8 @@ func run(ctx context.Context, args []string) error {
 		return cmdStateShow(ctx, svc, args[1:])
 	case "state-list":
 		return cmdStateList(ctx, svc, args[1:])
+	case "tui":
+		return cmdTUI(svc, args[1:])
 	default:
 		return usageError()
 	}
@@ -157,6 +162,19 @@ func cmdStateList(ctx context.Context, svc *app.Service, args []string) error {
 	return printJSON(out)
 }
 
+func cmdTUI(svc *app.Service, args []string) error {
+	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	refresh := fs.Duration("refresh", 700*time.Millisecond, "refresh interval")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	m := tui.New(svc, *refresh)
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	_, err := p.Run()
+	return err
+}
+
 func parseKind(raw string) (state.EventKind, error) {
 	switch raw {
 	case "start":
@@ -185,5 +203,5 @@ func printJSON(v any) error {
 }
 
 func usageError() error {
-	return errors.New("usage: panefleet <ingest|state-show|state-list> [flags]")
+	return errors.New("usage: panefleet <ingest|state-show|state-list|tui> [flags]")
 }
