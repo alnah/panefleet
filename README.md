@@ -274,6 +274,14 @@ Notes:
 - the legacy shell runtime (`bin/panefleet`) is still present during migration
 - module currently targets `go 1.24.x`
 
+Go-first migration policy:
+
+- `internal/state` is the only source of truth for business state.
+- shell runtime files (`bin/panefleet`, `lib/panefleet/state/engine.sh`) are adapter-only during migration.
+- no new state rules should be added in shell; state changes go through Go reducer/projection paths with tests.
+- shell-side state logic is frozen to bugfix-only updates and removed progressively after parity.
+- guardrails document: `docs/go-first-migration-guardrails.md`
+
 `run` mode behavior:
 
 - runs periodic tmux snapshot sync (`list-panes`) and ingests deterministic events
