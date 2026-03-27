@@ -138,12 +138,7 @@ func (s *Service) Rows(ctx context.Context) ([]Row, error) {
 			st = state.NewPaneState(pane.PaneID).Effective()
 		}
 		repo := repoName(pane.Path)
-		status := displayStatus(st, pane, now)
-		if status == state.StatusIdle {
-			if heuristic, ok := s.captureStatus(ctx, pane, now); ok {
-				status = heuristic
-			}
-		}
+		status := s.resolveStatus(ctx, st, pane, now)
 		rows = append(rows, Row{
 			PaneID:           pane.PaneID,
 			Status:           status,
@@ -197,7 +192,7 @@ func (s *Service) Preview(ctx context.Context, paneID string) (Preview, error) {
 		}
 		st = state.NewPaneState(paneID).Effective()
 	}
-	status := displayStatus(st, tmuxctl.BoardPane{
+	boardPane := tmuxctl.BoardPane{
 		PaneID:         pane.PaneID,
 		SessionName:    pane.SessionName,
 		WindowIndex:    pane.WindowIndex,
@@ -213,29 +208,8 @@ func (s *Service) Preview(ctx context.Context, paneID string) (Preview, error) {
 		AgentStatus:    pane.AgentStatus,
 		AgentTool:      pane.AgentTool,
 		AgentUpdatedAt: pane.AgentUpdatedAt,
-	}, s.now())
-	if status == state.StatusIdle {
-		boardPane := tmuxctl.BoardPane{
-			PaneID:         pane.PaneID,
-			SessionName:    pane.SessionName,
-			WindowIndex:    pane.WindowIndex,
-			WindowName:     pane.WindowName,
-			PaneIndex:      pane.PaneIndex,
-			Command:        pane.Command,
-			Title:          pane.Title,
-			Path:           pane.Path,
-			Dead:           pane.Dead,
-			DeadStatus:     pane.DeadStatus,
-			WindowActivity: pane.WindowActivity,
-			LocalStatus:    pane.LocalStatus,
-			AgentStatus:    pane.AgentStatus,
-			AgentTool:      pane.AgentTool,
-			AgentUpdatedAt: pane.AgentUpdatedAt,
-		}
-		if heuristic, ok := s.captureStatus(ctx, boardPane, s.now()); ok {
-			status = heuristic
-		}
 	}
+	status := s.resolveStatus(ctx, st, boardPane, s.now())
 
 	return Preview{
 		PaneID:      pane.PaneID,
@@ -340,13 +314,7 @@ func priority(st state.Status) int {
 }
 
 func displayStatus(st state.PaneState, pane tmuxctl.BoardPane, now time.Time) state.Status {
-	if st.Status != state.StatusUnknown {
-		return st.Status
-	}
 	if status, ok := parseExplicitStatus(pane.LocalStatus); ok {
-		return effectiveStatus(status, pane.WindowActivity, now)
-	}
-	if status, ok := parseAgentStatus(pane, now); ok {
 		return effectiveStatus(status, pane.WindowActivity, now)
 	}
 	if pane.Dead {
@@ -355,6 +323,12 @@ func displayStatus(st state.PaneState, pane tmuxctl.BoardPane, now time.Time) st
 		}
 		return state.StatusError
 	}
+	if status, ok := parseAgentStatus(pane, now); ok {
+		return effectiveStatus(status, pane.WindowActivity, now)
+	}
+	if st.Status != state.StatusUnknown {
+		return st.Status
+	}
 	if pane.WindowActivity.IsZero() {
 		return state.StatusIdle
 	}
@@ -362,6 +336,37 @@ func displayStatus(st state.PaneState, pane tmuxctl.BoardPane, now time.Time) st
 		return state.StatusStale
 	}
 	return state.StatusIdle
+}
+
+func (s *Service) resolveStatus(ctx context.Context, st state.PaneState, pane tmuxctl.BoardPane, now time.Time) state.Status {
+	if status, ok := parseExplicitStatus(pane.LocalStatus); ok {
+		return effectiveStatus(status, pane.WindowActivity, now)
+	}
+	if pane.Dead {
+		if pane.DeadStatus == 0 {
+			return state.StatusDone
+		}
+		return state.StatusError
+	}
+
+	heuristic, heuristicOK := s.captureStatus(ctx, pane, now)
+	if status, ok := parseAgentStatus(pane, now); ok {
+		status = effectiveStatus(status, pane.WindowActivity, now)
+		if override, ok := overrideFreshAgentStatus(toolKind(pane.Command, pane.Title), status, heuristic, heuristicOK); ok {
+			return override
+		}
+		return status
+	}
+	if override, ok := overrideStoredStatus(st.Status, heuristic, heuristicOK); ok {
+		return override
+	}
+	if st.Status != state.StatusUnknown {
+		return st.Status
+	}
+	if heuristicOK {
+		return heuristic
+	}
+	return idleOrStale(pane.WindowActivity, now)
 }
 
 func parseExplicitStatus(raw string) (state.Status, bool) {
@@ -415,6 +420,51 @@ func idleOrStale(activity, now time.Time) state.Status {
 		return state.StatusStale
 	}
 	return state.StatusIdle
+}
+
+func overrideFreshAgentStatus(tool string, agent state.Status, heuristic state.Status, heuristicOK bool) (state.Status, bool) {
+	if !heuristicOK {
+		return "", false
+	}
+	switch tool {
+	case "codex":
+		if agent != state.StatusWait && (heuristic == state.StatusRun || heuristic == state.StatusWait) {
+			return heuristic, true
+		}
+	case "claude":
+		if agent != state.StatusWait && heuristic == state.StatusWait {
+			return heuristic, true
+		}
+	case "opencode":
+		switch agent {
+		case state.StatusRun:
+			if heuristic == state.StatusWait || heuristic == state.StatusDone || heuristic == state.StatusIdle || heuristic == state.StatusError {
+				return heuristic, true
+			}
+		case state.StatusWait:
+			if heuristic == state.StatusRun || heuristic == state.StatusDone || heuristic == state.StatusIdle || heuristic == state.StatusError {
+				return heuristic, true
+			}
+		}
+	}
+	return "", false
+}
+
+func overrideStoredStatus(stored state.Status, heuristic state.Status, heuristicOK bool) (state.Status, bool) {
+	if !heuristicOK {
+		return "", false
+	}
+	switch stored {
+	case state.StatusUnknown:
+		return "", false
+	case state.StatusIdle, state.StatusStale:
+		return heuristic, true
+	case state.StatusDone:
+		if heuristic == state.StatusRun || heuristic == state.StatusWait || heuristic == state.StatusError {
+			return heuristic, true
+		}
+	}
+	return "", false
 }
 
 func (s *Service) captureStatus(ctx context.Context, pane tmuxctl.BoardPane, now time.Time) (state.Status, bool) {

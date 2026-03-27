@@ -367,6 +367,86 @@ func TestRowsUseCaptureHeuristicWhenNoBetterStatusExists(t *testing.T) {
 	}
 }
 
+func TestRowsPreferLiveTMUXStatusOverStoredProjection(t *testing.T) {
+	now := time.Now().UTC()
+	svc := NewService(
+		&fakeStateSource{
+			list: []state.PaneState{
+				{PaneID: "%1", Status: state.StatusStale, StatusSource: "store"},
+			},
+		},
+		&fakeTMUX{
+			snapshot: []tmuxctl.BoardPane{
+				{
+					PaneID:         "%1",
+					SessionName:    "work",
+					WindowIndex:    "1",
+					WindowName:     "codex",
+					PaneIndex:      "0",
+					Command:        "codex-aarch64-a",
+					Title:          "cdx",
+					WindowActivity: now,
+					AgentStatus:    "RUN",
+					AgentTool:      "codex",
+					AgentUpdatedAt: now,
+				},
+			},
+		},
+		"",
+	)
+
+	rows, err := svc.Rows(context.Background())
+	if err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows len = %d, want 1", len(rows))
+	}
+	if rows[0].Status != state.StatusRun {
+		t.Fatalf("rows[0].Status = %s, want RUN", rows[0].Status)
+	}
+}
+
+func TestRowsPreferVisibleLiveStatusOverStoredStaleState(t *testing.T) {
+	now := time.Now().UTC()
+	svc := NewService(
+		&fakeStateSource{
+			list: []state.PaneState{
+				{PaneID: "%1", Status: state.StatusStale, StatusSource: "store"},
+			},
+		},
+		&fakeTMUX{
+			snapshot: []tmuxctl.BoardPane{
+				{
+					PaneID:         "%1",
+					SessionName:    "work",
+					WindowIndex:    "1",
+					WindowName:     "codex",
+					PaneIndex:      "0",
+					Command:        "codex-aarch64-a",
+					Title:          "cdx",
+					WindowActivity: now,
+				},
+			},
+			captures: map[string]string{
+				"%1": "Working (2m)\nesc to interrupt",
+			},
+		},
+		"",
+	)
+
+	rows, err := svc.Rows(context.Background())
+	if err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows len = %d, want 1", len(rows))
+	}
+	if rows[0].Status != state.StatusRun {
+		t.Fatalf("rows[0].Status = %s, want RUN", rows[0].Status)
+	}
+}
+
 func TestRowsUseCodexDoneAndClaudeErrorHeuristics(t *testing.T) {
 	now := time.Now().UTC()
 	svc := NewService(
@@ -419,6 +499,119 @@ func TestRowsUseCodexDoneAndClaudeErrorHeuristics(t *testing.T) {
 	}
 	if statuses["%2"] != state.StatusError {
 		t.Fatalf("claude status = %s, want ERROR", statuses["%2"])
+	}
+}
+
+func TestPreviewPrefersLiveTMUXStatusOverStoredProjection(t *testing.T) {
+	now := time.Now().UTC()
+	svc := NewService(
+		&fakeStateSource{
+			show: map[string]state.PaneState{
+				"%1": {PaneID: "%1", Status: state.StatusStale, StatusSource: "store"},
+			},
+		},
+		&fakeTMUX{
+			preview: tmuxctl.PanePreview{
+				PaneID:         "%1",
+				SessionName:    "work",
+				WindowIndex:    "1",
+				WindowName:     "clean",
+				PaneIndex:      "0",
+				Command:        "codex-aarch64-a",
+				Title:          "cdx",
+				Path:           "/tmp/panefleet",
+				AgentStatus:    "RUN",
+				AgentTool:      "codex",
+				AgentUpdatedAt: now,
+				Body:           "working",
+			},
+		},
+		"",
+	)
+	svc.now = func() time.Time { return now }
+
+	got, err := svc.Preview(context.Background(), "%1")
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if got.Status != state.StatusRun {
+		t.Fatalf("got.Status = %s, want RUN", got.Status)
+	}
+}
+
+func TestRowsLetCodexLiveWaitOverrideFreshAdapterDone(t *testing.T) {
+	now := time.Now().UTC()
+	svc := NewService(
+		&fakeStateSource{},
+		&fakeTMUX{
+			snapshot: []tmuxctl.BoardPane{
+				{
+					PaneID:         "%1",
+					SessionName:    "work",
+					WindowIndex:    "1",
+					WindowName:     "codex",
+					PaneIndex:      "0",
+					Command:        "codex-aarch64-a",
+					Title:          "cdx",
+					WindowActivity: now,
+					AgentStatus:    "DONE",
+					AgentTool:      "codex",
+					AgentUpdatedAt: now,
+				},
+			},
+			captures: map[string]string{
+				"%1": "/permissions\nSelect permission\nEnter to confirm · Esc to cancel",
+			},
+		},
+		"",
+	)
+
+	rows, err := svc.Rows(context.Background())
+	if err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows len = %d, want 1", len(rows))
+	}
+	if rows[0].Status != state.StatusWait {
+		t.Fatalf("rows[0].Status = %s, want WAIT", rows[0].Status)
+	}
+}
+
+func TestPreviewLetsOpencodeLiveDoneOverrideFreshAdapterRun(t *testing.T) {
+	now := time.Now().UTC()
+	svc := NewService(
+		&fakeStateSource{},
+		&fakeTMUX{
+			preview: tmuxctl.PanePreview{
+				PaneID:         "%1",
+				SessionName:    "work",
+				WindowIndex:    "1",
+				WindowName:     "oc",
+				PaneIndex:      "0",
+				Command:        "opencode",
+				Title:          "OpenCode",
+				Path:           "/tmp/panefleet",
+				WindowActivity: now,
+				AgentStatus:    "RUN",
+				AgentTool:      "opencode",
+				AgentUpdatedAt: now,
+				Body:           "ready footer",
+			},
+			captures: map[string]string{
+				"%1": "filler\nfiller\nAsk anything...\nctrl+p commands\ntab agents",
+			},
+		},
+		"",
+	)
+	svc.now = func() time.Time { return now }
+
+	got, err := svc.Preview(context.Background(), "%1")
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if got.Status != state.StatusDone {
+		t.Fatalf("got.Status = %s, want DONE", got.Status)
 	}
 }
 
