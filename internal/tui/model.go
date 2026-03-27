@@ -14,6 +14,10 @@ import (
 
 type StateReader interface {
 	StateList(ctx context.Context) ([]state.PaneState, error)
+	SetOverride(ctx context.Context, paneID string, target state.Status, source string) (state.PaneState, error)
+	ClearOverride(ctx context.Context, paneID, source string) (state.PaneState, error)
+	KillPane(ctx context.Context, paneID string) error
+	RespawnPane(ctx context.Context, paneID string) error
 }
 
 type statesMsg struct {
@@ -22,28 +26,39 @@ type statesMsg struct {
 }
 
 type tickMsg time.Time
+type stateUpdatedMsg struct{}
+type actionMsg struct {
+	err error
+}
 
 type Model struct {
 	reader      StateReader
 	interval    time.Duration
+	updates     <-chan state.PaneState
 	states      []state.PaneState
+	selected    int
 	lastRefresh time.Time
 	err         error
 }
 
-func New(reader StateReader, interval time.Duration) Model {
+func New(reader StateReader, interval time.Duration, updates <-chan state.PaneState) Model {
 	if interval <= 0 {
 		interval = 700 * time.Millisecond
 	}
 	return Model{
 		reader:   reader,
 		interval: interval,
+		updates:  updates,
 		states:   make([]state.PaneState, 0),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.fetchCmd(), tickCmd(m.interval))
+	cmds := []tea.Cmd{m.fetchCmd(), tickCmd(m.interval)}
+	if m.updates != nil {
+		cmds = append(cmds, waitForUpdateCmd(m.updates))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -52,17 +67,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "up", "k":
+			if m.selected > 0 {
+				m.selected--
+			}
+		case "down", "j":
+			if m.selected < len(m.states)-1 {
+				m.selected++
+			}
 		case "r":
 			return m, m.fetchCmd()
+		case "s":
+			if st, ok := m.selectedState(); ok {
+				return m, m.toggleStaleOverrideCmd(st)
+			}
+		case "x":
+			if st, ok := m.selectedState(); ok {
+				return m, m.respawnCmd(st.PaneID)
+			}
+		case "d":
+			if st, ok := m.selectedState(); ok {
+				return m, m.killCmd(st.PaneID)
+			}
 		}
 	case statesMsg:
 		m.err = msg.err
 		if msg.err == nil {
 			m.states = msg.states
+			if m.selected >= len(m.states) && len(m.states) > 0 {
+				m.selected = len(m.states) - 1
+			}
 			m.lastRefresh = time.Now().UTC()
 		}
 	case tickMsg:
 		return m, tea.Batch(m.fetchCmd(), tickCmd(m.interval))
+	case stateUpdatedMsg:
+		if m.updates != nil {
+			return m, tea.Batch(m.fetchCmd(), waitForUpdateCmd(m.updates))
+		}
+		return m, m.fetchCmd()
+	case actionMsg:
+		m.err = msg.err
+		return m, m.fetchCmd()
 	}
 	return m, nil
 }
@@ -70,16 +116,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	var b strings.Builder
 	b.WriteString("Panefleet TUI (v1)\n")
-	b.WriteString("q: quit  r: refresh\n\n")
+	b.WriteString("q: quit  r: refresh  j/k: move  s: stale toggle  x: respawn  d: kill\n\n")
 	if m.err != nil {
 		b.WriteString(fmt.Sprintf("error: %v\n\n", m.err))
 	}
 	b.WriteString(fmt.Sprintf("panes: %d  last refresh: %s\n\n", len(m.states), formatRefresh(m.lastRefresh)))
-	b.WriteString("pane   status   source             reason\n")
-	b.WriteString("----   ------   -----------------  -----------------------\n")
+	b.WriteString("sel pane   status   source             reason\n")
+	b.WriteString("--- ----   ------   -----------------  -----------------------\n")
 
-	for _, st := range m.states {
-		b.WriteString(fmt.Sprintf("%-6s %-7s %-18s %-24s\n", st.PaneID, st.Status, trim(st.StatusSource, 18), trim(st.ReasonCode, 24)))
+	for i, st := range m.states {
+		marker := " "
+		if i == m.selected {
+			marker = ">"
+		}
+		b.WriteString(fmt.Sprintf("%-3s %-6s %-7s %-18s %-24s\n", marker, st.PaneID, st.Status, trim(st.StatusSource, 18), trim(st.ReasonCode, 24)))
 	}
 	if len(m.states) == 0 {
 		b.WriteString("(no pane state yet)\n")
@@ -107,6 +157,50 @@ func (m Model) fetchCmd() tea.Cmd {
 
 func tickCmd(interval time.Duration) tea.Cmd {
 	return tea.Tick(interval, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+func waitForUpdateCmd(ch <-chan state.PaneState) tea.Cmd {
+	return func() tea.Msg {
+		_, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return stateUpdatedMsg{}
+	}
+}
+
+func (m Model) selectedState() (state.PaneState, bool) {
+	if len(m.states) == 0 || m.selected < 0 || m.selected >= len(m.states) {
+		return state.PaneState{}, false
+	}
+	return m.states[m.selected], true
+}
+
+func (m Model) toggleStaleOverrideCmd(st state.PaneState) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		var err error
+		if st.ManualOverride != nil && *st.ManualOverride == state.StatusStale {
+			_, err = m.reader.ClearOverride(ctx, st.PaneID, "tui")
+		} else {
+			_, err = m.reader.SetOverride(ctx, st.PaneID, state.StatusStale, "tui")
+		}
+		return actionMsg{err: err}
+	}
+}
+
+func (m Model) respawnCmd(paneID string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.reader.RespawnPane(context.Background(), paneID)
+		return actionMsg{err: err}
+	}
+}
+
+func (m Model) killCmd(paneID string) tea.Cmd {
+	return func() tea.Msg {
+		err := m.reader.KillPane(context.Background(), paneID)
+		return actionMsg{err: err}
+	}
 }
 
 func priority(s state.Status) int {

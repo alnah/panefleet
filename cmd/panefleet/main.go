@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/alnah/panefleet/internal/app"
 	"github.com/alnah/panefleet/internal/state"
 	"github.com/alnah/panefleet/internal/store"
+	"github.com/alnah/panefleet/internal/tmuxctl"
 	"github.com/alnah/panefleet/internal/tmuxsync"
 	"github.com/alnah/panefleet/internal/tui"
 )
@@ -49,6 +49,8 @@ func run(ctx context.Context, args []string) error {
 		return cmdSyncTmux(ctx, svc, args[1:])
 	case "tui":
 		return cmdTUI(svc, args[1:])
+	case "run":
+		return cmdRun(ctx, svc, args[1:])
 	default:
 		return usageError()
 	}
@@ -173,7 +175,11 @@ func cmdTUI(svc *app.Service, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	m := tui.New(svc, *refresh)
+	tmux := tmuxctl.New(os.Getenv("PANEFLEET_TMUX_BIN"))
+	updates, cancel := svc.Subscribe()
+	defer cancel()
+	api := runtimeAPI{svc: svc, tmux: tmux}
+	m := tui.New(api, *refresh, updates)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
@@ -197,29 +203,96 @@ func cmdSyncTmux(ctx context.Context, svc *app.Service, args []string) error {
 		at = parsed
 	}
 
-	cmd := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F", tmuxsync.ListPanesFormat)
-	out, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("tmux list-panes failed: %w", err)
-	}
-	snapshot, err := tmuxsync.ParseListPanesOutput(string(out))
+	tmux := tmuxctl.New(os.Getenv("PANEFLEET_TMUX_BIN"))
+	applied, err := syncTmuxOnce(ctx, svc, tmux, at, *source)
 	if err != nil {
 		return err
-	}
-	events := tmuxsync.EventsFromSnapshot(snapshot, at, *source)
-
-	applied := 0
-	for _, ev := range events {
-		if _, err := svc.Ingest(ctx, ev); err != nil {
-			return fmt.Errorf("ingest pane %s: %w", ev.PaneID, err)
-		}
-		applied++
 	}
 	return printJSON(map[string]any{
 		"applied": applied,
 		"source":  *source,
 		"at":      at,
 	})
+}
+
+func cmdRun(ctx context.Context, svc *app.Service, args []string) error {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	refresh := fs.Duration("refresh", 700*time.Millisecond, "tui refresh interval")
+	syncEvery := fs.Duration("sync-every", 1200*time.Millisecond, "tmux sync interval")
+	source := fs.String("source", "adapter:tmux-runner", "event source")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	tmux := tmuxctl.New(os.Getenv("PANEFLEET_TMUX_BIN"))
+
+	updates, cancel := svc.Subscribe()
+	defer cancel()
+
+	// Initial snapshot before opening the UI.
+	_, _ = syncTmuxOnce(ctx, svc, tmux, time.Now().UTC(), *source)
+
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	go func() {
+		ticker := time.NewTicker(*syncEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case t := <-ticker.C:
+				_, _ = syncTmuxOnce(runCtx, svc, tmux, t.UTC(), *source)
+			}
+		}
+	}()
+
+	api := runtimeAPI{svc: svc, tmux: tmux}
+	model := tui.New(api, *refresh, updates)
+	program := tea.NewProgram(model, tea.WithAltScreen())
+	_, err := program.Run()
+	return err
+}
+
+func syncTmuxOnce(ctx context.Context, svc *app.Service, tmux *tmuxctl.ExecClient, at time.Time, source string) (int, error) {
+	snapshot, err := tmux.Snapshot(ctx)
+	if err != nil {
+		return 0, err
+	}
+	events := tmuxsync.EventsFromSnapshot(snapshot, at, source)
+	applied := 0
+	for _, ev := range events {
+		if _, err := svc.Ingest(ctx, ev); err != nil {
+			return applied, fmt.Errorf("ingest pane %s: %w", ev.PaneID, err)
+		}
+		applied++
+	}
+	return applied, nil
+}
+
+type runtimeAPI struct {
+	svc  *app.Service
+	tmux *tmuxctl.ExecClient
+}
+
+func (r runtimeAPI) StateList(ctx context.Context) ([]state.PaneState, error) {
+	return r.svc.StateList(ctx)
+}
+
+func (r runtimeAPI) SetOverride(ctx context.Context, paneID string, target state.Status, source string) (state.PaneState, error) {
+	return r.svc.SetOverride(ctx, paneID, target, source)
+}
+
+func (r runtimeAPI) ClearOverride(ctx context.Context, paneID, source string) (state.PaneState, error) {
+	return r.svc.ClearOverride(ctx, paneID, source)
+}
+
+func (r runtimeAPI) KillPane(ctx context.Context, paneID string) error {
+	return r.tmux.KillPane(ctx, paneID)
+}
+
+func (r runtimeAPI) RespawnPane(ctx context.Context, paneID string) error {
+	return r.tmux.RespawnPane(ctx, paneID)
 }
 
 func parseKind(raw string) (state.EventKind, error) {
@@ -250,5 +323,5 @@ func printJSON(v any) error {
 }
 
 func usageError() error {
-	return errors.New("usage: panefleet <ingest|state-show|state-list|sync-tmux|tui> [flags]")
+	return errors.New("usage: panefleet <ingest|state-show|state-list|sync-tmux|tui|run> [flags]")
 }
