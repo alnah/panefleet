@@ -16,8 +16,10 @@ import (
 type fakeBoardRuntime struct {
 	rows           []board.Row
 	rowsErr        error
+	rowsFn         func(context.Context) ([]board.Row, error)
 	previews       map[string]board.Preview
 	previewErr     error
+	previewFn      func(context.Context, string) (board.Preview, error)
 	toggleCalls    int
 	jumpCalls      int
 	killCalls      int
@@ -27,7 +29,10 @@ type fakeBoardRuntime struct {
 	updates        chan state.PaneState
 }
 
-func (f *fakeBoardRuntime) Rows(context.Context) ([]board.Row, error) {
+func (f *fakeBoardRuntime) Rows(ctx context.Context) ([]board.Row, error) {
+	if f.rowsFn != nil {
+		return f.rowsFn(ctx)
+	}
 	if f.rowsErr != nil {
 		return nil, f.rowsErr
 	}
@@ -36,7 +41,10 @@ func (f *fakeBoardRuntime) Rows(context.Context) ([]board.Row, error) {
 	return out, nil
 }
 
-func (f *fakeBoardRuntime) Preview(_ context.Context, paneID string) (board.Preview, error) {
+func (f *fakeBoardRuntime) Preview(ctx context.Context, paneID string) (board.Preview, error) {
+	if f.previewFn != nil {
+		return f.previewFn(ctx, paneID)
+	}
 	if f.previewErr != nil {
 		return board.Preview{}, f.previewErr
 	}
@@ -331,5 +339,45 @@ func TestBoardModelKeepsLastGoodPreviewOnRefreshError(t *testing.T) {
 	}
 	if model.preview.Body != "stable preview" {
 		t.Fatalf("preview body = %q, want stable preview", model.preview.Body)
+	}
+}
+
+func TestBoardModelFetchRowsCmdHonorsTimeout(t *testing.T) {
+	runtime := &fakeBoardRuntime{
+		rowsFn: func(ctx context.Context) ([]board.Row, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.opTimeout = 10 * time.Millisecond
+
+	msg := m.fetchRowsCmd(priorityStartup)()
+	rowsMsg, ok := msg.(boardRowsMsg)
+	if !ok {
+		t.Fatalf("msg type = %T, want boardRowsMsg", msg)
+	}
+	if rowsMsg.err == nil || !errors.Is(rowsMsg.err, context.DeadlineExceeded) {
+		t.Fatalf("rows err = %v, want deadline exceeded", rowsMsg.err)
+	}
+}
+
+func TestBoardModelFetchPreviewCmdHonorsTimeout(t *testing.T) {
+	runtime := &fakeBoardRuntime{
+		previewFn: func(ctx context.Context, paneID string) (board.Preview, error) {
+			<-ctx.Done()
+			return board.Preview{PaneID: paneID}, ctx.Err()
+		},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.previewTimeout = 10 * time.Millisecond
+
+	msg := m.fetchPreviewCmd("%1")()
+	previewMsg, ok := msg.(boardPreviewMsg)
+	if !ok {
+		t.Fatalf("msg type = %T, want boardPreviewMsg", msg)
+	}
+	if previewMsg.err == nil || !errors.Is(previewMsg.err, context.DeadlineExceeded) {
+		t.Fatalf("preview err = %v, want deadline exceeded", previewMsg.err)
 	}
 }
