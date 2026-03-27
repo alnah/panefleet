@@ -61,7 +61,7 @@ func TestBoardSnapshotAndPreview(t *testing.T) {
 	bin, logPath := fakeTmux(t, `#!/bin/sh
 echo "$@" >> "$PANEFLEET_FAKE_TMUX_LOG"
 if [ "$1" = "list-panes" ]; then
-  printf "%s\n" "%1	work	1	clean	0	codex-aarch64-a	cdx	/tmp/panefleet	0	0	1711533600		DONE	codex	1711533601	123	88"
+  printf "%s\n" "%1	4242	work	1	clean	0	codex-aarch64-a	cdx	/tmp/panefleet	0	0	1711533600		DONE	codex	1711533601	123	88"
   exit 0
 fi
 if [ "$1" = "display-message" ]; then
@@ -89,6 +89,9 @@ exit 0
 	}
 	if rows[0].PaneID != "%1" || rows[0].TokensUsed == nil || *rows[0].TokensUsed != 123 {
 		t.Fatalf("unexpected board row: %+v", rows[0])
+	}
+	if rows[0].PanePID != 4242 {
+		t.Fatalf("unexpected pane pid: %+v", rows[0])
 	}
 	if rows[0].AgentStatus != "DONE" || rows[0].AgentTool != "codex" {
 		t.Fatalf("unexpected agent metadata: %+v", rows[0])
@@ -175,7 +178,7 @@ exit 2
 func TestBoardSnapshotAndPreviewValidationErrors(t *testing.T) {
 	bin, _ := fakeTmux(t, `#!/bin/sh
 if [ "$1" = "list-panes" ]; then
-  printf "%s\n" "%1	work	1	clean	0	codex	cdx	/tmp/panefleet	2	0	0					"
+  printf "%s\n" "%1	0	work	1	clean	0	codex	cdx	/tmp/panefleet	2	0	0					"
   exit 0
 fi
 if [ "$1" = "display-message" ]; then

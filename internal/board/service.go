@@ -87,6 +87,7 @@ type Service struct {
 	states        StateSource
 	tmux          TMUX
 	currentPaneID string
+	codexMetrics  *codexMetricsResolver
 	now           func() time.Time
 }
 
@@ -100,6 +101,7 @@ func NewService(states StateSource, tmux TMUX, currentPaneID string) *Service {
 		states:        states,
 		tmux:          tmux,
 		currentPaneID: strings.TrimSpace(currentPaneID),
+		codexMetrics:  newCodexMetricsResolver(),
 		now:           func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -138,11 +140,13 @@ func (s *Service) Rows(ctx context.Context) ([]Row, error) {
 			st = state.NewPaneState(pane.PaneID).Effective()
 		}
 		repo := repoName(pane.Path)
+		tool := toolKind(pane.Command, pane.WindowName, pane.Title)
+		tokensUsed, contextLeftPct := s.resolveRowMetrics(ctx, pane, tool)
 		status := s.resolveStatus(ctx, st, pane, now)
 		rows = append(rows, Row{
 			PaneID:           pane.PaneID,
 			Status:           status,
-			Tool:             toolKind(pane.Command, pane.Title),
+			Tool:             tool,
 			SessionName:      pane.SessionName,
 			WindowIndex:      pane.WindowIndex,
 			WindowName:       pane.WindowName,
@@ -151,8 +155,8 @@ func (s *Service) Rows(ctx context.Context) ([]Row, error) {
 			Repo:             repo,
 			Command:          pane.Command,
 			Title:            pane.Title,
-			TokensUsed:       pane.TokensUsed,
-			ContextLeftPct:   pane.ContextLeftPct,
+			TokensUsed:       tokensUsed,
+			ContextLeftPct:   contextLeftPct,
 			WindowActivity:   pane.WindowActivity,
 			StatusSource:     st.StatusSource,
 			ReasonCode:       st.ReasonCode,
@@ -174,6 +178,26 @@ func (s *Service) Rows(ctx context.Context) ([]Row, error) {
 	})
 
 	return rows, nil
+}
+
+func (s *Service) resolveRowMetrics(ctx context.Context, pane tmuxctl.BoardPane, tool string) (*int, *int) {
+	tokensUsed := pane.TokensUsed
+	contextLeftPct := pane.ContextLeftPct
+	if tool != "codex" || s.codexMetrics == nil || (tokensUsed != nil && contextLeftPct != nil) {
+		return tokensUsed, contextLeftPct
+	}
+
+	metrics, ok, err := s.codexMetrics.resolve(ctx, pane)
+	if err != nil || !ok {
+		return tokensUsed, contextLeftPct
+	}
+	if tokensUsed == nil {
+		tokensUsed = metrics.TokensUsed
+	}
+	if contextLeftPct == nil {
+		contextLeftPct = metrics.ContextLeftPct
+	}
+	return tokensUsed, contextLeftPct
 }
 
 // Preview loads live metadata and body capture for one pane.
@@ -214,7 +238,7 @@ func (s *Service) Preview(ctx context.Context, paneID string) (Preview, error) {
 	return Preview{
 		PaneID:      pane.PaneID,
 		Status:      status,
-		Tool:        toolKind(pane.Command, pane.Title),
+		Tool:        toolKind(pane.Command, pane.WindowName, pane.Title),
 		SessionName: pane.SessionName,
 		WindowIndex: pane.WindowIndex,
 		WindowName:  pane.WindowName,
@@ -266,16 +290,17 @@ func repoName(path string) string {
 	return base
 }
 
-func toolKind(command, title string) string {
+func toolKind(command, windowName, title string) string {
 	cmd := strings.ToLower(strings.TrimSpace(command))
+	window := strings.ToLower(strings.TrimSpace(windowName))
 	name := strings.ToLower(strings.TrimSpace(title))
 
 	switch {
 	case strings.HasPrefix(cmd, "codex"):
 		return "codex"
-	case strings.HasPrefix(cmd, "claude"), strings.Contains(name, "claude"):
+	case strings.HasPrefix(cmd, "claude"), strings.Contains(window, "claude"), strings.Contains(name, "claude"):
 		return "claude"
-	case cmd == "opencode", cmd == "open-code", strings.Contains(name, "opencode"):
+	case cmd == "opencode", cmd == "open-code", strings.Contains(window, "opencode"), strings.Contains(name, "opencode"):
 		return "opencode"
 	case cmd == "sh", cmd == "bash", cmd == "zsh", cmd == "fish", cmd == "nu", cmd == "tmux":
 		return "shell"
@@ -352,7 +377,7 @@ func (s *Service) resolveStatus(ctx context.Context, st state.PaneState, pane tm
 	heuristic, heuristicOK := s.captureStatus(ctx, pane, now)
 	if status, ok := parseAgentStatus(pane, now); ok {
 		status = effectiveStatus(status, pane.WindowActivity, now)
-		if override, ok := overrideFreshAgentStatus(toolKind(pane.Command, pane.Title), status, heuristic, heuristicOK); ok {
+		if override, ok := overrideFreshAgentStatus(toolKind(pane.Command, pane.WindowName, pane.Title), status, heuristic, heuristicOK); ok {
 			return override
 		}
 		return status
@@ -389,8 +414,8 @@ func parseAgentStatus(pane tmuxctl.BoardPane, now time.Time) (state.Status, bool
 	if !pane.AgentUpdatedAt.IsZero() && now.Sub(pane.AgentUpdatedAt) > boardAgentStatusMaxAge {
 		return "", false
 	}
-	liveTool := toolKind(pane.Command, pane.Title)
-	if toolKind(strings.TrimSpace(pane.AgentTool), "") != liveTool && strings.TrimSpace(pane.AgentTool) != "" {
+	liveTool := toolKind(pane.Command, pane.WindowName, pane.Title)
+	if toolKind(strings.TrimSpace(pane.AgentTool), "", "") != liveTool && strings.TrimSpace(pane.AgentTool) != "" {
 		return "", false
 	}
 	return status, true
@@ -468,7 +493,7 @@ func overrideStoredStatus(stored state.Status, heuristic state.Status, heuristic
 }
 
 func (s *Service) captureStatus(ctx context.Context, pane tmuxctl.BoardPane, now time.Time) (state.Status, bool) {
-	tool := toolKind(pane.Command, pane.Title)
+	tool := toolKind(pane.Command, pane.WindowName, pane.Title)
 	if tool != "codex" && tool != "claude" && tool != "opencode" {
 		return "", false
 	}
@@ -498,7 +523,7 @@ func (s *Service) captureStatus(ctx context.Context, pane tmuxctl.BoardPane, now
 		}
 		return state.StatusIdle, true
 	case "claude":
-		if captureContains(focus, "Enter to confirm", "Esc to cancel", "Do you want to", "approval required", "waiting on approval", "choose an option", "select an option", "Yes, proceed", "No, cancel", "/permissions", "Allow Ask Deny", "Press", "allow all edits", "allow once", "deny once", "deny all") {
+		if captureContains(focus, "Enter to confirm", "Esc to cancel", "Do you want to", "approval required", "waiting on approval", "choose an option", "select an option", "Yes, proceed", "No, cancel", "/permissions", "Allow Ask Deny", "allow all edits", "allow once", "deny once", "deny all") || matchAnyLine(focus, `(?i)press .*navigate`) {
 			return state.StatusWait, true
 		}
 		if captureContains(focus, "permission denied", "access denied", "fatal:", "traceback", "exception", "command failed", "tool failed") {

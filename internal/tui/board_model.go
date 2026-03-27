@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/alnah/panefleet/internal/board"
 	"github.com/alnah/panefleet/internal/state"
@@ -53,6 +54,8 @@ type boardStateUpdatedMsg struct {
 
 type boardActionMsg struct {
 	err              error
+	paneState        *state.PaneState
+	quitOnSuccess    bool
 	refreshPriority  refreshPriority
 	refreshPreviewID string
 }
@@ -68,6 +71,8 @@ type BoardModel struct {
 	rows            []board.Row
 	selectedPaneID  string
 	preview         board.Preview
+	searchQuery     string
+	searchActive    bool
 	width           int
 	height          int
 	err             error
@@ -117,40 +122,31 @@ func (m BoardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 	case tea.KeyMsg:
+		if handled, cmd := m.handleSearchKey(msg); handled {
+			return m, cmd
+		}
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "esc", "ctrl+c":
 			if m.cancelUpdates != nil {
 				m.cancelUpdates()
 				m.cancelUpdates = nil
 			}
 			return m, tea.Quit
-		case "up", "k":
+		case "up":
 			if paneID := m.moveSelection(-1); paneID != "" {
 				return m, m.requestPreviewCmd(paneID)
 			}
-		case "down", "j":
+		case "down":
 			if paneID := m.moveSelection(1); paneID != "" {
 				return m, m.requestPreviewCmd(paneID)
-			}
-		case "r":
-			if cmd := m.requestRowsCmd(priorityUser); cmd != nil {
-				return m, cmd
 			}
 		case "enter":
 			if row, ok := m.selectedRow(); ok {
 				return m, m.jumpCmd(row)
 			}
-		case "ctrl+s", "s":
+		case "ctrl+s":
 			if row, ok := m.selectedRow(); ok {
 				return m, m.toggleStaleCmd(row.PaneID)
-			}
-		case "d":
-			if row, ok := m.selectedRow(); ok {
-				return m, m.killCmd(row.PaneID)
-			}
-		case "x":
-			if row, ok := m.selectedRow(); ok {
-				return m, m.respawnCmd(row.PaneID)
 			}
 		}
 	case boardRowsMsg:
@@ -217,6 +213,16 @@ func (m BoardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case boardActionMsg:
 		m.err = msg.err
+		if msg.err == nil && msg.quitOnSuccess {
+			if m.cancelUpdates != nil {
+				m.cancelUpdates()
+				m.cancelUpdates = nil
+			}
+			return m, tea.Quit
+		}
+		if msg.err == nil && msg.paneState != nil {
+			m.applyPaneState(*msg.paneState)
+		}
 		cmds := make([]tea.Cmd, 0, 2)
 		if msg.refreshPreviewID != "" {
 			if cmd := m.requestPreviewCmd(msg.refreshPreviewID); cmd != nil {
@@ -244,23 +250,17 @@ func (m BoardModel) View() string {
 	}
 
 	lines := make([]string, 0, height)
-	lines = append(lines, fitLine(m.styles.title.Render("Panefleet Board"), width))
-	lines = append(lines, fitLine(m.styles.help.Render("enter: jump  j/k,up/down: move  ctrl+s: stale  x: respawn  d: kill  r: refresh  q: quit"), width))
-	if m.err != nil {
-		lines = append(lines, fitLine(m.styles.error.Render("error: "+m.err.Error()), width))
-	} else if !m.rowsLoaded {
-		lines = append(lines, fitLine(m.styles.info.Render("loading panes..."), width))
-	} else {
-		lines = append(lines, fitLine(m.styles.info.Render(fmt.Sprintf("rows: %d  last refresh: %s", len(m.rows), formatRefresh(m.lastRowsRefresh))), width))
-	}
-	lines = append(lines, fitLine(m.styles.borderStrong.Render(strings.Repeat("─", width)), width))
+	lines = append(lines, m.renderHeader(width)...)
 
 	topHeight := max(8, height/2)
-	tableLines := m.renderTable(width, max(3, topHeight-len(lines)-1))
+	lines = append(lines, fitLine(m.renderSectionBar("board", ""), width))
+	tableLines := m.renderTable(width, max(3, topHeight-len(lines)))
 	lines = append(lines, tableLines...)
-	lines = append(lines, fitLine(m.styles.borderStrong.Render(strings.Repeat("─", width)), width))
-	previewLines := m.renderPreview(width, height-len(lines))
-	lines = append(lines, previewLines...)
+	if len(lines) < height {
+		lines = append(lines, fitLine(m.renderSectionBar("preview", ""), width))
+		previewLines := m.renderPreview(width, max(0, height-len(lines)))
+		lines = append(lines, previewLines...)
+	}
 
 	if len(lines) < height {
 		for len(lines) < height {
@@ -325,9 +325,10 @@ func (m BoardModel) toggleStaleCmd(paneID string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), m.opTimeout)
 		defer cancel()
 
-		_, err := m.runtime.ToggleStaleOverride(ctx, paneID)
+		paneState, err := m.runtime.ToggleStaleOverride(ctx, paneID)
 		return boardActionMsg{
 			err:              err,
+			paneState:        &paneState,
 			refreshPriority:  priorityUser,
 			refreshPreviewID: paneID,
 		}
@@ -340,8 +341,8 @@ func (m BoardModel) jumpCmd(row board.Row) tea.Cmd {
 		defer cancel()
 
 		return boardActionMsg{
-			err:             m.runtime.JumpToRow(ctx, row),
-			refreshPriority: priorityBackground,
+			err:           m.runtime.JumpToRow(ctx, row),
+			quitOnSuccess: true,
 		}
 	}
 }
@@ -387,20 +388,22 @@ func waitForBoardUpdateCmd(ch <-chan state.PaneState) tea.Cmd {
 }
 
 func (m *BoardModel) reconcileSelection() {
-	if len(m.rows) == 0 {
+	rows := m.filteredRows()
+	if len(rows) == 0 {
 		m.selectedPaneID = ""
 		return
 	}
-	for _, row := range m.rows {
+	for _, row := range rows {
 		if row.PaneID == m.selectedPaneID {
 			return
 		}
 	}
-	m.selectedPaneID = m.rows[0].PaneID
+	m.selectedPaneID = rows[0].PaneID
 }
 
 func (m *BoardModel) moveSelection(delta int) string {
-	if len(m.rows) == 0 {
+	rows := m.filteredRows()
+	if len(rows) == 0 {
 		return ""
 	}
 	index := m.selectedIndex()
@@ -408,18 +411,18 @@ func (m *BoardModel) moveSelection(delta int) string {
 	if next < 0 {
 		next = 0
 	}
-	if next >= len(m.rows) {
-		next = len(m.rows) - 1
+	if next >= len(rows) {
+		next = len(rows) - 1
 	}
 	if next == index {
 		return ""
 	}
-	m.selectedPaneID = m.rows[next].PaneID
+	m.selectedPaneID = rows[next].PaneID
 	return m.selectedPaneID
 }
 
 func (m BoardModel) selectedIndex() int {
-	for i, row := range m.rows {
+	for i, row := range m.filteredRows() {
 		if row.PaneID == m.selectedPaneID {
 			return i
 		}
@@ -428,15 +431,16 @@ func (m BoardModel) selectedIndex() int {
 }
 
 func (m BoardModel) selectedRow() (board.Row, bool) {
-	if len(m.rows) == 0 {
+	rows := m.filteredRows()
+	if len(rows) == 0 {
 		return board.Row{}, false
 	}
-	for _, row := range m.rows {
+	for _, row := range rows {
 		if row.PaneID == m.selectedPaneID {
 			return row, true
 		}
 	}
-	return m.rows[0], true
+	return rows[0], true
 }
 
 func (m BoardModel) renderTable(width, height int) []string {
@@ -445,7 +449,12 @@ func (m BoardModel) renderTable(width, height int) []string {
 		lines = append(lines, fitLine(m.styles.info.Render("loading panes..."), width))
 		return padLines(lines, height)
 	}
-	if len(m.rows) == 0 {
+	rows := m.filteredRows()
+	if len(rows) == 0 {
+		if strings.TrimSpace(m.searchQuery) != "" {
+			lines = append(lines, fitLine(m.styles.info.Render("(no matches)"), width))
+			return padLines(lines, height)
+		}
 		lines = append(lines, fitLine(m.styles.info.Render("(no panes)"), width))
 		return padLines(lines, height)
 	}
@@ -455,16 +464,16 @@ func (m BoardModel) renderTable(width, height int) []string {
 	if selected > height-3 {
 		start = selected - (height - 3)
 	}
-	end := min(len(m.rows), start+max(1, height-1))
+	end := min(len(rows), start+max(1, height-1))
 	for i := start; i < end; i++ {
-		lines = append(lines, fitLine(m.renderTableRow(m.rows[i], i == selected, width), width))
+		lines = append(lines, fitLine(m.renderTableRow(rows[i], i == selected, i%2 == 1, width), width))
 	}
 	return padLines(lines, height)
 }
 
 func (m BoardModel) renderTableHeader(width int) string {
 	status, tool, target, session, window, repo, tokens, ctx := boardLayoutWidths(width)
-	return joinColumns(
+	return "  " + joinColumns(
 		m.styles.headerCell.Render(fitCell("STATE", status)),
 		m.styles.headerCell.Render(fitCell("TOOL", tool)),
 		m.styles.headerCell.Render(fitCell("TARGET", target)),
@@ -477,11 +486,11 @@ func (m BoardModel) renderTableHeader(width int) string {
 	)
 }
 
-func (m BoardModel) renderTableRow(row board.Row, selected bool, width int) string {
+func (m BoardModel) renderTableRow(row board.Row, selected, alternate bool, width int) string {
 	status, tool, target, session, window, repo, tokens, ctx := boardLayoutWidths(width)
 	marker := " "
 	if selected {
-		marker = "▌"
+		marker = "┃"
 	}
 	line := marker + " " + joinColumns(
 		m.renderStatusCell(row.Status, status),
@@ -497,7 +506,10 @@ func (m BoardModel) renderTableRow(row board.Row, selected bool, width int) stri
 	if selected {
 		return m.styles.selectedRow.Render(line)
 	}
-	return line
+	if alternate {
+		return m.styles.tableRowAlt.Render(line)
+	}
+	return m.styles.tableRow.Render(line)
 }
 
 func (m BoardModel) renderPreview(width, height int) []string {
@@ -511,10 +523,11 @@ func (m BoardModel) renderPreview(width, height int) []string {
 	if m.preview.PaneID == "" || m.preview.PaneID != m.selectedPaneID {
 		return padLines([]string{m.styles.info.Render(fmt.Sprintf("loading preview for %s", m.selectedPaneID))}, height)
 	}
-	lines = append(lines, fitLine(m.previewLine("status", string(m.preview.Status), "tool", m.preview.Tool, "target", fmt.Sprintf("%s:%s.%s", m.preview.SessionName, m.preview.WindowIndex, m.preview.PaneIndex)), width))
-	lines = append(lines, fitLine(m.previewLine("window", m.preview.WindowName, "cmd", m.preview.Command, "title", m.preview.Title), width))
-	lines = append(lines, fitLine(m.styles.label.Render("path:")+" "+m.styles.accentValue.Render(m.preview.Path), width))
-	lines = append(lines, fitLine(m.styles.borderStrong.Render(strings.Repeat("─", width)), width))
+	lines = append(lines, fitLine(m.renderPreviewSummaryLine(), width))
+	if meta := m.renderPreviewDetailLine(); meta != "" {
+		lines = append(lines, fitLine(meta, width))
+	}
+	lines = append(lines, fitLine(m.styles.borderMuted.Render(strings.Repeat("─", width)), width))
 	bodyLines := strings.Split(m.preview.Body, "\n")
 	remaining := max(0, height-len(lines))
 	for _, line := range bodyLines {
@@ -562,7 +575,12 @@ func fitLine(text string, width int) string {
 	if width <= 0 {
 		return text
 	}
-	return lipgloss.NewStyle().MaxWidth(width).Width(width).Render(text)
+	text = ansi.Truncate(text, width, "")
+	visible := lipgloss.Width(text)
+	if visible < width {
+		text += strings.Repeat(" ", width-visible)
+	}
+	return text
 }
 
 func joinColumns(parts ...string) string {
@@ -575,6 +593,153 @@ func (m BoardModel) renderStatusCell(st state.Status, width int) string {
 		style = m.styles.value
 	}
 	return style.Render(fitCell(string(st), width))
+}
+
+func (m BoardModel) renderHeader(width int) []string {
+	prompt := m.styles.helpKey.Render("Panefleet >") + " " + m.styles.value.Render(m.searchQuery)
+	controls := m.renderControlsLine()
+	switch {
+	case m.err != nil:
+		return []string{
+			fitLine(prompt, width),
+			fitLine(controls, width),
+			fitLine(m.styles.error.Render("degraded: "+trimText(m.err.Error(), 64)), width),
+		}
+	case !m.rowsLoaded:
+		return []string{
+			fitLine(prompt, width),
+			fitLine(controls, width),
+			fitLine(m.styles.info.Render("loading panes..."), width),
+		}
+	}
+	return []string{
+		fitLine(prompt, width),
+		fitLine(controls, width),
+	}
+}
+
+func (m BoardModel) renderSectionBar(title, meta string) string {
+	return m.styles.sectionTitle.Render(strings.ToUpper(title))
+}
+
+func (m BoardModel) renderPill(style lipgloss.Style, text string) string {
+	return style.Render(strings.TrimSpace(text))
+}
+
+func (m BoardModel) renderStatusPill(st state.Status) string {
+	style, ok := m.styles.statusPill[st]
+	if !ok {
+		style = m.styles.pill
+	}
+	return style.Render(string(st))
+}
+
+func (m BoardModel) renderInlineStatus(st state.Status) string {
+	style, ok := m.styles.statusByValue[st]
+	if !ok {
+		style = m.styles.value
+	}
+	return style.Render(string(st))
+}
+
+func (m BoardModel) renderControlsLine() string {
+	parts := []string{
+		m.styles.helpKey.Render("[⏎]") + " " + m.styles.help.Render("jump"),
+		m.styles.helpKey.Render("[ctrl+s]") + " " + m.styles.help.Render("stale"),
+		m.styles.helpKey.Render("[esc]") + " " + m.styles.help.Render("quit"),
+	}
+	return strings.Join(parts, m.styles.separator.Render(" · "))
+}
+
+func (m *BoardModel) handleSearchKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+	before := m.selectedPaneID
+	switch msg.Type {
+	case tea.KeyBackspace:
+		if m.searchQuery == "" {
+			return false, nil
+		}
+		if msg.Alt {
+			m.searchQuery = ""
+		} else {
+			m.searchQuery = trimLastRune(m.searchQuery)
+		}
+	case tea.KeyRunes:
+		m.searchQuery += string(msg.Runes)
+	default:
+		return false, nil
+	}
+	m.reconcileSelection()
+	if m.selectedPaneID != "" && m.selectedPaneID != before {
+		return true, m.requestPreviewCmd(m.selectedPaneID)
+	}
+	return true, nil
+}
+
+func (m BoardModel) filteredRows() []board.Row {
+	query := strings.ToLower(strings.TrimSpace(m.searchQuery))
+	if query == "" {
+		return m.rows
+	}
+	filtered := make([]board.Row, 0, len(m.rows))
+	for _, row := range m.rows {
+		if rowMatchesQuery(row, query) {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func rowMatchesQuery(row board.Row, query string) bool {
+	fields := []string{
+		row.PaneID,
+		string(row.Status),
+		row.Tool,
+		row.TargetPane(),
+		row.TargetWindow(),
+		row.SessionName,
+		row.WindowName,
+		row.Repo,
+		row.Path,
+		row.Command,
+		row.Title,
+	}
+	for _, field := range fields {
+		if strings.Contains(strings.ToLower(field), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func trimLastRune(s string) string {
+	runes := []rune(s)
+	if len(runes) == 0 {
+		return ""
+	}
+	return string(runes[:len(runes)-1])
+}
+
+func (m *BoardModel) applyPaneState(st state.PaneState) {
+	effective := st.Effective()
+	for i := range m.rows {
+		if m.rows[i].PaneID != st.PaneID {
+			continue
+		}
+		m.rows[i].Status = effective.Status
+		m.rows[i].StatusSource = effective.StatusSource
+		m.rows[i].ReasonCode = effective.ReasonCode
+		m.rows[i].ManualOverride = cloneStatusPtr(st.ManualOverride)
+		m.rows[i].LastTransitionAt = effective.LastTransitionAt
+		return
+	}
+}
+
+func cloneStatusPtr(in *state.Status) *state.Status {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
 }
 
 func (m BoardModel) renderTokensCell(tokensUsed *int, width int) string {
@@ -603,39 +768,65 @@ func (m BoardModel) renderContextCell(contextLeftPct *int, width int) string {
 	}
 }
 
-func (m BoardModel) previewLine(k1, v1, k2, v2, k3, v3 string) string {
-	return strings.Join([]string{
-		m.styles.label.Render(k1 + ":"),
-		m.styles.value.Render(v1),
-		m.styles.label.Render(k2 + ":"),
-		m.styles.mutedValue.Render(v2),
-		m.styles.label.Render(k3 + ":"),
-		m.styles.accentValue.Render(v3),
-	}, "  ")
-}
-
 func (m BoardModel) renderPreviewBodyLine(line string) string {
 	lower := strings.ToLower(strings.TrimSpace(line))
+	gutter := m.styles.previewGutter.Render("│ ")
 	switch {
 	case lower == "":
-		return ""
-	case strings.HasPrefix(lower, "diff --git"), strings.HasPrefix(lower, "@@ "), strings.HasPrefix(lower, "+++ "), strings.HasPrefix(lower, "--- "):
-		return m.styles.previewHeading.Render(line)
+		return gutter
+	case strings.HasPrefix(lower, "diff --git"), strings.HasPrefix(lower, "index "):
+		return gutter + m.styles.previewHeading.Render(line)
+	case strings.HasPrefix(lower, "@@ "):
+		return gutter + m.styles.diffHunk.Render(line)
+	case strings.HasPrefix(lower, "+++ "):
+		return gutter + m.styles.diffAdd.Render(line)
+	case strings.HasPrefix(lower, "--- "):
+		return gutter + m.styles.diffRemove.Render(line)
+	case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++ "):
+		return gutter + m.styles.diffAdd.Render(line)
+	case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "--- "):
+		return gutter + m.styles.diffRemove.Render(line)
 	case strings.HasPrefix(lower, "#"):
-		return m.styles.previewHeading.Render(line)
+		return gutter + m.styles.previewHeading.Render(line)
 	case strings.HasPrefix(lower, ">"):
-		return m.styles.previewQuote.Render(line)
+		return gutter + m.styles.previewQuote.Render(line)
 	case strings.HasPrefix(lower, "- "), strings.HasPrefix(lower, "* "), strings.HasPrefix(lower, "+ "):
-		return m.styles.previewList.Render(line)
+		return gutter + m.styles.previewList.Render(line)
 	case strings.HasPrefix(lower, "• "), strings.HasPrefix(lower, "› "), strings.HasPrefix(lower, "$ "):
-		return m.styles.previewShell.Render(line)
+		return gutter + m.styles.previewShell.Render(line)
 	case strings.Contains(lower, "warning"):
-		return m.styles.previewWarning.Render(line)
+		return gutter + m.styles.previewWarning.Render(line)
 	case strings.Contains(lower, "error"):
-		return m.styles.previewError.Render(line)
+		return gutter + m.styles.previewError.Render(line)
 	default:
-		return m.styles.previewCode.Render(line)
+		return gutter + m.styles.previewCode.Render(line)
 	}
+}
+
+func (m BoardModel) renderPreviewSummaryLine() string {
+	parts := []string{
+		m.renderInlineStatus(m.preview.Status),
+		m.styles.accentValue.Render(m.preview.Tool),
+		m.styles.value.Render(fmt.Sprintf("%s:%s.%s", m.preview.SessionName, m.preview.WindowIndex, m.preview.PaneIndex)),
+	}
+	if name := strings.TrimSpace(m.preview.WindowName); name != "" {
+		parts = append(parts, m.styles.mutedValue.Render(name))
+	}
+	return strings.Join(parts, m.styles.separator.Render(" · "))
+}
+
+func (m BoardModel) renderPreviewDetailLine() string {
+	parts := make([]string, 0, 3)
+	if path := strings.TrimSpace(m.preview.Path); path != "" {
+		parts = append(parts, m.styles.accentValue.Render(path))
+	}
+	if cmd := strings.TrimSpace(m.preview.Command); cmd != "" {
+		parts = append(parts, m.styles.mutedValue.Render(cmd))
+	}
+	if title := strings.TrimSpace(m.preview.Title); title != "" {
+		parts = append(parts, m.styles.mutedValue.Render(title))
+	}
+	return strings.Join(parts, m.styles.separator.Render(" · "))
 }
 
 func padLines(lines []string, height int) []string {
@@ -694,4 +885,18 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func trimText(text string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	if limit == 1 {
+		return string(runes[:1])
+	}
+	return string(runes[:limit-1]) + "…"
 }

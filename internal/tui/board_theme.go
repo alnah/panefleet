@@ -33,17 +33,28 @@ type boardPalette struct {
 
 type boardStyles struct {
 	title          lipgloss.Style
+	subtitle       lipgloss.Style
 	help           lipgloss.Style
+	helpKey        lipgloss.Style
 	info           lipgloss.Style
 	error          lipgloss.Style
 	headerCell     lipgloss.Style
 	separator      lipgloss.Style
+	tableRow       lipgloss.Style
+	tableRowAlt    lipgloss.Style
 	selectedRow    lipgloss.Style
 	label          lipgloss.Style
 	value          lipgloss.Style
 	accentValue    lipgloss.Style
 	mutedValue     lipgloss.Style
+	pill           lipgloss.Style
+	pillAccent     lipgloss.Style
+	pillWarn       lipgloss.Style
+	pillError      lipgloss.Style
+	sectionTitle   lipgloss.Style
+	sectionMeta    lipgloss.Style
 	borderStrong   lipgloss.Style
+	borderMuted    lipgloss.Style
 	previewCode    lipgloss.Style
 	previewHeading lipgloss.Style
 	previewList    lipgloss.Style
@@ -51,7 +62,12 @@ type boardStyles struct {
 	previewWarning lipgloss.Style
 	previewError   lipgloss.Style
 	previewShell   lipgloss.Style
+	previewGutter  lipgloss.Style
+	diffAdd        lipgloss.Style
+	diffRemove     lipgloss.Style
+	diffHunk       lipgloss.Style
 	statusByValue  map[state.Status]lipgloss.Style
+	statusPill     map[state.Status]lipgloss.Style
 }
 
 func resolveBoardPalette(name string) boardPalette {
@@ -91,19 +107,38 @@ func newBoardStyles(themeName string) boardStyles {
 		state.StatusIdle:  lipgloss.NewStyle().Foreground(lipgloss.Color(palette.idle)),
 		state.StatusStale: lipgloss.NewStyle().Foreground(lipgloss.Color(palette.stale)).Faint(true),
 	}
+	statusPill := map[state.Status]lipgloss.Style{
+		state.StatusRun:   lipgloss.NewStyle().Foreground(lipgloss.Color(palette.bg)).Background(lipgloss.Color(palette.run)).Bold(true).Padding(0, 1),
+		state.StatusWait:  lipgloss.NewStyle().Foreground(lipgloss.Color(palette.bg)).Background(lipgloss.Color(palette.wait)).Bold(true).Padding(0, 1),
+		state.StatusDone:  lipgloss.NewStyle().Foreground(lipgloss.Color(palette.bg)).Background(lipgloss.Color(palette.done)).Bold(true).Padding(0, 1),
+		state.StatusError: lipgloss.NewStyle().Foreground(lipgloss.Color(palette.bg)).Background(lipgloss.Color(palette.err)).Bold(true).Padding(0, 1),
+		state.StatusIdle:  lipgloss.NewStyle().Foreground(lipgloss.Color(palette.selectionFG)).Background(lipgloss.Color(palette.idle)).Bold(true).Padding(0, 1),
+		state.StatusStale: lipgloss.NewStyle().Foreground(lipgloss.Color(palette.fg)).Background(lipgloss.Color(palette.border)).Bold(true).Padding(0, 1),
+	}
 	return boardStyles{
 		title:          lipgloss.NewStyle().Foreground(lipgloss.Color(palette.header)).Bold(true),
+		subtitle:       lipgloss.NewStyle().Foreground(lipgloss.Color(palette.muted)),
 		help:           lipgloss.NewStyle().Foreground(lipgloss.Color(palette.muted)),
+		helpKey:        lipgloss.NewStyle().Foreground(lipgloss.Color(palette.accent)).Bold(true),
 		info:           lipgloss.NewStyle().Foreground(lipgloss.Color(palette.muted)),
 		error:          lipgloss.NewStyle().Foreground(lipgloss.Color(palette.err)).Bold(true),
 		headerCell:     lipgloss.NewStyle().Foreground(lipgloss.Color(palette.header)).Bold(true),
 		separator:      lipgloss.NewStyle().Foreground(lipgloss.Color(palette.border)),
-		selectedRow:    lipgloss.NewStyle().Background(lipgloss.Color(palette.selectionBG)).Foreground(lipgloss.Color(palette.selectionFG)),
+		tableRow:       lipgloss.NewStyle().Foreground(lipgloss.Color(palette.fg)),
+		tableRowAlt:    lipgloss.NewStyle().Foreground(lipgloss.Color(palette.fg)),
+		selectedRow:    lipgloss.NewStyle().Background(lipgloss.Color(palette.selectionBG)).Foreground(lipgloss.Color(palette.selectionFG)).Bold(true),
 		label:          lipgloss.NewStyle().Foreground(lipgloss.Color(palette.muted)).Bold(true),
 		value:          lipgloss.NewStyle().Foreground(lipgloss.Color(palette.fg)),
 		accentValue:    lipgloss.NewStyle().Foreground(lipgloss.Color(palette.accent)),
 		mutedValue:     lipgloss.NewStyle().Foreground(lipgloss.Color(palette.idle)),
+		pill:           lipgloss.NewStyle().Foreground(lipgloss.Color(palette.fg)).Background(lipgloss.Color(palette.bgAlt)).Padding(0, 1),
+		pillAccent:     lipgloss.NewStyle().Foreground(lipgloss.Color(palette.selectionFG)).Background(lipgloss.Color(palette.accent)).Bold(true).Padding(0, 1),
+		pillWarn:       lipgloss.NewStyle().Foreground(lipgloss.Color(palette.bg)).Background(lipgloss.Color(palette.wait)).Bold(true).Padding(0, 1),
+		pillError:      lipgloss.NewStyle().Foreground(lipgloss.Color(palette.bg)).Background(lipgloss.Color(palette.err)).Bold(true).Padding(0, 1),
+		sectionTitle:   lipgloss.NewStyle().Foreground(lipgloss.Color(palette.header)).Bold(true),
+		sectionMeta:    lipgloss.NewStyle().Foreground(lipgloss.Color(palette.muted)),
 		borderStrong:   lipgloss.NewStyle().Foreground(lipgloss.Color(palette.header)),
+		borderMuted:    lipgloss.NewStyle().Foreground(lipgloss.Color(palette.border)),
 		previewCode:    lipgloss.NewStyle().Foreground(lipgloss.Color(palette.fg)),
 		previewHeading: lipgloss.NewStyle().Foreground(lipgloss.Color(palette.header)).Bold(true),
 		previewList:    lipgloss.NewStyle().Foreground(lipgloss.Color(palette.fg)),
@@ -111,6 +146,11 @@ func newBoardStyles(themeName string) boardStyles {
 		previewWarning: lipgloss.NewStyle().Foreground(lipgloss.Color(palette.wait)).Bold(true),
 		previewError:   lipgloss.NewStyle().Foreground(lipgloss.Color(palette.err)).Bold(true),
 		previewShell:   lipgloss.NewStyle().Foreground(lipgloss.Color(palette.accent)),
+		previewGutter:  lipgloss.NewStyle().Foreground(lipgloss.Color(palette.border)),
+		diffAdd:        lipgloss.NewStyle().Foreground(lipgloss.Color(palette.diffAdd)),
+		diffRemove:     lipgloss.NewStyle().Foreground(lipgloss.Color(palette.diffRemove)),
+		diffHunk:       lipgloss.NewStyle().Foreground(lipgloss.Color(palette.diffHunk)).Bold(true),
 		statusByValue:  statusByValue,
+		statusPill:     statusPill,
 	}
 }

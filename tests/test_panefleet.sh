@@ -665,11 +665,40 @@ EOF
 
   expected_log_dir="${TEST_TMPDIR}/xdg-state/panefleet/events"
   repo_root="$(cd -- "${REPO_ROOT}" && pwd)"
-  expected_panefleet_bin="${repo_root}/scripts/panefleet-go"
+  expected_panefleet_bin="${repo_root}/bin/panefleet"
   XDG_STATE_HOME="${TEST_TMPDIR}/xdg-state" PANEFLEET_AGENT_BRIDGE_BIN="$fake_bridge" "${REPO_ROOT}/scripts/claude-code-hook" >/dev/null
   [[ "$(cat "$env_log")" == "$expected_log_dir" ]] || fail "wrapper should default PANEFLEET_EVENT_LOG_DIR from XDG_STATE_HOME"
-  [[ "$(cat "$env_bin_log")" == "$expected_panefleet_bin" ]] || fail "wrapper should export PANEFLEET_INGEST_BIN pointing to panefleet-go"
+  [[ "$(cat "$env_bin_log")" == "$expected_panefleet_bin" ]] || fail "wrapper should export PANEFLEET_INGEST_BIN pointing to the panefleet CLI"
   pass "wrapper event logs honor XDG_STATE_HOME"
+}
+
+test_panefleet_go_runs_from_repo_root() {
+  local fake_bin fake_go cwd_log args_log outside_dir
+
+  fake_bin="${TEST_TMPDIR}/fake-go-bin"
+  fake_go="${fake_bin}/go"
+  cwd_log="${TEST_TMPDIR}/panefleet-go.cwd.log"
+  args_log="${TEST_TMPDIR}/panefleet-go.args.log"
+  outside_dir="${TEST_TMPDIR}/outside-repo"
+  mkdir -p "$fake_bin" "$outside_dir"
+
+  cat >"$fake_go" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+pwd >"$cwd_log"
+printf '%s\n' "\$*" >"$args_log"
+exit 0
+EOF
+  chmod +x "$fake_go"
+
+  (
+    cd "$outside_dir"
+    PATH="$fake_bin:${PATH}" "${REPO_ROOT}/scripts/panefleet-go" ingest --pane %7 --kind start >/dev/null
+  )
+
+  [[ "$(cat "$cwd_log")" == "$REPO_ROOT" ]] || fail "panefleet-go should run go from the panefleet repo root"
+  [[ "$(cat "$args_log")" == "run ./cmd/panefleet ingest --pane %7 --kind start" ]] || fail "panefleet-go should run the local panefleet package from repo root"
+  pass "panefleet-go runs from repo root"
 }
 
 test_uninstall_bindings_works_without_panefleet_bin() {
@@ -716,6 +745,9 @@ test_install_command() {
   TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" FZF_BIN="${FAKE_FZF_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_AGENT_BRIDGE_BIN="$out_bin" PANEFLEET_OPENCODE_PLUGIN_DIR="$plugin_dir" PANEFLEET_BRIDGE_INSTALL_MODE=build "${PANEFLEET_BIN}" install opencode >/dev/null
   [[ -x "$out_bin" ]] || fail "install opencode should ensure the bridge binary"
   [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "install opencode should install the opencode plugin file"
+  rg -Fq -- 'stderr: "ignore"' "${plugin_dir}/panefleet.ts" || fail "install opencode should silence bridge stderr inside the pane"
+  ! rg -Fq -- 'stderr: "inherit"' "${plugin_dir}/panefleet.ts" || fail "install opencode should not inherit bridge stderr into the pane"
+  ! rg -Fq -- 'await proc.exited' "${plugin_dir}/panefleet.ts" || fail "install opencode should not block on bridge exit"
   mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
   [[ "$mode" == "auto" ]] || fail "install opencode should enable adapter mode in tmux"
   pass "install provides the public core and provider entrypoints"
@@ -891,6 +923,8 @@ EOF
   [[ -f "${plugin_dir}/panefleet.ts" ]] || fail "install opencode should install plugin file"
   ! rg -Fq -- "$old_opencode_bridge" "${plugin_dir}/panefleet.ts" || fail "install opencode should remove stale bridge path in plugin file"
   rg -Fq -- 'process.env.PANEFLEET_OPENCODE_BRIDGE ||' "${plugin_dir}/panefleet.ts" || fail "install opencode should keep bridge env override in plugin file"
+  rg -Fq -- 'stderr: "ignore"' "${plugin_dir}/panefleet.ts" || fail "install opencode should silence bridge stderr in the installed plugin"
+  ! rg -Fq -- 'await proc.exited' "${plugin_dir}/panefleet.ts" || fail "install opencode should not await bridge exit"
   mode="$(cat "${TEST_TMPDIR}/fake-tmux/globals/@panefleet-adapter-mode")"
   [[ "$mode" == "auto" ]] || fail "install opencode should set adapter mode auto"
   doctor_output="$(run_doctor_install_in_fake_tmux "$bridge_bin" "$plugin_dir" "$codex_config" "$claude_settings")"
@@ -936,6 +970,7 @@ test_fake_tmux_cli
 test_install_command
 test_codex_wrapper_forwards_pane_when_available
 test_wrapper_uses_xdg_state_home_for_event_logs
+test_panefleet_go_runs_from_repo_root
 test_wrapper_install_hints
 test_uninstall_bindings_works_without_panefleet_bin
 test_cli_surface_contract

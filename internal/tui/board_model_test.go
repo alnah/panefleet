@@ -125,7 +125,7 @@ func TestBoardModelNavigationQueuesPreviewOnly(t *testing.T) {
 	m.selectedPaneID = "%1"
 	m.rowsFetching = false
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	model := updated.(BoardModel)
 	if model.selectedPaneID != "%2" {
 		t.Fatalf("selectedPaneID = %q, want %%2", model.selectedPaneID)
@@ -223,20 +223,18 @@ func TestBoardModelActions(t *testing.T) {
 	m.rows = runtime.rows
 	m.selectedPaneID = "%1"
 
-	for _, key := range []rune{'s', 'd', 'x'} {
-		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
-		m = updated.(BoardModel)
-		if cmd == nil {
-			t.Fatalf("key %q should trigger action command", string(key))
-		}
-		updated, _ = m.Update(cmd())
-		m = updated.(BoardModel)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(BoardModel)
+	if cmd == nil {
+		t.Fatalf("ctrl+s should trigger stale toggle command")
 	}
-	if runtime.toggleCalls != 1 || runtime.killCalls != 1 || runtime.respawnCalls != 1 {
-		t.Fatalf("unexpected action call counts: toggle=%d kill=%d respawn=%d", runtime.toggleCalls, runtime.killCalls, runtime.respawnCalls)
+	updated, _ = m.Update(cmd())
+	m = updated.(BoardModel)
+	if runtime.toggleCalls != 1 {
+		t.Fatalf("unexpected toggle call count: %d", runtime.toggleCalls)
 	}
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(BoardModel)
 	if cmd == nil {
 		t.Fatalf("enter should trigger jump command")
@@ -245,6 +243,33 @@ func TestBoardModelActions(t *testing.T) {
 	m = updated.(BoardModel)
 	if runtime.jumpCalls != 1 || runtime.lastJumpWindow != "work:1" {
 		t.Fatalf("jump call mismatch: calls=%d target=%q", runtime.jumpCalls, runtime.lastJumpWindow)
+	}
+}
+
+func TestBoardModelEnterQuitsAfterSuccessfulJump(t *testing.T) {
+	runtime := &fakeBoardRuntime{
+		rows: []board.Row{{PaneID: "%1", SessionName: "work", WindowIndex: "1", PaneIndex: "0"}},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.rows = runtime.rows
+	m.selectedPaneID = "%1"
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(BoardModel)
+	if cmd == nil {
+		t.Fatalf("enter should trigger jump command")
+	}
+
+	updated, quitCmd := m.Update(cmd())
+	_ = updated.(BoardModel)
+	if runtime.jumpCalls != 1 {
+		t.Fatalf("jumpCalls = %d, want 1", runtime.jumpCalls)
+	}
+	if quitCmd == nil {
+		t.Fatalf("successful jump should quit the board")
+	}
+	if _, ok := quitCmd().(tea.QuitMsg); !ok {
+		t.Fatalf("successful jump should return tea.Quit, got %T", quitCmd())
 	}
 }
 
@@ -264,10 +289,10 @@ func TestBoardModelViewUsesFullScreenState(t *testing.T) {
 	m.rowsLoaded = true
 
 	view := m.View()
-	if !strings.Contains(view, "Panefleet Board") || !strings.Contains(view, "TOKENS") || !strings.Contains(view, "hello") {
+	if !strings.Contains(view, "BOARD") || !strings.Contains(view, "TOKENS") || !strings.Contains(view, "hello") {
 		t.Fatalf("view missing expected content: %q", view)
 	}
-	if !strings.Contains(view, "▌ RUN") {
+	if !strings.Contains(view, "┃ RUN") {
 		t.Fatalf("view should highlight the selected row, got %q", view)
 	}
 	if got := len(strings.Split(view, "\n")); got != 20 {
@@ -281,6 +306,9 @@ func TestBoardModelViewShowsLoadingBeforeFirstRows(t *testing.T) {
 	m.height = 12
 
 	view := m.View()
+	if !strings.Contains(view, "Panefleet >") {
+		t.Fatalf("view should show search prompt: %q", view)
+	}
 	if !strings.Contains(view, "loading panes...") {
 		t.Fatalf("view should show loading panes state: %q", view)
 	}
@@ -379,5 +407,187 @@ func TestBoardModelFetchPreviewCmdHonorsTimeout(t *testing.T) {
 	}
 	if previewMsg.err == nil || !errors.Is(previewMsg.err, context.DeadlineExceeded) {
 		t.Fatalf("preview err = %v, want deadline exceeded", previewMsg.err)
+	}
+}
+
+func TestBoardModelSearchFiltersRowsAndUpdatesSelection(t *testing.T) {
+	runtime := &fakeBoardRuntime{
+		rows: []board.Row{
+			{PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "panefleet", WindowIndex: "1", PaneIndex: "0", WindowName: "tui", Repo: "panefleet"},
+			{PaneID: "%2", Status: state.StatusIdle, Tool: "shell", SessionName: "professeur", WindowIndex: "2", PaneIndex: "0", WindowName: "mike", Repo: "fle"},
+			{PaneID: "%3", Status: state.StatusDone, Tool: "codex", SessionName: "tcf_ninja", WindowIndex: "3", PaneIndex: "0", WindowName: "search", Repo: "tcf.ninja"},
+		},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.rows = runtime.rows
+	m.rowsLoaded = true
+	m.selectedPaneID = "%1"
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m = updated.(BoardModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'i'}})
+	m = updated.(BoardModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	m = updated.(BoardModel)
+
+	if m.searchQuery != "mik" {
+		t.Fatalf("searchQuery = %q, want mik", m.searchQuery)
+	}
+	if got := len(m.filteredRows()); got != 1 {
+		t.Fatalf("filtered rows = %d, want 1", got)
+	}
+	if m.selectedPaneID != "%2" {
+		t.Fatalf("selectedPaneID = %q, want %%2", m.selectedPaneID)
+	}
+}
+
+func TestBoardModelViewRendersSearchPromptWithQuery(t *testing.T) {
+	runtime := &fakeBoardRuntime{
+		rows: []board.Row{
+			{PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "panefleet", WindowIndex: "1", PaneIndex: "0", WindowName: "tui", Repo: "panefleet"},
+		},
+		previews: map[string]board.Preview{
+			"%1": {PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "panefleet", WindowIndex: "1", PaneIndex: "0", WindowName: "tui", Body: "hello"},
+		},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.rows = runtime.rows
+	m.preview = runtime.previews["%1"]
+	m.rowsLoaded = true
+	m.selectedPaneID = "%1"
+	m.searchQuery = "tui"
+	m.width = 90
+	m.height = 14
+
+	view := m.View()
+	if !strings.Contains(view, "Panefleet > tui") {
+		t.Fatalf("view should show populated search prompt: %q", view)
+	}
+}
+
+func TestBoardModelAltBackspaceClearsWholeSearch(t *testing.T) {
+	runtime := &fakeBoardRuntime{
+		rows: []board.Row{
+			{PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "panefleet", WindowIndex: "1", PaneIndex: "0", WindowName: "tui", Repo: "panefleet"},
+			{PaneID: "%2", Status: state.StatusIdle, Tool: "shell", SessionName: "professeur", WindowIndex: "2", PaneIndex: "0", WindowName: "mike", Repo: "fle"},
+		},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.rows = runtime.rows
+	m.rowsLoaded = true
+	m.selectedPaneID = "%1"
+	m.searchQuery = "panefleet"
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace, Alt: true})
+	m = updated.(BoardModel)
+
+	if m.searchQuery != "" {
+		t.Fatalf("searchQuery = %q, want empty", m.searchQuery)
+	}
+}
+
+func TestBoardModelViewKeepsSearchPromptWithLargePreview(t *testing.T) {
+	body := strings.Repeat("line\n", 80)
+	runtime := &fakeBoardRuntime{
+		rows: []board.Row{
+			{PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "panefleet", WindowIndex: "1", PaneIndex: "0", WindowName: "tui", Repo: "panefleet"},
+		},
+		previews: map[string]board.Preview{
+			"%1": {PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "panefleet", WindowIndex: "1", PaneIndex: "0", WindowName: "tui", Body: body},
+		},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.rows = runtime.rows
+	m.preview = runtime.previews["%1"]
+	m.rowsLoaded = true
+	m.selectedPaneID = "%1"
+	m.searchQuery = "abc"
+	m.width = 90
+	m.height = 10
+
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) == 0 || !strings.Contains(lines[0], "Panefleet > abc") {
+		t.Fatalf("search prompt should stay on first line: %q", view)
+	}
+}
+
+func TestBoardModelViewKeepsSearchPromptWithWrappedPreviewLine(t *testing.T) {
+	body := strings.Repeat("wrapped-preview-segment ", 40)
+	runtime := &fakeBoardRuntime{
+		rows: []board.Row{
+			{PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "panefleet", WindowIndex: "1", PaneIndex: "0", WindowName: "tui", Repo: "panefleet"},
+		},
+		previews: map[string]board.Preview{
+			"%1": {PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "panefleet", WindowIndex: "1", PaneIndex: "0", WindowName: "tui", Body: body},
+		},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.rows = runtime.rows
+	m.preview = runtime.previews["%1"]
+	m.rowsLoaded = true
+	m.selectedPaneID = "%1"
+	m.searchQuery = "abc"
+	m.width = 90
+	m.height = 10
+
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) == 0 || !strings.Contains(lines[0], "Panefleet > abc") {
+		t.Fatalf("search prompt should stay on first line even with long preview line: %q", view)
+	}
+}
+
+func TestBoardModelEscQuits(t *testing.T) {
+	m := NewBoard(&fakeBoardRuntime{}, time.Second, "dracula")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_ = updated.(BoardModel)
+	if cmd == nil {
+		t.Fatalf("esc should return quit command")
+	}
+	if msg := cmd(); msg != tea.Quit() {
+		t.Fatalf("esc should quit, got %T", msg)
+	}
+}
+
+func TestBoardModelCtrlSUpdatesSelectedRowImmediately(t *testing.T) {
+	runtime := &fakeBoardRuntime{
+		rows: []board.Row{
+			{PaneID: "%1", Status: state.StatusIdle, SessionName: "work", WindowIndex: "1", PaneIndex: "0"},
+			{PaneID: "%2", Status: state.StatusIdle, SessionName: "work", WindowIndex: "2", PaneIndex: "0"},
+		},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.rows = append([]board.Row(nil), runtime.rows...)
+	m.rowsLoaded = true
+	m.selectedPaneID = "%1"
+	m.rowsFetching = true
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(BoardModel)
+	if cmd == nil {
+		t.Fatalf("ctrl+s should trigger stale toggle command")
+	}
+	updated, _ = m.Update(cmd())
+	m = updated.(BoardModel)
+	if m.rows[0].Status != state.StatusStale {
+		t.Fatalf("row 0 status = %s, want STALE", m.rows[0].Status)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(BoardModel)
+	if m.selectedPaneID != "%2" {
+		t.Fatalf("selectedPaneID = %q, want %%2", m.selectedPaneID)
+	}
+
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(BoardModel)
+	if cmd == nil {
+		t.Fatalf("second ctrl+s should trigger stale toggle command immediately")
+	}
+	updated, _ = m.Update(cmd())
+	m = updated.(BoardModel)
+	if m.rows[1].Status != state.StatusStale {
+		t.Fatalf("row 1 status = %s, want STALE", m.rows[1].Status)
 	}
 }

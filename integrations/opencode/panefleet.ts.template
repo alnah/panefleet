@@ -13,17 +13,25 @@ export const PanefleetPlugin: Plugin = async () => {
       }
 
       const payload = JSON.stringify({ event })
-      const proc = Bun.spawn([bridgePath, "--pane", pane], {
-        stdin: "pipe",
-        stdout: "ignore",
-        stderr: "inherit",
-      })
+      let proc
+      try {
+        proc = Bun.spawn([bridgePath, "--pane", pane], {
+          stdin: "pipe",
+          stdout: "ignore",
+          stderr: "ignore",
+        })
+      } catch {
+        return
+      }
 
       if (proc.stdin) {
-        await proc.stdin.write(payload)
-        await proc.stdin.end()
+        try {
+          await proc.stdin.write(payload)
+          await proc.stdin.end()
+        } catch {
+          return
+        }
       }
-      await proc.exited
     },
   }
 }

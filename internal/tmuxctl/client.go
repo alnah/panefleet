@@ -20,6 +20,7 @@ type ExecClient struct {
 // BoardPane is the rich tmux row used by the Go board.
 type BoardPane struct {
 	PaneID         string
+	PanePID        int
 	SessionName    string
 	WindowIndex    string
 	WindowName     string
@@ -204,7 +205,7 @@ func formatCommandError(binary string, args []string, err error, output []byte) 
 }
 
 const (
-	boardListPanesFormat = "#{pane_id}\t#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_current_command}\t#{pane_title}\t#{pane_current_path}\t#{pane_dead}\t#{pane_dead_status}\t#{window_activity}\t#{@panefleet_status}\t#{@panefleet_agent_status}\t#{@panefleet_agent_tool}\t#{@panefleet_agent_updated_at}\t#{@panefleet_tokens_used}\t#{@panefleet_context_left_pct}"
+	boardListPanesFormat = "#{pane_id}\t#{pane_pid}\t#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_current_command}\t#{pane_title}\t#{pane_current_path}\t#{pane_dead}\t#{pane_dead_status}\t#{window_activity}\t#{@panefleet_status}\t#{@panefleet_agent_status}\t#{@panefleet_agent_tool}\t#{@panefleet_agent_updated_at}\t#{@panefleet_tokens_used}\t#{@panefleet_context_left_pct}"
 	boardPreviewFormat   = "#{pane_id}\t#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}\t#{pane_current_command}\t#{pane_title}\t#{pane_current_path}\t#{pane_dead}\t#{pane_dead_status}\t#{window_activity}\t#{@panefleet_status}\t#{@panefleet_agent_status}\t#{@panefleet_agent_tool}\t#{@panefleet_agent_updated_at}"
 )
 
@@ -230,13 +231,20 @@ func parseBoardSnapshotOutput(raw string) ([]BoardPane, error) {
 
 func parseBoardPane(line string, lineNo int) (BoardPane, error) {
 	parts := strings.Split(line, "\t")
-	if len(parts) != 17 {
-		return BoardPane{}, fmt.Errorf("line %d: expected 17 columns, got %d", lineNo, len(parts))
+	if len(parts) != 18 {
+		return BoardPane{}, fmt.Errorf("line %d: expected 18 columns, got %d", lineNo, len(parts))
 	}
 	if strings.TrimSpace(parts[0]) == "" {
 		return BoardPane{}, fmt.Errorf("line %d: pane_id is required", lineNo)
 	}
-	deadValue, err := strconv.Atoi(parts[8])
+	panePID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return BoardPane{}, fmt.Errorf("line %d: invalid pane_pid: %w", lineNo, err)
+	}
+	if panePID <= 0 {
+		return BoardPane{}, fmt.Errorf("line %d: invalid pane_pid value %d", lineNo, panePID)
+	}
+	deadValue, err := strconv.Atoi(parts[9])
 	if err != nil {
 		return BoardPane{}, fmt.Errorf("line %d: invalid pane_dead: %w", lineNo, err)
 	}
@@ -244,8 +252,8 @@ func parseBoardPane(line string, lineNo int) (BoardPane, error) {
 		return BoardPane{}, fmt.Errorf("line %d: invalid pane_dead value %d", lineNo, deadValue)
 	}
 	deadStatus := 0
-	if strings.TrimSpace(parts[9]) != "" {
-		deadStatus, err = strconv.Atoi(parts[9])
+	if strings.TrimSpace(parts[10]) != "" {
+		deadStatus, err = strconv.Atoi(parts[10])
 		if err != nil {
 			return BoardPane{}, fmt.Errorf("line %d: invalid pane_dead_status: %w", lineNo, err)
 		}
@@ -253,38 +261,39 @@ func parseBoardPane(line string, lineNo int) (BoardPane, error) {
 	if deadStatus < 0 {
 		return BoardPane{}, fmt.Errorf("line %d: invalid pane_dead_status value %d", lineNo, deadStatus)
 	}
-	activity, err := parseOptionalUnixTime(parts[10])
+	activity, err := parseOptionalUnixTime(parts[11])
 	if err != nil {
 		return BoardPane{}, fmt.Errorf("line %d: invalid window_activity: %w", lineNo, err)
 	}
-	agentUpdatedAt, err := parseOptionalUnixTime(parts[14])
+	agentUpdatedAt, err := parseOptionalUnixTime(parts[15])
 	if err != nil {
 		return BoardPane{}, fmt.Errorf("line %d: invalid agent_updated_at: %w", lineNo, err)
 	}
-	tokensUsed, err := parseOptionalInt(parts[15])
+	tokensUsed, err := parseOptionalInt(parts[16])
 	if err != nil {
 		return BoardPane{}, fmt.Errorf("line %d: invalid tokens_used: %w", lineNo, err)
 	}
-	contextLeftPct, err := parseOptionalInt(parts[16])
+	contextLeftPct, err := parseOptionalInt(parts[17])
 	if err != nil {
 		return BoardPane{}, fmt.Errorf("line %d: invalid context_left_pct: %w", lineNo, err)
 	}
 
 	return BoardPane{
 		PaneID:         parts[0],
-		SessionName:    parts[1],
-		WindowIndex:    parts[2],
-		WindowName:     parts[3],
-		PaneIndex:      parts[4],
-		Command:        parts[5],
-		Title:          parts[6],
-		Path:           parts[7],
+		PanePID:        panePID,
+		SessionName:    parts[2],
+		WindowIndex:    parts[3],
+		WindowName:     parts[4],
+		PaneIndex:      parts[5],
+		Command:        parts[6],
+		Title:          parts[7],
+		Path:           parts[8],
 		Dead:           deadValue == 1,
 		DeadStatus:     deadStatus,
 		WindowActivity: activity,
-		LocalStatus:    strings.TrimSpace(parts[11]),
-		AgentStatus:    strings.TrimSpace(parts[12]),
-		AgentTool:      strings.TrimSpace(parts[13]),
+		LocalStatus:    strings.TrimSpace(parts[12]),
+		AgentStatus:    strings.TrimSpace(parts[13]),
+		AgentTool:      strings.TrimSpace(parts[14]),
 		AgentUpdatedAt: agentUpdatedAt,
 		TokensUsed:     tokensUsed,
 		ContextLeftPct: contextLeftPct,

@@ -502,6 +502,38 @@ func TestRowsUseCodexDoneAndClaudeErrorHeuristics(t *testing.T) {
 	}
 }
 
+func TestRowsClassifyClaudeByWindowNameWhenCommandIsVersion(t *testing.T) {
+	svc := NewService(
+		&fakeStateSource{},
+		&fakeTMUX{
+			snapshot: []tmuxctl.BoardPane{
+				{
+					PaneID:         "%1",
+					SessionName:    "work",
+					WindowIndex:    "1",
+					WindowName:     "claude code",
+					PaneIndex:      "0",
+					Command:        "2.1.85",
+					Title:          "main",
+					WindowActivity: time.Now().UTC(),
+				},
+			},
+		},
+		"",
+	)
+
+	rows, err := svc.Rows(context.Background())
+	if err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows len = %d, want 1", len(rows))
+	}
+	if rows[0].Tool != "claude" {
+		t.Fatalf("rows[0].Tool = %q, want claude", rows[0].Tool)
+	}
+}
+
 func TestPreviewPrefersLiveTMUXStatusOverStoredProjection(t *testing.T) {
 	now := time.Now().UTC()
 	svc := NewService(
@@ -578,6 +610,84 @@ func TestRowsLetCodexLiveWaitOverrideFreshAdapterDone(t *testing.T) {
 	}
 }
 
+func TestRowsLetClaudeChooserOverrideFreshAdapterDone(t *testing.T) {
+	now := time.Now().UTC()
+	svc := NewService(
+		&fakeStateSource{},
+		&fakeTMUX{
+			snapshot: []tmuxctl.BoardPane{
+				{
+					PaneID:         "%1",
+					SessionName:    "work",
+					WindowIndex:    "1",
+					WindowName:     "claude code",
+					PaneIndex:      "0",
+					Command:        "2.1.76",
+					Title:          "main",
+					WindowActivity: now,
+					AgentStatus:    "DONE",
+					AgentTool:      "claude",
+					AgentUpdatedAt: now,
+				},
+			},
+			captures: map[string]string{
+				"%1": "Permissions: Allow Ask Deny\n❯ 1. Add a new rule…\nPress ↑↓ to navigate · Enter to select · Type to search · Esc to cancel",
+			},
+		},
+		"",
+	)
+
+	rows, err := svc.Rows(context.Background())
+	if err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows len = %d, want 1", len(rows))
+	}
+	if rows[0].Status != state.StatusWait {
+		t.Fatalf("rows[0].Status = %s, want WAIT", rows[0].Status)
+	}
+}
+
+func TestRowsKeepClaudeDoneWhenPermissionTextAppearsInProse(t *testing.T) {
+	now := time.Now().UTC()
+	svc := NewService(
+		&fakeStateSource{},
+		&fakeTMUX{
+			snapshot: []tmuxctl.BoardPane{
+				{
+					PaneID:         "%1",
+					SessionName:    "work",
+					WindowIndex:    "1",
+					WindowName:     "claude code",
+					PaneIndex:      "0",
+					Command:        "2.1.76",
+					Title:          "main",
+					WindowActivity: now,
+					AgentStatus:    "DONE",
+					AgentTool:      "claude",
+					AgentUpdatedAt: now,
+				},
+			},
+			captures: map[string]string{
+				"%1": "  - permissionDecision: fallback strategy notes\n  - activeFlags: []any → []string\n\n❯",
+			},
+		},
+		"",
+	)
+
+	rows, err := svc.Rows(context.Background())
+	if err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows len = %d, want 1", len(rows))
+	}
+	if rows[0].Status != state.StatusDone {
+		t.Fatalf("rows[0].Status = %s, want DONE", rows[0].Status)
+	}
+}
+
 func TestPreviewLetsOpencodeLiveDoneOverrideFreshAdapterRun(t *testing.T) {
 	now := time.Now().UTC()
 	svc := NewService(
@@ -638,6 +748,66 @@ func TestRowsRepoNameHandlesTrailingSlash(t *testing.T) {
 	}
 	if rows[0].Repo != "panefleet" {
 		t.Fatalf("rows[0].Repo = %q, want panefleet", rows[0].Repo)
+	}
+}
+
+func TestRowsFallbackToActiveCodexProcessMetrics(t *testing.T) {
+	svc := NewService(
+		&fakeStateSource{},
+		&fakeTMUX{
+			snapshot: []tmuxctl.BoardPane{
+				{
+					PaneID:      "%1",
+					PanePID:     4242,
+					SessionName: "work",
+					WindowIndex: "1",
+					WindowName:  "search",
+					PaneIndex:   "0",
+					Command:     "codex-aarch64-a",
+					Title:       "cdx",
+					Path:        "/tmp/panefleet",
+				},
+			},
+		},
+		"",
+	)
+	svc.codexMetrics = &codexMetricsResolver{
+		listProcesses: func(context.Context) ([]processInfo, error) {
+			return []processInfo{
+				{PPID: 4242, PID: 9001, Command: "codex --dangerously-bypass-approvals-and-sandbox"},
+			}, nil
+		},
+		listOpenFiles: func(_ context.Context, pid int) ([]string, error) {
+			if pid != 9001 {
+				t.Fatalf("pid = %d, want 9001", pid)
+			}
+			return []string{
+				"/Users/alexis/.codex/sessions/2026/03/27/rollout-2026-03-27T18-22-31-019d312d-6405-7b03-8413-3ec61daa45c7.jsonl",
+			}, nil
+		},
+		lookupThreadData: func(threadID string) (codexMetrics, bool, error) {
+			if threadID != "019d312d-6405-7b03-8413-3ec61daa45c7" {
+				t.Fatalf("threadID = %q, want exact rollout thread id", threadID)
+			}
+			return codexMetrics{
+				TokensUsed:     intPtr(12345),
+				ContextLeftPct: intPtr(88),
+			}, true, nil
+		},
+	}
+
+	rows, err := svc.Rows(context.Background())
+	if err != nil {
+		t.Fatalf("Rows: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows len = %d, want 1", len(rows))
+	}
+	if rows[0].TokensUsed == nil || *rows[0].TokensUsed != 12345 {
+		t.Fatalf("rows[0].TokensUsed = %v, want 12345", rows[0].TokensUsed)
+	}
+	if rows[0].ContextLeftPct == nil || *rows[0].ContextLeftPct != 88 {
+		t.Fatalf("rows[0].ContextLeftPct = %v, want 88", rows[0].ContextLeftPct)
 	}
 }
 
