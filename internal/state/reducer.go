@@ -6,11 +6,13 @@ import (
 	"time"
 )
 
+// Config contains lifecycle timing thresholds used by timer-driven transitions.
 type Config struct {
 	DoneRecentWindow time.Duration
 	StaleWindow      time.Duration
 }
 
+// Validate guarantees timer windows are usable before state transitions run.
 func (c Config) Validate() error {
 	if c.DoneRecentWindow <= 0 {
 		return errors.New("done recent window must be > 0")
@@ -21,10 +23,12 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// Reducer is the canonical transition engine for pane state streams.
 type Reducer struct {
 	cfg Config
 }
 
+// NewReducer wires validated lifecycle timing rules into one reducer instance.
 func NewReducer(cfg Config) (*Reducer, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -32,6 +36,8 @@ func NewReducer(cfg Config) (*Reducer, error) {
 	return &Reducer{cfg: cfg}, nil
 }
 
+// Apply projects one event onto current pane state while preserving ordering
+// and manual override precedence.
 func (r *Reducer) Apply(current PaneState, ev Event) (PaneState, error) {
 	if err := ev.Validate(); err != nil {
 		return current, err
@@ -63,20 +69,12 @@ func (r *Reducer) Apply(current PaneState, ev Event) (PaneState, error) {
 	case EventOverrideSet:
 		o := ev.OverrideTo
 		next.ManualOverride = &o
-		next = r.setStatus(next, o, source, reason, ev.OccurredAt)
 		return next, nil
 	case EventOverrideCleared:
 		next.ManualOverride = nil
 		return r.applyTimers(next, ev.OccurredAt, source, "override.cleared")
 	case EventTimerRecompute:
 		return r.applyTimers(next, ev.OccurredAt, source, reason)
-	}
-
-	// Manual override always wins for non-override events.
-	if next.ManualOverride != nil {
-		next.StatusSource = "manual-override"
-		next.ReasonCode = "override.active"
-		return next, nil
 	}
 
 	switch ev.Kind {

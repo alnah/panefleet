@@ -31,6 +31,8 @@ type Event struct {
 	ReasonCode string
 }
 
+// Validate enforces event invariants early so reducer logic only handles
+// semantically complete inputs.
 func (e Event) Validate() error {
 	if e.PaneID == "" {
 		return errors.New("pane_id is required")
@@ -73,6 +75,8 @@ type PaneState struct {
 	ManualOverride   *Status
 }
 
+// NewPaneState initializes unknown state for first-seen panes so every reducer
+// transition starts from consistent metadata.
 func NewPaneState(paneID string) PaneState {
 	now := time.Now().UTC()
 	return PaneState{
@@ -84,4 +88,17 @@ func NewPaneState(paneID string) PaneState {
 		LastEventAt:      now,
 		LastTransitionAt: now,
 	}
+}
+
+// Effective overlays a manual override onto the stored pane state for
+// user-facing reads without discarding the underlying lifecycle state.
+func (p PaneState) Effective() PaneState {
+	if p.ManualOverride == nil {
+		return p
+	}
+	out := p
+	out.Status = *p.ManualOverride
+	out.StatusSource = "manual-override"
+	out.ReasonCode = "override.active"
+	return out
 }

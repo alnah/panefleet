@@ -133,8 +133,11 @@ func TestReducerManualOverrideWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("set override: %v", err)
 	}
-	if overrideState.Status != StatusStale {
-		t.Fatalf("want STALE, got %s", overrideState.Status)
+	if overrideState.ManualOverride == nil || *overrideState.ManualOverride != StatusStale {
+		t.Fatalf("override should be recorded, got %+v", overrideState.ManualOverride)
+	}
+	if overrideState.Status != StatusUnknown {
+		t.Fatalf("override should not replace underlying status, got %s", overrideState.Status)
 	}
 
 	afterStart, err := r.Apply(overrideState, Event{
@@ -146,8 +149,11 @@ func TestReducerManualOverrideWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply start under override: %v", err)
 	}
-	if afterStart.Status != StatusStale {
-		t.Fatalf("override should win, got %s", afterStart.Status)
+	if afterStart.Status != StatusRun {
+		t.Fatalf("underlying state should keep progressing, got %s", afterStart.Status)
+	}
+	if afterStart.ManualOverride == nil || *afterStart.ManualOverride != StatusStale {
+		t.Fatalf("override should remain active, got %+v", afterStart.ManualOverride)
 	}
 
 	cleared, err := r.Apply(afterStart, Event{
@@ -161,6 +167,9 @@ func TestReducerManualOverrideWins(t *testing.T) {
 	}
 	if cleared.ManualOverride != nil {
 		t.Fatalf("override should be nil")
+	}
+	if cleared.Status != StatusRun {
+		t.Fatalf("cleared override should expose underlying status, got %s", cleared.Status)
 	}
 }
 
