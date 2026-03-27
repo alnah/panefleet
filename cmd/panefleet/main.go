@@ -45,8 +45,16 @@ func run(ctx context.Context, args []string) error {
 		return cmdStateShow(ctx, svc, args[1:])
 	case "state-list":
 		return cmdStateList(ctx, svc, args[1:])
+	case "state-set":
+		return cmdStateSet(ctx, svc, args[1:])
+	case "state-clear":
+		return cmdStateClear(ctx, svc, args[1:])
 	case "sync-tmux":
 		return cmdSyncTmux(ctx, svc, args[1:])
+	case "pane-kill":
+		return cmdPaneKill(ctx, args[1:])
+	case "pane-respawn":
+		return cmdPaneRespawn(ctx, args[1:])
 	case "tui":
 		return cmdTUI(svc, args[1:])
 	case "run":
@@ -168,6 +176,41 @@ func cmdStateList(ctx context.Context, svc *app.Service, args []string) error {
 	return printJSON(out)
 }
 
+func cmdStateSet(ctx context.Context, svc *app.Service, args []string) error {
+	fs := flag.NewFlagSet("state-set", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	pane := fs.String("pane", "", "tmux pane id")
+	statusRaw := fs.String("status", "", "override status")
+	source := fs.String("source", "cli", "override source")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	target, err := state.ParseStatus(*statusRaw)
+	if err != nil {
+		return err
+	}
+	out, err := svc.SetOverride(ctx, *pane, target, *source)
+	if err != nil {
+		return err
+	}
+	return printJSON(out)
+}
+
+func cmdStateClear(ctx context.Context, svc *app.Service, args []string) error {
+	fs := flag.NewFlagSet("state-clear", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	pane := fs.String("pane", "", "tmux pane id")
+	source := fs.String("source", "cli", "override source")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	out, err := svc.ClearOverride(ctx, *pane, *source)
+	if err != nil {
+		return err
+	}
+	return printJSON(out)
+}
+
 func cmdTUI(svc *app.Service, args []string) error {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -254,6 +297,34 @@ func cmdRun(ctx context.Context, svc *app.Service, args []string) error {
 	return err
 }
 
+func cmdPaneKill(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("pane-kill", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	pane := fs.String("pane", "", "tmux pane id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	tmux := tmuxctl.New(os.Getenv("PANEFLEET_TMUX_BIN"))
+	if err := tmux.KillPane(ctx, *pane); err != nil {
+		return err
+	}
+	return printJSON(map[string]any{"ok": true, "action": "kill", "pane": *pane})
+}
+
+func cmdPaneRespawn(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("pane-respawn", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	pane := fs.String("pane", "", "tmux pane id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	tmux := tmuxctl.New(os.Getenv("PANEFLEET_TMUX_BIN"))
+	if err := tmux.RespawnPane(ctx, *pane); err != nil {
+		return err
+	}
+	return printJSON(map[string]any{"ok": true, "action": "respawn", "pane": *pane})
+}
+
 func syncTmuxOnce(ctx context.Context, svc *app.Service, tmux *tmuxctl.ExecClient, at time.Time, source string) (int, error) {
 	snapshot, err := tmux.Snapshot(ctx)
 	if err != nil {
@@ -323,5 +394,5 @@ func printJSON(v any) error {
 }
 
 func usageError() error {
-	return errors.New("usage: panefleet <ingest|state-show|state-list|sync-tmux|tui|run> [flags]")
+	return errors.New("usage: panefleet <ingest|state-show|state-list|state-set|state-clear|sync-tmux|pane-kill|pane-respawn|tui|run> [flags]")
 }
