@@ -19,12 +19,12 @@ inferred_status() {
   fi
 
   case "$cmd" in
-    sh|bash|zsh|fish|nu|tmux)
-      printf 'IDLE'
-      ;;
-    *)
-      printf 'RUN'
-      ;;
+  sh | bash | zsh | fish | nu | tmux)
+    printf 'IDLE'
+    ;;
+  *)
+    printf 'RUN'
+    ;;
   esac
 }
 
@@ -49,8 +49,8 @@ idle_or_stale_status_values() {
     return
   fi
 
-  age=$(( now - touched_at ))
-  if (( age >= stale_minutes * 60 )); then
+  age=$((now - touched_at))
+  if ((age >= stale_minutes * 60)); then
     printf 'STALE'
   else
     printf 'IDLE'
@@ -68,37 +68,37 @@ effective_status_values() {
   local age
 
   case "$raw_status" in
-    ERROR|WAIT|RUN)
-      printf '%s' "$raw_status"
-      return
-      ;;
-    DONE)
-      if [[ -z "$last_done" || "$last_done" == "0" ]]; then
-        if [[ -n "$fallback_activity" && "$fallback_activity" != "0" ]]; then
-          last_done="$fallback_activity"
-        else
-          last_done="$now"
-        fi
-      elif [[ -n "$fallback_activity" && "$fallback_activity" != "0" && "$fallback_activity" -gt "$last_done" ]]; then
+  ERROR | WAIT | RUN)
+    printf '%s' "$raw_status"
+    return
+    ;;
+  DONE)
+    if [[ -z "$last_done" || "$last_done" == "0" ]]; then
+      if [[ -n "$fallback_activity" && "$fallback_activity" != "0" ]]; then
         last_done="$fallback_activity"
-      fi
-
-      age=$(( now - last_done ))
-      if (( age < done_recent_minutes * 60 )); then
-        printf 'DONE'
       else
-        printf '%s' "$(idle_or_stale_status_values "$last_touch" "$last_done" "$fallback_activity" "$stale_minutes" "$now")"
+        last_done="$now"
       fi
-      return
-      ;;
-    IDLE)
+    elif [[ -n "$fallback_activity" && "$fallback_activity" != "0" && "$fallback_activity" -gt "$last_done" ]]; then
+      last_done="$fallback_activity"
+    fi
+
+    age=$((now - last_done))
+    if ((age < done_recent_minutes * 60)); then
+      printf 'DONE'
+    else
       printf '%s' "$(idle_or_stale_status_values "$last_touch" "$last_done" "$fallback_activity" "$stale_minutes" "$now")"
-      return
-      ;;
-    *)
-      printf '%s' "$raw_status"
-      return
-      ;;
+    fi
+    return
+    ;;
+  IDLE)
+    printf '%s' "$(idle_or_stale_status_values "$last_touch" "$last_done" "$fallback_activity" "$stale_minutes" "$now")"
+    return
+    ;;
+  *)
+    printf '%s' "$raw_status"
+    return
+    ;;
   esac
 }
 
@@ -153,7 +153,7 @@ resolve_live_raw_state_values() {
         capture="$(pane_recent_capture "$pane_id")"
       fi
     fi
-    if [[ -n "$capture" && ( "$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9] ) ]]; then
+    if [[ -n "$capture" && ("$tool" == "$cmd" || "$tool" == "unknown" || "$tool" =~ ^[0-9]) ]]; then
       capture_tool="$(tool_from_capture "$capture")"
       if [[ "$capture_tool" != "unknown" ]]; then
         tool="$capture_tool"
