@@ -363,11 +363,11 @@ test_sourced_helpers() {
   rg -Fq -- "tui --refresh 1s" "$fake_tmux_log" || fail "popup-go should launch the Go-backed board runtime inside tmux popup"
   pass "popup-go runs the Go-backed board runtime"
 
-  got="$(FZF_BIN="$(command -v fzf)" fzf_supports_reload_sync && printf yes || printf no)"
+  got="$(FZF_BIN="${FAKE_FZF_BIN}" fzf_supports_reload_sync && printf yes || printf no)"
   assert_eq "$got" "yes" "fzf_supports_reload_sync should probe runtime bind support"
-  got="$(FZF_BIN="$(command -v fzf)" fzf_supports_result_event && printf yes || printf no)"
+  got="$(FZF_BIN="${FAKE_FZF_BIN}" fzf_supports_result_event && printf yes || printf no)"
   assert_eq "$got" "yes" "fzf_supports_result_event should probe runtime bind support"
-  got="$(FZF_BIN="$(command -v fzf)" fzf_supports_listen && printf yes || printf no)"
+  got="$(FZF_BIN="${FAKE_FZF_BIN}" fzf_supports_listen && printf yes || printf no)"
   assert_eq "$got" "yes" "fzf_supports_listen should detect listen support"
   pass "fzf capability probes detect live bind support"
 
