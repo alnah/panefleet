@@ -396,10 +396,15 @@ test_sourced_helpers() {
   pass "theme preview width follows fzf preview pane"
 
   got="$(theme_preview panefleet-dark)"
+  bg_seq="$(
+    export PANEFLEET_THEME="panefleet-dark"
+    resolve_theme
+    theme_preview_bg_sequence
+  )"
   [[ "$got" == *"BOARD"* ]] || fail "theme_preview should render a board sample"
   [[ "$got" == *"PREVIEW"* ]] || fail "theme_preview should render a preview sample"
   [[ "$got" != *"wcag"* ]] || fail "theme_preview should not render the wcag summary"
-  [[ "$got" == *$'\033[48;'* ]] || fail "theme_preview should paint the preview background"
+  [[ "$got" == *"$bg_seq"* ]] || fail "theme_preview should paint the preview background"
   pass "theme preview renders board-like sample content"
 
   got="$(theme_rows)"

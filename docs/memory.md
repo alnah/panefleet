@@ -177,6 +177,10 @@
   - wrap and scroll controls were removed from the visible TUI help line
   - the preview section bar no longer advertises wrap state
   - the board keeps the simpler jump/stale/quit control surface
+- The latest GitHub Actions CI failure was a shell-test contract issue, not a theme renderer bug:
+  - `theme_preview_bg_sequence()` intentionally supports truecolor, 256-color, and ANSI fallback
+  - the regression test had overfit to `ESC[48;...m` and failed on ANSI fallback output in CI
+  - the shell test now resolves the preview theme first and asserts against the actual background sequence returned by `theme_preview_bg_sequence()`
 
 ## Next verification gate
 
