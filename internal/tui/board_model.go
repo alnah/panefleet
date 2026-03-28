@@ -238,8 +238,8 @@ func (m BoardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the board across the full alt-screen area, with a table on top
-// and preview below.
+// View renders the board across the full alt-screen area with a full-width
+// header and a main content area that prefers a horizontal board/preview split.
 func (m BoardModel) View() string {
 	width := m.width
 	if width <= 0 {
@@ -252,16 +252,7 @@ func (m BoardModel) View() string {
 
 	lines := make([]string, 0, height)
 	lines = append(lines, m.renderHeader(width)...)
-
-	topHeight := max(8, height/2)
-	lines = append(lines, fitLine(m.renderSectionBar("board", ""), width))
-	tableLines := m.renderTable(width, max(3, topHeight-len(lines)))
-	lines = append(lines, tableLines...)
-	if len(lines) < height {
-		lines = append(lines, fitLine(m.renderSectionBar("preview", ""), width))
-		previewLines := m.renderPreview(width, max(0, height-len(lines)))
-		lines = append(lines, previewLines...)
-	}
+	lines = append(lines, m.renderMainContent(width, max(0, height-len(lines)))...)
 
 	if len(lines) < height {
 		for len(lines) < height {
@@ -271,6 +262,52 @@ func (m BoardModel) View() string {
 		lines = lines[:height]
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m BoardModel) renderMainContent(width, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	leftWidth, rightWidth, horizontal := boardPanelWidths(width)
+	if horizontal {
+		return m.renderHorizontalContent(leftWidth, rightWidth, height)
+	}
+	return m.renderVerticalContent(width, height)
+}
+
+func (m BoardModel) renderHorizontalContent(leftWidth, rightWidth, height int) []string {
+	separator := m.styles.separator.Render(" │ ")
+	lines := make([]string, 0, height)
+	leftLines := append([]string{fitLine(m.renderSectionBar("board", ""), leftWidth)}, m.renderTable(leftWidth, max(0, height-1))...)
+	rightLines := append([]string{fitLine(m.renderSectionBar("preview", ""), rightWidth)}, m.renderPreview(rightWidth, max(0, height-1))...)
+
+	for i := 0; i < height; i++ {
+		leftLine := fitLine(leftLines[i], leftWidth)
+		rightLine := fitLine(rightLines[i], rightWidth)
+		lines = append(lines, leftLine+separator+rightLine)
+	}
+	return lines
+}
+
+func (m BoardModel) renderVerticalContent(width, height int) []string {
+	lines := make([]string, 0, height)
+	tableSectionHeight := max(4, height/2)
+	tableLines := max(1, tableSectionHeight-1)
+	if tableLines > max(1, height-2) {
+		tableLines = max(1, height-2)
+	}
+
+	lines = append(lines, fitLine(m.renderSectionBar("board", ""), width))
+	lines = append(lines, m.renderTable(width, tableLines)...)
+
+	remaining := height - len(lines)
+	if remaining <= 0 {
+		return lines[:height]
+	}
+
+	lines = append(lines, fitLine(m.renderSectionBar("preview", ""), width))
+	lines = append(lines, m.renderPreview(width, max(0, height-len(lines)))...)
+	return lines
 }
 
 func (m *BoardModel) requestRowsCmd(priority refreshPriority) tea.Cmd {
@@ -531,9 +568,12 @@ func (m BoardModel) renderPreview(width, height int) []string {
 	if m.preview.PaneID == "" || m.preview.PaneID != m.selectedPaneID {
 		return padLines([]string{m.styles.info.Render(fmt.Sprintf("loading preview for %s", m.selectedPaneID))}, height)
 	}
-	lines = append(lines, fitLine(m.renderPreviewSummaryLine(), width))
+	lines = appendWrappedLines(lines, wrapStyledLine(m.renderPreviewSummaryLine(), width), height)
 	if meta := m.renderPreviewDetailLine(); meta != "" {
-		lines = append(lines, fitLine(meta, width))
+		lines = appendWrappedLines(lines, wrapStyledLine(meta, width), height)
+	}
+	if len(lines) >= height {
+		return padLines(lines, height)
 	}
 	lines = append(lines, fitLine(m.styles.borderMuted.Render(strings.Repeat("─", width)), width))
 	bodyLines := strings.Split(m.preview.Body, "\n")
@@ -542,8 +582,12 @@ func (m BoardModel) renderPreview(width, height int) []string {
 		if remaining == 0 {
 			break
 		}
-		lines = append(lines, fitLine(m.renderPreviewBodyLine(line), width))
-		remaining--
+		wrapped := wrapStyledLine(m.renderPreviewBodyLine(line), width)
+		if len(wrapped) > remaining {
+			wrapped = wrapped[:remaining]
+		}
+		lines = append(lines, wrapped...)
+		remaining -= len(wrapped)
 	}
 	return padLines(lines, height)
 }
@@ -563,6 +607,22 @@ func boardLayoutWidths(width int) (status, tool, target, session, window, repo, 
 	window = max(12, flex*35/100)
 	repo = max(8, flex-session-window)
 	return
+}
+
+func boardPanelWidths(width int) (left, right int, horizontal bool) {
+	const separatorWidth = 3
+
+	if width < 96 {
+		return width, width, false
+	}
+
+	contentWidth := width - separatorWidth
+	left = contentWidth * 3 / 5
+	right = contentWidth - left
+	if left < 60 || right < 28 {
+		return width, width, false
+	}
+	return left, right, true
 }
 
 func fitCell(text string, width int) string {
@@ -589,6 +649,33 @@ func fitLine(text string, width int) string {
 		text += strings.Repeat(" ", width-visible)
 	}
 	return text
+}
+
+func wrapStyledLine(text string, width int) []string {
+	if width <= 0 {
+		return []string{text}
+	}
+	wrapped := ansi.Wrap(text, width, "")
+	parts := strings.Split(wrapped, "\n")
+	lines := make([]string, 0, len(parts))
+	for _, part := range parts {
+		lines = append(lines, fitLine(part, width))
+	}
+	return lines
+}
+
+func appendWrappedLines(dst, src []string, limit int) []string {
+	if limit <= 0 {
+		return dst
+	}
+	remaining := limit - len(dst)
+	if remaining <= 0 {
+		return dst
+	}
+	if len(src) > remaining {
+		src = src[:remaining]
+	}
+	return append(dst, src...)
 }
 
 func joinColumns(parts ...string) string {

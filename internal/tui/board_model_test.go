@@ -285,12 +285,12 @@ func TestBoardModelViewUsesFullScreenState(t *testing.T) {
 	m.rows = runtime.rows
 	m.selectedPaneID = "%1"
 	m.preview = runtime.previews["%1"]
-	m.width = 100
+	m.width = 120
 	m.height = 20
 	m.rowsLoaded = true
 
 	view := m.View()
-	if !strings.Contains(view, "BOARD") || !strings.Contains(view, "TOKENS") || !strings.Contains(view, "hello") {
+	if !strings.Contains(view, "BOARD") || !strings.Contains(view, "PREVIEW") || !strings.Contains(view, "hello") {
 		t.Fatalf("view missing expected content: %q", view)
 	}
 	if !strings.Contains(view, "┃ RUN") {
@@ -298,6 +298,97 @@ func TestBoardModelViewUsesFullScreenState(t *testing.T) {
 	}
 	if got := len(strings.Split(view, "\n")); got != 20 {
 		t.Fatalf("view line count = %d, want 20", got)
+	}
+}
+
+func TestBoardModelViewUsesHorizontalSplitForMainPanels(t *testing.T) {
+	runtime := &fakeBoardRuntime{
+		rows: []board.Row{
+			{PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "work", WindowIndex: "1", PaneIndex: "0", WindowName: "clean", Repo: "panefleet"},
+		},
+		previews: map[string]board.Preview{
+			"%1": {PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "work", WindowIndex: "1", PaneIndex: "0", WindowName: "clean", Body: "hello"},
+		},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.rows = runtime.rows
+	m.selectedPaneID = "%1"
+	m.preview = runtime.previews["%1"]
+	m.width = 120
+	m.height = 20
+	m.rowsLoaded = true
+
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("view should have at least three lines, got %d", len(lines))
+	}
+	if !strings.Contains(lines[2], "BOARD") || !strings.Contains(lines[2], "PREVIEW") {
+		t.Fatalf("main panels should share a horizontal row, got line %q", lines[2])
+	}
+}
+
+func TestBoardModelViewClearsEveryHorizontalLineToViewportWidth(t *testing.T) {
+	runtime := &fakeBoardRuntime{
+		rows: []board.Row{
+			{PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "work", WindowIndex: "1", PaneIndex: "0", WindowName: "clean", Repo: "panefleet"},
+		},
+		previews: map[string]board.Preview{
+			"%1": {PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "work", WindowIndex: "1", PaneIndex: "0", WindowName: "clean", Body: "short"},
+		},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.rows = runtime.rows
+	m.selectedPaneID = "%1"
+	m.preview = runtime.previews["%1"]
+	m.width = 120
+	m.height = 20
+	m.rowsLoaded = true
+
+	for _, line := range strings.Split(m.View(), "\n") {
+		if got := ansi.StringWidth(line); got != 120 {
+			t.Fatalf("line width = %d, want 120: %q", got, line)
+		}
+	}
+}
+
+func TestBoardPanelWidthsUseThreeFifthsTwoFifthsSplit(t *testing.T) {
+	left, right, horizontal := boardPanelWidths(120)
+	if !horizontal {
+		t.Fatalf("boardPanelWidths should use horizontal split at width 120")
+	}
+	if left != 70 {
+		t.Fatalf("left panel width = %d, want 70", left)
+	}
+	if right != 47 {
+		t.Fatalf("right panel width = %d, want 47", right)
+	}
+}
+
+func TestBoardModelViewWrapsPreviewTextInRightPane(t *testing.T) {
+	body := "- docs/board_tui_plan.md : plan de migration du board bubble tea avec historique et contraintes de rendu"
+	runtime := &fakeBoardRuntime{
+		rows: []board.Row{
+			{PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "work", WindowIndex: "1", PaneIndex: "0", WindowName: "clean", Repo: "panefleet"},
+		},
+		previews: map[string]board.Preview{
+			"%1": {PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "work", WindowIndex: "1", PaneIndex: "0", WindowName: "clean", Body: body},
+		},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.rows = runtime.rows
+	m.selectedPaneID = "%1"
+	m.preview = runtime.previews["%1"]
+	m.width = 120
+	m.height = 18
+	m.rowsLoaded = true
+
+	view := m.View()
+	if !strings.Contains(view, "docs/board_tui_plan.md") {
+		t.Fatalf("preview should keep the file path visible, got %q", view)
+	}
+	if !strings.Contains(view, "du board bubble tea") {
+		t.Fatalf("preview should wrap the remaining body text, got %q", view)
 	}
 }
 
