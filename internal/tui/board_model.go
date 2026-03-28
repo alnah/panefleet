@@ -746,8 +746,15 @@ func trimLastWord(s string) string {
 }
 
 func isSearchClearLineKey(msg tea.KeyMsg) bool {
-	// On common terminals Bubble Tea reports ctrl+backspace as ctrl+h.
-	return msg.Type == tea.KeyCtrlH || msg.String() == "ctrl+backspace"
+	// Terminals do not agree on how ctrl+backspace is encoded. Depending on the
+	// terminal/tmux stack Bubble Tea may surface it as ctrl+h, ctrl+u, ctrl+w,
+	// or a dedicated ctrl+backspace string.
+	switch msg.String() {
+	case "ctrl+backspace", "ctrl+h", "ctrl+u", "ctrl+w":
+		return true
+	default:
+		return false
+	}
 }
 
 func isSearchDeleteWordKey(msg tea.KeyMsg) bool {

@@ -337,6 +337,30 @@ func TestBoardModelViewShowsLoadingBeforeFirstRows(t *testing.T) {
 	}
 }
 
+func TestBoardModelCtrlBackspaceAliasesClearWholeSearch(t *testing.T) {
+	cases := []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{name: "ctrl+h", key: tea.KeyMsg{Type: tea.KeyCtrlH}},
+		{name: "ctrl+u", key: tea.KeyMsg{Type: tea.KeyCtrlU}},
+		{name: "ctrl+w", key: tea.KeyMsg{Type: tea.KeyCtrlW}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewBoard(&fakeBoardRuntime{}, time.Second, "dracula")
+			m.searchQuery = "pane fleet"
+
+			updated, _ := m.Update(tc.key)
+			model := updated.(BoardModel)
+			if model.searchQuery != "" {
+				t.Fatalf("searchQuery = %q, want empty", model.searchQuery)
+			}
+		})
+	}
+}
+
 func TestBoardModelErrorPaths(t *testing.T) {
 	runtime := &fakeBoardRuntime{rowsErr: errors.New("boom")}
 	m := NewBoard(runtime, time.Second, "dracula")
