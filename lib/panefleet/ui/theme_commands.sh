@@ -9,6 +9,14 @@ board_popup_height() {
   printf '%s' "${PANEFLEET_BOARD_POPUP_HEIGHT:-100%}"
 }
 
+theme_popup_width() {
+  printf '%s' "${PANEFLEET_THEME_POPUP_WIDTH:-$(board_popup_width)}"
+}
+
+theme_popup_height() {
+  printf '%s' "${PANEFLEET_THEME_POPUP_HEIGHT:-$(board_popup_height)}"
+}
+
 open_popup() {
   require_tmux
   require_runtime_support
@@ -57,7 +65,7 @@ theme_rows() {
       marker=" "
     fi
 
-    display="$(printf '%s %-18s %s' "$marker" "$theme_name" "$(theme_sample "$theme_name")")"
+    display="$(printf '%s %s' "$marker" "$theme_name")"
     printf '%s\t%s\n' "$theme_name" "$display"
   done < <(available_themes)
 }
@@ -104,41 +112,366 @@ contrast_badge_text() {
   fi
 }
 
+theme_preview_columns() {
+  local columns="${FZF_PREVIEW_COLUMNS:-${COLUMNS:-}}"
+
+  if [[ ! "$columns" =~ ^[0-9]+$ ]] || ((columns < 40)); then
+    if command -v tput >/dev/null 2>&1; then
+      columns="$(tput cols 2>/dev/null || true)"
+    fi
+  fi
+
+  if [[ ! "$columns" =~ ^[0-9]+$ ]] || ((columns < 40)); then
+    columns=80
+  fi
+
+  printf '%s' "$columns"
+}
+
+theme_preview_mode() {
+  local columns="${1:?preview columns are required}"
+
+  if ((columns < 74)); then
+    printf 'narrow'
+  elif ((columns < 110)); then
+    printf 'medium'
+  else
+    printf 'full'
+  fi
+}
+
+theme_preview_meta() {
+  local resolved_theme_name="$1"
+  local mode="$6"
+
+  printf 'theme   %s\n' "$resolved_theme_name"
+  theme_preview_palette "$mode"
+}
+
+theme_preview_bg_sequence() {
+  resolve_color_mode
+
+  case "$PANEFLEET_COLOR_MODE_RESOLVED" in
+  truecolor)
+    printf '\033[48;2;%sm' "$(hex_triplet "$THEME_BG")"
+    ;;
+  256)
+    printf '\033[48;5;%sm' "$(hex_to_ansi256 "$THEME_BG")"
+    ;;
+  *)
+    printf '\033[%sm' "$(ansi_bg_code "$THEME_BG")"
+    ;;
+  esac
+}
+
+theme_preview_strip_ansi() {
+  perl -pe 's/\e\[[0-9;]*m//g'
+}
+
+theme_preview_paint_bg() {
+  local columns="${1:?preview columns are required}"
+  local bg_seq reset line plain pad_width pad
+
+  bg_seq="$(theme_preview_bg_sequence)"
+  reset=$'\033[0m'
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    plain="$(printf '%s' "$line" | theme_preview_strip_ansi)"
+    pad_width=$((columns - ${#plain}))
+    if ((pad_width < 0)); then
+      pad_width=0
+    fi
+    printf -v pad '%*s' "$pad_width" ''
+    line="${line//${reset}/${reset}${bg_seq}}"
+    printf '%b%s%s%b\n' "$bg_seq" "$line" "$pad" "$reset"
+  done
+}
+
+theme_preview_swatch() {
+  local label="$1"
+  local color="$2"
+
+  printf '%s %s' \
+    "$(paint_fg "$(fit_cell "$label" 7)" "$THEME_MUTED")" \
+    "$(paint_fg "████" "$color")"
+}
+
+theme_preview_palette_narrow() {
+  printf '%s\n' "$(paint_fg "PALETTE" "$THEME_HEADER" "1")"
+  printf '%s  %s\n' \
+    "$(theme_preview_swatch "bg" "$THEME_BG")" \
+    "$(theme_preview_swatch "fg" "$THEME_FG")"
+  printf '%s  %s\n' \
+    "$(theme_preview_swatch "accent" "$THEME_ACCENT")" \
+    "$(theme_preview_swatch "border" "$THEME_BORDER")"
+  printf '%s  %s\n' \
+    "$(theme_preview_swatch "run" "$THEME_RUN")" \
+    "$(theme_preview_swatch "wait" "$THEME_WAIT")"
+  printf '%s  %s\n' \
+    "$(theme_preview_swatch "done" "$THEME_DONE")" \
+    "$(theme_preview_swatch "error" "$THEME_ERROR")"
+}
+
+theme_preview_palette_medium() {
+  printf '%s\n' "$(paint_fg "PALETTE" "$THEME_HEADER" "1")"
+  printf '%s  %s  %s\n' \
+    "$(theme_preview_swatch "bg" "$THEME_BG")" \
+    "$(theme_preview_swatch "fg" "$THEME_FG")" \
+    "$(theme_preview_swatch "accent" "$THEME_ACCENT")"
+  printf '%s  %s  %s\n' \
+    "$(theme_preview_swatch "border" "$THEME_BORDER")" \
+    "$(theme_preview_swatch "run" "$THEME_RUN")" \
+    "$(theme_preview_swatch "wait" "$THEME_WAIT")"
+  printf '%s  %s  %s\n' \
+    "$(theme_preview_swatch "done" "$THEME_DONE")" \
+    "$(theme_preview_swatch "error" "$THEME_ERROR")" \
+    "$(theme_preview_swatch "idle" "$THEME_IDLE")"
+}
+
+theme_preview_palette_full() {
+  printf '%s\n' "$(paint_fg "PALETTE" "$THEME_HEADER" "1")"
+  printf '%s  %s  %s  %s\n' \
+    "$(theme_preview_swatch "bg" "$THEME_BG")" \
+    "$(theme_preview_swatch "fg" "$THEME_FG")" \
+    "$(theme_preview_swatch "border" "$THEME_BORDER")" \
+    "$(theme_preview_swatch "accent" "$THEME_ACCENT")"
+  printf '%s  %s  %s  %s\n' \
+    "$(theme_preview_swatch "run" "$THEME_RUN")" \
+    "$(theme_preview_swatch "wait" "$THEME_WAIT")" \
+    "$(theme_preview_swatch "done" "$THEME_DONE")" \
+    "$(theme_preview_swatch "error" "$THEME_ERROR")"
+  printf '%s  %s  %s\n' \
+    "$(theme_preview_swatch "idle" "$THEME_IDLE")" \
+    "$(theme_preview_swatch "stale" "$THEME_STALE")" \
+    "$(theme_preview_swatch "diff" "$THEME_DIFF_HUNK")"
+}
+
+theme_preview_palette() {
+  local mode="$1"
+
+  case "$mode" in
+  narrow)
+    theme_preview_palette_narrow
+    ;;
+  medium)
+    theme_preview_palette_medium
+    ;;
+  *)
+    theme_preview_palette_full
+    ;;
+  esac
+}
+
+theme_preview_board_full() {
+  printf '%s\n' "$(paint_fg "BOARD" "$THEME_HEADER" "1")"
+  printf '%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "  " \
+    "$(header_cell "$(fit_cell "STATE" 5)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "TOOL" 7)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "TARGET" 8)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "SESSION" 12)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "WINDOW" 12)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "REPO" 12)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "TOKENS" 10)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "CTX%" 5)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "AGE" 4)")"
+  printf '%s\n' "$(paint_fg "▌" "$THEME_ACCENT" "1") $(colored_status_cell "RUN")$(separator_cell)$(preview_value "$(fit_cell "codex" 7)")$(separator_cell)$(preview_value "$(fit_cell "2.0" 8)")$(separator_cell)$(preview_value "$(fit_cell "panefleet" 12)")$(separator_cell)$(preview_value "$(fit_cell "board" 12)")$(separator_cell)$(preview_value "$(fit_cell "panefleet" 12)")$(separator_cell)$(tokens_color "41226488" "$(fit_cell "41226488" 10)")$(separator_cell)$(context_left_color "41" "$(fit_cell "41%" 5)")$(separator_cell)$(preview_value "$(fit_cell "10s" 4)")"
+  printf '  %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$(colored_status_cell "WAIT")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "codex" 7)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "3.0" 8)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "panefleet" 12)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "teach" 12)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "panefleet" 12)")" "$(separator_cell)" \
+    "$(tokens_color "153096" "$(fit_cell "153096" 10)")" "$(separator_cell)" \
+    "$(context_left_color "12" "$(fit_cell "12%" 5)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "24s" 4)")"
+  printf '  %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$(colored_status_cell "DONE")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "claude" 7)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "4.0" 8)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "panefleet" 12)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "claude" 12)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "fle" 12)")" "$(separator_cell)" \
+    "$(tokens_color "29666586" "$(fit_cell "29666586" 10)")" "$(separator_cell)" \
+    "$(context_left_color "0" "$(fit_cell "0%" 5)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "1m" 4)")"
+  printf '  %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$(colored_status_cell "ERROR")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "opencode" 7)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "5.0" 8)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "panefleet" 12)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "review" 12)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "fle" 12)")" "$(separator_cell)" \
+    "$(tokens_color "247366" "$(fit_cell "247366" 10)")" "$(separator_cell)" \
+    "$(context_left_color "4" "$(fit_cell "4%" 5)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "3m" 4)")"
+  printf '  %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$(colored_status_cell "IDLE")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "shell" 7)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "0.0" 8)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "teach" 12)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "zsh" 12)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "alnah.me" 12)")" "$(separator_cell)" \
+    "$(tokens_color "-" "$(fit_cell "-" 10)")" "$(separator_cell)" \
+    "$(context_left_color "-" "$(fit_cell "-" 5)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "8m" 4)")"
+  printf '  %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$(colored_status_cell "STALE")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "shell" 7)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "0.0" 8)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "teach" 12)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "zsh" 12)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "alnah.me" 12)")" "$(separator_cell)" \
+    "$(tokens_color "-" "$(fit_cell "-" 10)")" "$(separator_cell)" \
+    "$(context_left_color "-" "$(fit_cell "-" 5)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "16m" 4)")"
+}
+
+theme_preview_board_medium() {
+  printf '%s\n' "$(paint_fg "BOARD" "$THEME_HEADER" "1")"
+  printf '%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "  " \
+    "$(header_cell "$(fit_cell "STATE" 5)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "TOOL" 7)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "TARGET" 8)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "WINDOW" 12)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "TOKENS" 10)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "CTX%" 5)")" "$(separator_cell)" \
+    "$(header_cell "$(fit_cell "AGE" 4)")"
+  printf '%s\n' "$(paint_fg "▌" "$THEME_ACCENT" "1") $(colored_status_cell "RUN")$(separator_cell)$(preview_value "$(fit_cell "codex" 7)")$(separator_cell)$(preview_value "$(fit_cell "2.0" 8)")$(separator_cell)$(preview_value "$(fit_cell "board" 12)")$(separator_cell)$(tokens_color "41226488" "$(fit_cell "41226488" 10)")$(separator_cell)$(context_left_color "41" "$(fit_cell "41%" 5)")$(separator_cell)$(preview_value "$(fit_cell "10s" 4)")"
+  printf '  %s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$(colored_status_cell "WAIT")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "codex" 7)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "3.0" 8)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "teach" 12)")" "$(separator_cell)" \
+    "$(tokens_color "153096" "$(fit_cell "153096" 10)")" "$(separator_cell)" \
+    "$(context_left_color "12" "$(fit_cell "12%" 5)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "24s" 4)")"
+  printf '  %s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$(colored_status_cell "DONE")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "claude" 7)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "4.0" 8)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "claude" 12)")" "$(separator_cell)" \
+    "$(tokens_color "29666586" "$(fit_cell "29666586" 10)")" "$(separator_cell)" \
+    "$(context_left_color "0" "$(fit_cell "0%" 5)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "1m" 4)")"
+  printf '  %s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$(colored_status_cell "ERROR")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "opencode" 7)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "5.0" 8)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "review" 12)")" "$(separator_cell)" \
+    "$(tokens_color "247366" "$(fit_cell "247366" 10)")" "$(separator_cell)" \
+    "$(context_left_color "4" "$(fit_cell "4%" 5)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "3m" 4)")"
+  printf '  %s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$(colored_status_cell "IDLE")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "shell" 7)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "0.0" 8)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "zsh" 12)")" "$(separator_cell)" \
+    "$(tokens_color "-" "$(fit_cell "-" 10)")" "$(separator_cell)" \
+    "$(context_left_color "-" "$(fit_cell "-" 5)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "8m" 4)")"
+  printf '  %s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$(colored_status_cell "STALE")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "shell" 7)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "0.0" 8)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "zsh" 12)")" "$(separator_cell)" \
+    "$(tokens_color "-" "$(fit_cell "-" 10)")" "$(separator_cell)" \
+    "$(context_left_color "-" "$(fit_cell "-" 5)")" "$(separator_cell)" \
+    "$(preview_value "$(fit_cell "16m" 4)")"
+}
+
+theme_preview_board_narrow() {
+  printf '%s\n' "$(paint_fg "BOARD" "$THEME_HEADER" "1")"
+  printf '%s\n' "$(paint_fg "▌" "$THEME_ACCENT" "1") $(colored_status_cell "RUN") $(preview_value "codex 2.0") $(context_left_color "41" "41%") $(preview_value "10s")"
+  printf '%s\n' "  $(colored_status_cell "WAIT") $(preview_value "codex 3.0") $(context_left_color "12" "12%") $(preview_value "24s")"
+  printf '%s\n' "  $(colored_status_cell "DONE") $(preview_value "claude 4.0") $(context_left_color "0" "0%") $(preview_value "1m")"
+  printf '%s\n' "  $(colored_status_cell "ERROR") $(preview_value "opencode 5.0") $(context_left_color "4" "4%") $(preview_value "3m")"
+  printf '%s\n' "  $(colored_status_cell "IDLE") $(preview_value "shell 0.0") $(preview_value "8m")"
+  printf '%s\n' "  $(colored_status_cell "STALE") $(preview_value "shell 0.0") $(preview_value "16m")"
+  printf '  %s\n' "$(preview_value "board · panefleet")"
+  printf '  %s %s\n' "$(preview_label "tokens")" "$(tokens_color "41226488" "41226488")"
+  printf '  %s\n' "$(preview_value "paths, links, warnings, diffs" "$THEME_FG_SUBTLE")"
+}
+
+theme_preview_capture() {
+  local mode="$1"
+
+  printf '%s\n' "$(paint_fg "PREVIEW" "$THEME_HEADER" "1")"
+
+  case "$mode" in
+  narrow)
+    render_preview_capture <<'EOF'
+# preview
+You can preview a coding-agent chat here.
+
+› open /Users/alexis/workspace/panefleet/internal/tui/board_theme.go
++ clearer links and file paths
+- washed out selected row
+EOF
+    ;;
+  medium)
+    render_preview_capture <<'EOF'
+• You can preview a coding-agent session here
+› open /Users/alexis/workspace/panefleet/internal/tui/board_theme.go
+
+# theme preview
+Commands, file paths, links, warnings, and diffs should stay readable.
+
++ improve link and file emphasis
+- washed out selected row
+EOF
+    ;;
+  *)
+    render_preview_capture <<'EOF'
+• You can preview the chat with your coding agent here
+› open /Users/alexis/workspace/panefleet/internal/tui/board_theme.go
+› open /Users/alexis/workspace/panefleet/README.md
+
+# theme preview
+Commands, file paths, links, warnings, and diffs should stay readable.
+
+diff --git a/internal/tui/board_theme.go b/internal/tui/board_theme.go
+@@ preview
++ improve link and file emphasis
+- washed out selected row
+EOF
+    ;;
+  esac
+}
+
 theme_preview() {
   local theme_name="${1:?theme name is required}"
-  local text_ratio ui_ratio text_pass ui_pass resolved_theme_name
+  local text_ratio ui_ratio text_pass ui_pass resolved_theme_name columns mode
 
   PANEFLEET_THEME="$theme_name"
   resolve_theme
   resolved_theme_name="${THEME_NAME:-$theme_name}"
+  columns="$(theme_preview_columns)"
+  mode="$(theme_preview_mode "$columns")"
   text_ratio="$(contrast_ratio_x100 "$THEME_FG" "$THEME_BG")"
   ui_ratio="$(contrast_ratio_x100 "$THEME_BORDER_STRONG" "$THEME_BG")"
   text_pass="$(contrast_badge_text "$text_ratio" 450)"
   ui_pass="$(contrast_badge_text "$ui_ratio" 300)"
 
-  printf 'theme   %s\n' "$resolved_theme_name"
-  printf 'bg      %s\n' "$THEME_BG"
-  printf 'fg      %s\n' "$THEME_FG"
-  printf 'border  %s\n' "$THEME_BORDER"
-  printf 'accent  %s\n' "$THEME_ACCENT"
-  printf 'wcag    text %s (%d.%02d:1)  ui %s (%d.%02d:1)\n' \
-    "$text_pass" \
-    "$((text_ratio / 100))" "$((text_ratio % 100))" \
-    "$ui_pass" \
-    "$((ui_ratio / 100))" "$((ui_ratio % 100))"
-  printf '\n'
-  printf 'states  %s  %s  %s  %s  %s  %s\n' \
-    "$(status_color "RUN")" \
-    "$(status_color "WAIT")" \
-    "$(status_color "DONE")" \
-    "$(status_color "ERROR")" \
-    "$(status_color "IDLE")" \
-    "$(status_color "STALE")"
-  printf 'diffs   %s  %s  %s  %s\n' \
-    "$(paint_fg "header" "$THEME_DIFF_HEADER" "1")" \
-    "$(paint_fg "hunk" "$THEME_DIFF_HUNK" "1")" \
-    "$(paint_fg "add" "$THEME_DIFF_ADD" "1")" \
-    "$(paint_fg "remove" "$THEME_DIFF_REMOVE" "1")"
+  {
+    theme_preview_meta "$resolved_theme_name" "$text_ratio" "$ui_ratio" "$text_pass" "$ui_pass" "$mode"
+    printf '\n'
+    case "$mode" in
+    narrow)
+      theme_preview_board_narrow
+      ;;
+    medium)
+      theme_preview_board_medium
+      ;;
+    *)
+      theme_preview_board_full
+      ;;
+    esac
+    printf '\n'
+    theme_preview_capture "$mode"
+  } | theme_preview_paint_bg "$columns"
 }
 
 apply_theme() {
@@ -170,12 +503,12 @@ open_theme_selector() {
     --border=none \
     --info=inline-right \
     --prompt='theme> ' \
-    --header='enter: apply theme · preview includes quick wcag check' \
+    --header='[⏎] apply theme' \
     --separator='─' \
     --pointer='▌' \
     --marker='•' \
     --preview "${SELF} theme-preview {1}" \
-    --preview-window='bottom,45%,border-top,wrap' \
+    --preview-window='right,78%,border-left,wrap' \
     --bind "enter:execute-silent(${SELF} theme-apply {1})+abort"
   rc=$?
   set -e
@@ -197,8 +530,8 @@ open_theme_popup() {
 
   "${TMUX_BIN}" display-popup \
     -E \
-    -w 70% \
-    -h 70% \
+    -w "$(theme_popup_width)" \
+    -h "$(theme_popup_height)" \
     -T "panefleet themes" \
     -s "$(theme_popup_style)" \
     -S "$(theme_popup_border_style)" \

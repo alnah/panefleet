@@ -285,6 +285,14 @@ EOF
     "${PANEFLEET_BIN}" "${command}"
 }
 
+run_theme_popup() {
+  TMUX=1 \
+    TMUX_BIN="${FAKE_TMUX_BIN}" \
+    FZF_BIN="${FZF_BIN:-fzf}" \
+    PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" \
+    "${PANEFLEET_BIN}" theme-popup
+}
+
 assert_opencode_readyish() {
   local doctor_output="$1"
   local msg="$2"
@@ -338,6 +346,12 @@ test_sourced_helpers() {
   assert_eq "$got" "100%" "board popup height should default to full client height"
   pass "board popup defaults to full client size"
 
+  got="$(theme_popup_width)"
+  assert_eq "$got" "100%" "theme popup width should default to full client width"
+  got="$(theme_popup_height)"
+  assert_eq "$got" "100%" "theme popup height should default to full client height"
+  pass "theme popup defaults to full client size"
+
   board_runner_log="${TEST_TMPDIR}/go-board.log"
   : >"$board_runner_log"
   run_board_with_stub "$board_runner_log"
@@ -363,6 +377,12 @@ test_sourced_helpers() {
   rg -Fq -- "tui --refresh 1s" "$fake_tmux_log" || fail "popup-go should launch the Go-backed board runtime inside tmux popup"
   pass "popup-go runs the Go-backed board runtime"
 
+  : >"$fake_tmux_log"
+  run_theme_popup
+  rg -Fq -- "display-popup -E -w 100% -h 100% -T panefleet themes" "$fake_tmux_log" || fail "theme popup should use full-screen popup sizing"
+  rg -Fq -- "theme-select" "$fake_tmux_log" || fail "theme popup should launch the theme selector"
+  pass "theme popup opens full-screen theme selector"
+
   got="$(FZF_BIN="${FAKE_FZF_BIN}" fzf_supports_reload_sync && printf yes || printf no)"
   assert_eq "$got" "yes" "fzf_supports_reload_sync should probe runtime bind support"
   got="$(FZF_BIN="${FAKE_FZF_BIN}" fzf_supports_result_event && printf yes || printf no)"
@@ -370,6 +390,27 @@ test_sourced_helpers() {
   got="$(FZF_BIN="${FAKE_FZF_BIN}" fzf_supports_listen && printf yes || printf no)"
   assert_eq "$got" "yes" "fzf_supports_listen should detect listen support"
   pass "fzf capability probes detect live bind support"
+
+  got="$(FZF_PREVIEW_COLUMNS=64 COLUMNS=160 theme_preview_columns)"
+  assert_eq "$got" "64" "theme_preview_columns should prioritize FZF preview width"
+  pass "theme preview width follows fzf preview pane"
+
+  got="$(theme_preview panefleet-dark)"
+  [[ "$got" == *"BOARD"* ]] || fail "theme_preview should render a board sample"
+  [[ "$got" == *"PREVIEW"* ]] || fail "theme_preview should render a preview sample"
+  [[ "$got" != *"wcag"* ]] || fail "theme_preview should not render the wcag summary"
+  [[ "$got" == *$'\033[48;'* ]] || fail "theme_preview should paint the preview background"
+  pass "theme preview renders board-like sample content"
+
+  got="$(theme_rows)"
+  [[ "$got" == *$'panefleet-dark\t'* ]] || fail "theme_rows should list theme names"
+  [[ "$got" != *"RUN"* ]] || fail "theme_rows should not inline state samples in the left column"
+  pass "theme rows keep the left column text-only"
+
+  [[ "$(cat "${REPO_ROOT}/lib/panefleet/ui/theme_commands.sh")" == *"--header='[⏎] apply theme'"* ]] || fail "theme selector should advertise the enter glyph apply hint"
+  [[ "$(cat "${REPO_ROOT}/lib/panefleet/ui/theme_commands.sh")" != *"moving updates the preview instantly"* ]] || fail "theme selector should not show the old verbose header copy"
+  [[ "$(cat "${REPO_ROOT}/lib/panefleet/ui/theme_commands.sh")" == *"--preview-window='right,78%,border-left,wrap'"* ]] || fail "theme selector should prioritize the preview pane width"
+  pass "theme selector uses compact apply hint"
 
   got="$(board_ticker_interval_seconds)"
   assert_eq "$got" "1" "board_ticker_interval_seconds should default to one second"
