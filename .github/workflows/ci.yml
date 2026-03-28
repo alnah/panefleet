@@ -26,7 +26,7 @@ jobs:
           version: "~> v2"
 
       - name: install runtime and lint dependencies
-        run: sudo apt-get update && sudo apt-get install -y shellcheck ripgrep tmux fzf
+        run: sudo apt-get update && sudo apt-get install -y shellcheck shfmt ripgrep tmux fzf
 
       - name: run test suite
         run: ./scripts/test.sh
