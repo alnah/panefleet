@@ -11,10 +11,15 @@ source "${SCRIPT_DIR}/../lib/panefleet/runtime/paths.sh"
 
 REPO_ROOT="${PANEFLEET_ROOT:-$(panefleet_find_repo_root_from "${BASH_SOURCE[0]}")}"
 PANEFLEET_BIN="${PANEFLEET_BIN:-${REPO_ROOT}/bin/panefleet}"
+PANEFLEET_GO_BIN="${PANEFLEET_GO_BIN:-${REPO_ROOT}/scripts/panefleet-go}"
 require_bridge="${PANEFLEET_REQUIRE_BRIDGE:-0}"
 
 if [[ ! -x "${PANEFLEET_BIN}" ]]; then
   printf 'healthcheck: panefleet binary not executable: %s\n' "${PANEFLEET_BIN}" >&2
+  exit 1
+fi
+if [[ ! -x "${PANEFLEET_GO_BIN}" ]]; then
+  printf 'healthcheck: panefleet go runtime not executable: %s\n' "${PANEFLEET_GO_BIN}" >&2
   exit 1
 fi
 
@@ -25,6 +30,26 @@ else
   printf 'failed\n'
   printf "healthcheck: run \`%s preflight\` for details\n" "${PANEFLEET_BIN}" >&2
   exit 1
+fi
+
+printf 'healthcheck: go liveness... '
+if "${PANEFLEET_GO_BIN}" health --check liveness >/dev/null; then
+  printf 'ok\n'
+else
+  printf 'failed\n'
+  exit 1
+fi
+
+if [[ -n "${TMUX:-}" ]]; then
+  printf 'healthcheck: go readiness... '
+  if "${PANEFLEET_GO_BIN}" health --check readiness >/dev/null; then
+    printf 'ok\n'
+  else
+    printf 'failed\n'
+    exit 1
+  fi
+else
+  printf 'healthcheck: go readiness... skipped (outside tmux)\n'
 fi
 
 install_report="$("${PANEFLEET_BIN}" doctor --install)"

@@ -484,7 +484,7 @@ test_sourced_helpers() {
 }
 
 test_fake_tmux_cli() {
-  local output line101 line102 line103 line104 inspect_output doctor_output install_doctor_output stale_touch manual_103_path manual_102_path
+  local output line101 line102 line103 line104 inspect_output doctor_output install_doctor_output health_output stale_touch manual_103_path manual_102_path
 
   output="$(run_list)"
   line101="$(printf '%s\n' "$output" | rg '^%101')"
@@ -597,6 +597,11 @@ test_fake_tmux_cli() {
   [[ "$install_doctor_output" == *"self.root"* ]] || fail "doctor --install should print install root"
   [[ "$install_doctor_output" == *"bridge.present"* ]] || fail "doctor --install should print bridge presence"
   pass "doctor --install exposes install diagnostics"
+
+  health_output="$(TMUX=1 TMUX_BIN="${FAKE_TMUX_BIN}" PANEFLEET_FAKE_TMUX_DIR="${TEST_TMPDIR}/fake-tmux" PANEFLEET_DB_PATH="${TEST_TMPDIR}/health.db" PANEFLEET_GO_BIN="${REPO_ROOT}/scripts/panefleet-go" "${REPO_ROOT}/scripts/ops-healthcheck.sh")"
+  [[ "$health_output" == *"healthcheck: go liveness... ok"* ]] || fail "ops healthcheck should run go liveness"
+  [[ "$health_output" == *"healthcheck: go readiness... ok"* ]] || fail "ops healthcheck should run go readiness inside tmux"
+  pass "ops healthcheck composes go health and doctor"
 }
 
 test_wrapper_install_hints() {

@@ -33,6 +33,8 @@ func run(ctx context.Context, args []string) error {
 		return runWithService(ctx, args[1:], cmdStateClear)
 	case "sync-tmux":
 		return runWithService(ctx, args[1:], cmdSyncTmux)
+	case "health":
+		return cmdHealth(ctx, args[1:])
 	case "pane-kill":
 		return cmdPaneKill(ctx, args[1:])
 	case "pane-respawn":
