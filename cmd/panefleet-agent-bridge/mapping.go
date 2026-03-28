@@ -1,19 +1,23 @@
 package main
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/alnah/panefleet/internal/state"
+)
 
 // mapClaudeHookEvent keeps Claude mapping conservative to avoid false positives.
 // Unknown events are ignored so heuristic fallback can still decide state.
-func mapClaudeHookEvent(event, lowerBlob string) (string, string) {
+func mapClaudeHookEvent(event, lowerBlob string) (state.Status, string) {
 	switch {
 	case containsString([]string{"PreToolUse", "UserPromptSubmit"}, event):
-		return statusRun, "hook work event"
+		return state.StatusRun, "hook work event"
 	case event == "PermissionRequest":
-		return statusWait, "hook permission event"
+		return state.StatusWait, "hook permission event"
 	case event == "Stop":
-		return statusDone, "hook completion event"
+		return state.StatusDone, "hook completion event"
 	case containsAny(lowerBlob, "error", "failed"):
-		return statusError, "payload contains failure marker"
+		return state.StatusError, "payload contains failure marker"
 	default:
 		return "", ""
 	}
@@ -21,7 +25,7 @@ func mapClaudeHookEvent(event, lowerBlob string) (string, string) {
 
 // mapCodexStatus translates Codex structured status into panefleet lifecycle states.
 // It prefers explicit waiting flags over generic activity to avoid hiding approvals.
-func mapCodexStatus(payload map[string]any) string {
+func mapCodexStatus(payload map[string]any) state.Status {
 	params := mapValue(payload["params"])
 	status := mapValue(params["status"])
 	statusType := stringValue(status["type"])
@@ -29,13 +33,13 @@ func mapCodexStatus(payload map[string]any) string {
 	switch statusType {
 	case "active":
 		if boolValue(status["waitingOnApproval"]) || containsString(activeFlags(status), "waitingOnApproval") {
-			return statusWait
+			return state.StatusWait
 		}
-		return statusRun
+		return state.StatusRun
 	case "idle":
-		return statusDone
+		return state.StatusDone
 	case "systemError":
-		return statusError
+		return state.StatusError
 	default:
 		return ""
 	}
@@ -43,29 +47,29 @@ func mapCodexStatus(payload map[string]any) string {
 
 // mapOpenCodeEvent handles OpenCode event variants and infers a stable lifecycle.
 // It intentionally prioritizes explicit error/permission signals over generic busy.
-func mapOpenCodeEvent(payload map[string]any, lowerBlob string) string {
+func mapOpenCodeEvent(payload map[string]any, lowerBlob string) state.Status {
 	eventType := openCodeEventType(payload)
 	status := openCodeStatus(payload)
 
 	switch {
 	case eventType == "session.idle":
-		return statusDone
+		return state.StatusDone
 	case eventType == "session.error":
-		return statusError
+		return state.StatusError
 	case eventType == "session.status" && containsString([]string{"busy", "running", "active"}, status):
-		return statusRun
+		return state.StatusRun
 	case eventType == "message.part.delta":
-		return statusRun
+		return state.StatusRun
 	case strings.HasPrefix(eventType, "tool.execute.before"):
-		return statusRun
+		return state.StatusRun
 	case strings.HasPrefix(eventType, "tool.execute.after"):
 		return mapOpenCodeToolExecuteAfter(status, lowerBlob)
 	case eventType == "permission.asked":
-		return statusWait
+		return state.StatusWait
 	case eventType == "permission.replied":
 		return mapOpenCodePermissionReply(payload)
 	case containsAny(strings.ToLower(eventType), "error") || status == "error":
-		return statusError
+		return state.StatusError
 	default:
 		return ""
 	}
@@ -94,19 +98,19 @@ func openCodeStatus(payload map[string]any) string {
 	return strings.ToLower(status)
 }
 
-func mapOpenCodeToolExecuteAfter(status, lowerBlob string) string {
+func mapOpenCodeToolExecuteAfter(status, lowerBlob string) state.Status {
 	if containsAny(status, "error", "failed") || containsAny(lowerBlob, "\"error\"", "\"failed\"") {
-		return statusError
+		return state.StatusError
 	}
-	return statusRun
+	return state.StatusRun
 }
 
-func mapOpenCodePermissionReply(payload map[string]any) string {
+func mapOpenCodePermissionReply(payload map[string]any) state.Status {
 	if permissionDecisionDenied(payload) {
-		return statusError
+		return state.StatusError
 	}
 	if permissionDecisionApproved(payload) {
-		return statusRun
+		return state.StatusRun
 	}
 	return ""
 }

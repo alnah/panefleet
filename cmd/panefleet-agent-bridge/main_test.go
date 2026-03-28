@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/alnah/panefleet/internal/state"
 )
 
 func TestMapCodexStatus(t *testing.T) {
@@ -13,7 +15,7 @@ func TestMapCodexStatus(t *testing.T) {
 	tests := []struct {
 		name    string
 		payload map[string]any
-		want    string
+		want    state.Status
 	}{
 		{
 			name: "active thread is run",
@@ -22,7 +24,7 @@ func TestMapCodexStatus(t *testing.T) {
 					"status": map[string]any{"type": "active"},
 				},
 			},
-			want: statusRun,
+			want: state.StatusRun,
 		},
 		{
 			name: "waiting on approval flag is wait",
@@ -34,7 +36,7 @@ func TestMapCodexStatus(t *testing.T) {
 					},
 				},
 			},
-			want: statusWait,
+			want: state.StatusWait,
 		},
 		{
 			name: "legacy waitingOnApproval boolean is wait",
@@ -46,7 +48,7 @@ func TestMapCodexStatus(t *testing.T) {
 					},
 				},
 			},
-			want: statusWait,
+			want: state.StatusWait,
 		},
 		{
 			name: "idle thread is done",
@@ -55,7 +57,7 @@ func TestMapCodexStatus(t *testing.T) {
 					"status": map[string]any{"type": "idle"},
 				},
 			},
-			want: statusDone,
+			want: state.StatusDone,
 		},
 		{
 			name: "system error is error",
@@ -64,7 +66,7 @@ func TestMapCodexStatus(t *testing.T) {
 					"status": map[string]any{"type": "systemError"},
 				},
 			},
-			want: statusError,
+			want: state.StatusError,
 		},
 		{
 			name: "unknown status is ignored",
@@ -96,19 +98,19 @@ func TestMapClaudeHookEvent(t *testing.T) {
 		name      string
 		event     string
 		lowerBlob string
-		wantState string
+		wantState state.Status
 	}{
 		{
 			name:      "user prompt submit is run",
 			event:     "UserPromptSubmit",
 			lowerBlob: "{}",
-			wantState: statusRun,
+			wantState: state.StatusRun,
 		},
 		{
 			name:      "permission request is wait",
 			event:     "PermissionRequest",
 			lowerBlob: "{}",
-			wantState: statusWait,
+			wantState: state.StatusWait,
 		},
 		{
 			name:      "notification is ignored",
@@ -126,7 +128,7 @@ func TestMapClaudeHookEvent(t *testing.T) {
 			name:      "stop is done",
 			event:     "Stop",
 			lowerBlob: "{}",
-			wantState: statusDone,
+			wantState: state.StatusDone,
 		},
 		{
 			name:      "subagent stop is ignored",
@@ -138,7 +140,7 @@ func TestMapClaudeHookEvent(t *testing.T) {
 			name:      "error blob is error",
 			event:     "Other",
 			lowerBlob: `{"error":"boom"}`,
-			wantState: statusError,
+			wantState: state.StatusError,
 		},
 		{
 			name:      "unknown event is ignored",
@@ -167,25 +169,25 @@ func TestMapOpenCodeEvent(t *testing.T) {
 		name      string
 		payload   map[string]any
 		lowerBlob string
-		want      string
+		want      state.Status
 	}{
 		{
 			name:      "session idle is done",
 			payload:   map[string]any{"type": "session.idle"},
 			lowerBlob: "{}",
-			want:      statusDone,
+			want:      state.StatusDone,
 		},
 		{
 			name:      "session error is error",
 			payload:   map[string]any{"type": "session.error"},
 			lowerBlob: "{}",
-			want:      statusError,
+			want:      state.StatusError,
 		},
 		{
 			name:      "busy session status is run",
 			payload:   map[string]any{"type": "session.status", "status": "busy"},
 			lowerBlob: "{}",
-			want:      statusRun,
+			want:      state.StatusRun,
 		},
 		{
 			name: "nested busy session status is run",
@@ -200,7 +202,7 @@ func TestMapOpenCodeEvent(t *testing.T) {
 				},
 			},
 			lowerBlob: "{}",
-			want:      statusRun,
+			want:      state.StatusRun,
 		},
 		{
 			name: "message delta is run",
@@ -213,37 +215,37 @@ func TestMapOpenCodeEvent(t *testing.T) {
 				},
 			},
 			lowerBlob: "{}",
-			want:      statusRun,
+			want:      state.StatusRun,
 		},
 		{
 			name:      "tool execute before is run",
 			payload:   map[string]any{"type": "tool.execute.before"},
 			lowerBlob: "{}",
-			want:      statusRun,
+			want:      state.StatusRun,
 		},
 		{
 			name:      "tool execute after with error blob is error",
 			payload:   map[string]any{"type": "tool.execute.after"},
 			lowerBlob: `{"error":"boom"}`,
-			want:      statusError,
+			want:      state.StatusError,
 		},
 		{
 			name:      "permission asked is wait",
 			payload:   map[string]any{"type": "permission.asked"},
 			lowerBlob: "{}",
-			want:      statusWait,
+			want:      state.StatusWait,
 		},
 		{
 			name:      "permission approved is run",
 			payload:   map[string]any{"type": "permission.replied", "decision": "approved"},
 			lowerBlob: "{}",
-			want:      statusRun,
+			want:      state.StatusRun,
 		},
 		{
 			name:      "permission denied is error",
 			payload:   map[string]any{"type": "permission.replied", "decision": "denied"},
 			lowerBlob: "{}",
-			want:      statusError,
+			want:      state.StatusError,
 		},
 		{
 			name:      "unknown event is ignored",
@@ -372,7 +374,7 @@ func TestDecodeLoggedJSONPayloadWritesCorrelatedLogs(t *testing.T) {
 		t.Fatalf("decoded hook_event_name = %q, want Stop", stringValue(payload["hook_event_name"]))
 	}
 
-	logDecision("claude-hook", "%42", eventID, "ingest", statusDone, "hook completion event", "")
+	logDecision("claude-hook", "%42", eventID, "ingest", string(state.StatusDone), "hook completion event", "")
 
 	data, err := os.ReadFile(filepath.Join(logDir, "claude-hook.jsonl"))
 	if err != nil {

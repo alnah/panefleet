@@ -19,15 +19,19 @@ import (
 	"github.com/alnah/panefleet/internal/tmuxctl"
 )
 
-type codexMetrics struct {
+type rowMetrics struct {
 	TokensUsed     *int
 	ContextLeftPct *int
+}
+
+type rowMetricsResolver interface {
+	resolve(context.Context, tmuxctl.BoardPane) (rowMetrics, bool, error)
 }
 
 type codexMetricsResolver struct {
 	listProcesses    func(context.Context) ([]processInfo, error)
 	listOpenFiles    func(context.Context, int) ([]string, error)
-	lookupThreadData func(string) (codexMetrics, bool, error)
+	lookupThreadData func(string) (rowMetrics, bool, error)
 }
 
 type processInfo struct {
@@ -46,25 +50,25 @@ func newCodexMetricsResolver() *codexMetricsResolver {
 	}
 }
 
-func (r *codexMetricsResolver) resolve(ctx context.Context, pane tmuxctl.BoardPane) (codexMetrics, bool, error) {
+func (r *codexMetricsResolver) resolve(ctx context.Context, pane tmuxctl.BoardPane) (rowMetrics, bool, error) {
 	if pane.PanePID <= 0 {
-		return codexMetrics{}, false, nil
+		return rowMetrics{}, false, nil
 	}
 	processes, err := r.listProcesses(ctx)
 	if err != nil {
-		return codexMetrics{}, false, err
+		return rowMetrics{}, false, err
 	}
 	codexPID, ok := findCodexDescendantPID(processes, pane.PanePID)
 	if !ok {
-		return codexMetrics{}, false, nil
+		return rowMetrics{}, false, nil
 	}
 	openFiles, err := r.listOpenFiles(ctx, codexPID)
 	if err != nil {
-		return codexMetrics{}, false, err
+		return rowMetrics{}, false, err
 	}
 	threadID, ok := extractCodexThreadID(openFiles)
 	if !ok {
-		return codexMetrics{}, false, nil
+		return rowMetrics{}, false, nil
 	}
 	return r.lookupThreadData(threadID)
 }
@@ -165,28 +169,28 @@ func listOpenFiles(ctx context.Context, pid int) ([]string, error) {
 	return paths, nil
 }
 
-func lookupCodexThreadMetrics(threadID string) (codexMetrics, bool, error) {
+func lookupCodexThreadMetrics(threadID string) (rowMetrics, bool, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
-		return codexMetrics{}, false, nil
+		return rowMetrics{}, false, nil
 	}
 
 	dbPath, err := latestCodexStateDBPath()
 	if err != nil {
-		return codexMetrics{}, false, err
+		return rowMetrics{}, false, err
 	}
 	threadState, err := readCodexThreadState(dbPath, threadID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return codexMetrics{}, false, nil
+			return rowMetrics{}, false, nil
 		}
-		return codexMetrics{}, false, err
+		return rowMetrics{}, false, err
 	}
 
-	metrics := codexMetrics{TokensUsed: codexIntPtr(threadState.tokensUsed)}
+	metrics := rowMetrics{TokensUsed: intPtr(threadState.tokensUsed)}
 	modelInfo, ok, err := lookupCodexModelInfo(threadState.model)
 	if err != nil {
-		return codexMetrics{}, false, err
+		return rowMetrics{}, false, err
 	}
 	if !ok {
 		return metrics, true, nil
@@ -197,7 +201,7 @@ func lookupCodexThreadMetrics(threadID string) (codexMetrics, bool, error) {
 		effectiveWindow = effectiveWindow * modelInfo.EffectiveContextWindowPercent / 100
 	}
 	if effectiveWindow > 0 {
-		metrics.ContextLeftPct = codexIntPtr(remainingContextPercent(threadState.tokensUsed, effectiveWindow))
+		metrics.ContextLeftPct = intPtr(remainingContextPercent(threadState.tokensUsed, effectiveWindow))
 	}
 	return metrics, true, nil
 }
@@ -311,6 +315,6 @@ func remainingContextPercent(tokensUsed, effectiveWindow int) int {
 	return (remaining*100 + effectiveWindow/2) / effectiveWindow
 }
 
-func codexIntPtr(v int) *int {
+func intPtr(v int) *int {
 	return &v
 }

@@ -11,39 +11,41 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/alnah/panefleet/internal/state"
 )
 
 // applyMappedState records why a mapping was applied (or skipped) before returning.
 // The extra logging is critical when users report "state stuck" issues.
-func applyMappedState(ctx context.Context, pane, source, eventID, status, reason string) error {
+func applyMappedState(ctx context.Context, pane, source, eventID string, status state.Status, reason string) error {
 	if status == "" {
 		logDecision(source, pane, eventID, "ignored", "", reason, "")
 		return nil
 	}
 	if err := ingestState(ctx, pane, status, source); err != nil {
-		logDecision(source, pane, eventID, "ingest_error", status, reason, err.Error())
+		logDecision(source, pane, eventID, "ingest_error", string(status), reason, err.Error())
 		return err
 	}
-	logDecision(source, pane, eventID, "ingest", status, reason, "")
+	logDecision(source, pane, eventID, "ingest", string(status), reason, "")
 	return nil
 }
 
 // ingestState maps provider lifecycle states onto panefleet ingest events so
 // bridge traffic updates the underlying stream instead of forcing overrides.
-func ingestState(ctx context.Context, pane, status, source string) error {
+func ingestState(ctx context.Context, pane string, status state.Status, source string) error {
 	args := []string{
 		"ingest",
 		"--pane", pane,
 		"--source", source,
 	}
 	switch status {
-	case statusRun:
+	case state.StatusRun:
 		args = append(args, "--kind", "start")
-	case statusWait:
+	case state.StatusWait:
 		args = append(args, "--kind", "wait")
-	case statusDone:
+	case state.StatusDone:
 		args = append(args, "--kind", "exit", "--exit-code", "0")
-	case statusError:
+	case state.StatusError:
 		args = append(args, "--kind", "exit", "--exit-code", "1")
 	default:
 		return fmt.Errorf("unsupported mapped status: %s", status)

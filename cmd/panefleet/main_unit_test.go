@@ -60,25 +60,7 @@ func TestParseKindAndUsage(t *testing.T) {
 	}
 }
 
-func TestShouldHardenDBPermissions(t *testing.T) {
-	cases := []struct {
-		path string
-		want bool
-	}{
-		{"", false},
-		{":memory:", false},
-		{"file::memory:?cache=shared", false},
-		{"/tmp/panefleet.db", true},
-		{"/tmp/pane?fleet.db", false},
-	}
-	for _, tc := range cases {
-		if got := shouldHardenDBPermissions(tc.path); got != tc.want {
-			t.Fatalf("shouldHardenDBPermissions(%q)=%v want=%v", tc.path, got, tc.want)
-		}
-	}
-}
-
-func TestShouldPrepareDBDir(t *testing.T) {
+func TestShouldManageDBPath(t *testing.T) {
 	cases := []struct {
 		path string
 		want bool
@@ -88,10 +70,11 @@ func TestShouldPrepareDBDir(t *testing.T) {
 		{"file::memory:?cache=shared", false},
 		{"file:/tmp/panefleet.db?cache=shared", false},
 		{"/tmp/panefleet.db", true},
+		{"/tmp/pane?fleet.db", false},
 	}
 	for _, tc := range cases {
-		if got := shouldPrepareDBDir(tc.path); got != tc.want {
-			t.Fatalf("shouldPrepareDBDir(%q)=%v want=%v", tc.path, got, tc.want)
+		if got := shouldManageDBPath(tc.path); got != tc.want {
+			t.Fatalf("shouldManageDBPath(%q)=%v want=%v", tc.path, got, tc.want)
 		}
 	}
 }

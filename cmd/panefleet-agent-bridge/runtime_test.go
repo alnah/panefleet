@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alnah/panefleet/internal/state"
 	_ "modernc.org/sqlite"
 )
 
@@ -458,7 +459,7 @@ exit 5
 `)
 	t.Setenv("PANEFLEET_BIN", failBin)
 	t.Setenv("PANEFLEET_BRIDGE_TIMEOUT_MS", "5000")
-	if err := applyMappedState(context.Background(), "%1", "source", "event", statusRun, "reason"); err == nil {
+	if err := applyMappedState(context.Background(), "%1", "source", "event", state.StatusRun, "reason"); err == nil {
 		t.Fatalf("expected applyMappedState to surface setState failure")
 	}
 
@@ -486,10 +487,10 @@ exit 0
 	t.Setenv("PANEFLEET_BIN", bin)
 	t.Setenv("PANEFLEET_BRIDGE_TIMEOUT_MS", "5000")
 
-	if err := ingestState(context.Background(), "%4", statusRun, "source"); err != nil {
+	if err := ingestState(context.Background(), "%4", state.StatusRun, "source"); err != nil {
 		t.Fatalf("ingestState RUN: %v", err)
 	}
-	if err := ingestState(context.Background(), "%4", statusDone, "source"); err != nil {
+	if err := ingestState(context.Background(), "%4", state.StatusDone, "source"); err != nil {
 		t.Fatalf("ingestState DONE: %v", err)
 	}
 

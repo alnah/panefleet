@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -466,7 +467,7 @@ func (m BoardModel) renderTable(width, height int) []string {
 	}
 	end := min(len(rows), start+max(1, height-1))
 	for i := start; i < end; i++ {
-		lines = append(lines, m.renderTableRow(rows[i], i == selected, i%2 == 1, width))
+		lines = append(lines, m.renderTableRow(rows[i], i == selected, width))
 	}
 	return padLines(lines, height)
 }
@@ -486,7 +487,7 @@ func (m BoardModel) renderTableHeader(width int) string {
 	)
 }
 
-func (m BoardModel) renderTableRow(row board.Row, selected, _ bool, width int) string {
+func (m BoardModel) renderTableRow(row board.Row, selected bool, width int) string {
 	status, tool, target, session, window, repo, tokens, ctx := boardLayoutWidths(width)
 	marker := " "
 	markerStyle := m.styles.rowMarker
@@ -663,17 +664,23 @@ func (m BoardModel) renderControlsLine() string {
 
 func (m *BoardModel) handleSearchKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	before := m.selectedPaneID
-	switch msg.Type {
-	case tea.KeyBackspace:
+	switch {
+	case isSearchClearLineKey(msg):
 		if m.searchQuery == "" {
 			return false, nil
 		}
-		if msg.Alt {
-			m.searchQuery = ""
-		} else {
-			m.searchQuery = trimLastRune(m.searchQuery)
+		m.searchQuery = ""
+	case isSearchDeleteWordKey(msg):
+		if m.searchQuery == "" {
+			return false, nil
 		}
-	case tea.KeyRunes:
+		m.searchQuery = trimLastWord(m.searchQuery)
+	case msg.Type == tea.KeyBackspace:
+		if m.searchQuery == "" {
+			return false, nil
+		}
+		m.searchQuery = trimLastRune(m.searchQuery)
+	case msg.Type == tea.KeyRunes:
 		m.searchQuery += string(msg.Runes)
 	default:
 		return false, nil
@@ -729,6 +736,24 @@ func trimLastRune(s string) string {
 	return string(runes[:len(runes)-1])
 }
 
+func trimLastWord(s string) string {
+	s = strings.TrimRightFunc(s, unicode.IsSpace)
+	runes := []rune(s)
+	for len(runes) > 0 && !unicode.IsSpace(runes[len(runes)-1]) {
+		runes = runes[:len(runes)-1]
+	}
+	return strings.TrimRightFunc(string(runes), unicode.IsSpace)
+}
+
+func isSearchClearLineKey(msg tea.KeyMsg) bool {
+	// On common terminals Bubble Tea reports ctrl+backspace as ctrl+h.
+	return msg.Type == tea.KeyCtrlH || msg.String() == "ctrl+backspace"
+}
+
+func isSearchDeleteWordKey(msg tea.KeyMsg) bool {
+	return msg.Type == tea.KeyBackspace && msg.Alt
+}
+
 func (m *BoardModel) applyPaneState(st state.PaneState) {
 	effective := st.Effective()
 	for i := range m.rows {
@@ -738,13 +763,13 @@ func (m *BoardModel) applyPaneState(st state.PaneState) {
 		m.rows[i].Status = effective.Status
 		m.rows[i].StatusSource = effective.StatusSource
 		m.rows[i].ReasonCode = effective.ReasonCode
-		m.rows[i].ManualOverride = cloneStatusPtr(st.ManualOverride)
+		m.rows[i].ManualOverride = copyStatusPtr(st.ManualOverride)
 		m.rows[i].LastTransitionAt = effective.LastTransitionAt
 		return
 	}
 }
 
-func cloneStatusPtr(in *state.Status) *state.Status {
+func copyStatusPtr(in *state.Status) *state.Status {
 	if in == nil {
 		return nil
 	}

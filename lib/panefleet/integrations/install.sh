@@ -40,7 +40,7 @@ install_opencode_plugin() {
   plugin_path="$(opencode_plugin_path)"
   bridge_path="$(opencode_event_bridge_path)"
   template_path="$(opencode_plugin_template_path)"
-  escaped_bridge="$(js_escape_string "$bridge_path")"
+  escaped_bridge="$(double_quote_literal_escape "$bridge_path")"
   sed_bridge="${escaped_bridge//&/\\&}"
 
   mkdir -p "$plugin_dir"
@@ -59,7 +59,7 @@ install_codex_integration() {
 
   config_path="$(codex_config_path)"
   wrapper_path="$(codex_notify_wrapper_path)"
-  escaped_wrapper="$(toml_escape_string "$wrapper_path")"
+  escaped_wrapper="$(double_quote_literal_escape "$wrapper_path")"
   mkdir -p "$(dirname "$config_path")"
   if [[ ! -f "$config_path" ]]; then
     : >"$config_path"

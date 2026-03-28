@@ -87,9 +87,7 @@ type Service struct {
 	states        StateSource
 	tmux          TMUX
 	currentPaneID string
-	codexMetrics  *codexMetricsResolver
-	claudeMetrics *claudeMetricsResolver
-	openMetrics   *openCodeMetricsResolver
+	rowMetrics    map[string]rowMetricsResolver
 	now           func() time.Time
 }
 
@@ -103,9 +101,11 @@ func NewService(states StateSource, tmux TMUX, currentPaneID string) *Service {
 		states:        states,
 		tmux:          tmux,
 		currentPaneID: strings.TrimSpace(currentPaneID),
-		codexMetrics:  newCodexMetricsResolver(),
-		claudeMetrics: newClaudeMetricsResolver(),
-		openMetrics:   newOpenCodeMetricsResolver(),
+		rowMetrics: map[string]rowMetricsResolver{
+			"codex":    newCodexMetricsResolver(),
+			"claude":   newClaudeMetricsResolver(),
+			"opencode": newOpenCodeMetricsResolver(),
+		},
 		now:           func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -191,30 +191,11 @@ func (s *Service) resolveRowMetrics(ctx context.Context, pane tmuxctl.BoardPane,
 		return tokensUsed, contextLeftPct
 	}
 
-	var (
-		metrics codexMetrics
-		ok      bool
-		err     error
-	)
-	switch tool {
-	case "codex":
-		if s.codexMetrics == nil {
-			return tokensUsed, contextLeftPct
-		}
-		metrics, ok, err = s.codexMetrics.resolve(ctx, pane)
-	case "claude":
-		if s.claudeMetrics == nil {
-			return tokensUsed, contextLeftPct
-		}
-		metrics, ok, err = s.claudeMetrics.resolve(ctx, pane)
-	case "opencode":
-		if s.openMetrics == nil {
-			return tokensUsed, contextLeftPct
-		}
-		metrics, ok, err = s.openMetrics.resolve(ctx, pane)
-	default:
+	resolver, ok := s.rowMetrics[tool]
+	if !ok || resolver == nil {
 		return tokensUsed, contextLeftPct
 	}
+	metrics, ok, err := resolver.resolve(ctx, pane)
 	if err != nil || !ok {
 		return tokensUsed, contextLeftPct
 	}
@@ -363,31 +344,6 @@ func priority(st state.Status) int {
 	default:
 		return 6
 	}
-}
-
-func displayStatus(st state.PaneState, pane tmuxctl.BoardPane, now time.Time) state.Status {
-	if status, ok := parseExplicitStatus(pane.LocalStatus); ok {
-		return effectiveStatus(status, pane.WindowActivity, now)
-	}
-	if pane.Dead {
-		if pane.DeadStatus == 0 {
-			return state.StatusDone
-		}
-		return state.StatusError
-	}
-	if status, ok := parseAgentStatus(pane, now); ok {
-		return effectiveStatus(status, pane.WindowActivity, now)
-	}
-	if st.Status != state.StatusUnknown {
-		return st.Status
-	}
-	if pane.WindowActivity.IsZero() {
-		return state.StatusIdle
-	}
-	if now.Sub(pane.WindowActivity) >= boardStaleAfter {
-		return state.StatusStale
-	}
-	return state.StatusIdle
 }
 
 func (s *Service) resolveStatus(ctx context.Context, st state.PaneState, pane tmuxctl.BoardPane, now time.Time) state.Status {

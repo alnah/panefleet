@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	statepkg "github.com/alnah/panefleet/internal/state"
 )
 
 // runClaudeHook maps Claude hook payloads to panefleet states.
@@ -36,15 +38,15 @@ func runClaudeHook(ctx context.Context, args []string) error {
 		event = stringValue(payload["event"])
 	}
 
-	state, reason := mapClaudeHookEvent(event, strings.ToLower(string(raw)))
-	if state == "" {
+	mappedStatus, reason := mapClaudeHookEvent(event, strings.ToLower(string(raw)))
+	if mappedStatus == "" {
 		logDecision("claude-hook", pane, eventID, "ignored", "", "unmapped hook event", "")
 		return nil
 	}
-	if err := applyMappedState(ctx, pane, "claude-hook", eventID, state, reason); err != nil {
+	if err := applyMappedState(ctx, pane, "claude-hook", eventID, mappedStatus, reason); err != nil {
 		return err
 	}
-	if state == statusDone {
+	if mappedStatus == statepkg.StatusDone {
 		return applyClaudeTranscriptMetrics(ctx, pane, "claude-hook", eventID, payload)
 	}
 	return nil
@@ -71,7 +73,7 @@ func runCodexNotify(ctx context.Context, args []string) error {
 	}
 
 	if stringValue(payload["type"]) == "agent-turn-complete" {
-		if err := applyMappedState(ctx, pane, "codex-notify", eventID, statusDone, "notify agent-turn-complete"); err != nil {
+		if err := applyMappedState(ctx, pane, "codex-notify", eventID, statepkg.StatusDone, "notify agent-turn-complete"); err != nil {
 			return err
 		}
 		return applyCodexNotifyMetrics(ctx, pane, "codex-notify", eventID, payload)

@@ -20,7 +20,7 @@ import (
 
 type claudeMetricsResolver struct {
 	findLatestTranscript   func(string) (string, bool, error)
-	lookupTranscriptMetric func(string) (codexMetrics, bool, error)
+	lookupTranscriptMetric func(string) (rowMetrics, bool, error)
 }
 
 func newClaudeMetricsResolver() *claudeMetricsResolver {
@@ -30,14 +30,14 @@ func newClaudeMetricsResolver() *claudeMetricsResolver {
 	}
 }
 
-func (r *claudeMetricsResolver) resolve(_ context.Context, pane tmuxctl.BoardPane) (codexMetrics, bool, error) {
+func (r *claudeMetricsResolver) resolve(_ context.Context, pane tmuxctl.BoardPane) (rowMetrics, bool, error) {
 	projectPath := strings.TrimSpace(pane.Path)
 	if projectPath == "" {
-		return codexMetrics{}, false, nil
+		return rowMetrics{}, false, nil
 	}
 	transcriptPath, ok, err := r.findLatestTranscript(projectPath)
 	if err != nil || !ok {
-		return codexMetrics{}, ok, err
+		return rowMetrics{}, ok, err
 	}
 	return r.lookupTranscriptMetric(transcriptPath)
 }
@@ -88,13 +88,13 @@ func findLatestClaudeTranscript(projectPath string) (string, bool, error) {
 	return candidates[0].path, true, nil
 }
 
-func lookupClaudeTranscriptMetrics(transcriptPath string) (codexMetrics, bool, error) {
+func lookupClaudeTranscriptMetrics(transcriptPath string) (rowMetrics, bool, error) {
 	raw, err := os.ReadFile(transcriptPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return codexMetrics{}, false, nil
+			return rowMetrics{}, false, nil
 		}
-		return codexMetrics{}, false, fmt.Errorf("read claude transcript %s: %w", transcriptPath, err)
+		return rowMetrics{}, false, fmt.Errorf("read claude transcript %s: %w", transcriptPath, err)
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
@@ -107,22 +107,22 @@ func lookupClaudeTranscriptMetrics(transcriptPath string) (codexMetrics, bool, e
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			continue
 		}
-		message := claudeMapValue(entry["message"])
-		if claudeStringValue(message["role"]) != "assistant" {
+		message := payloadMapValue(entry["message"])
+		if payloadStringValue(message["role"]) != "assistant" {
 			continue
 		}
-		tokensUsed, ok := claudeUsageTotal(claudeMapValue(message["usage"]))
+		tokensUsed, ok := claudeUsageTotal(payloadMapValue(message["usage"]))
 		if !ok {
 			continue
 		}
-		metrics := codexMetrics{TokensUsed: codexIntPtr(tokensUsed)}
-		if contextWindow, ok := providerContextWindow(claudeStringValue(message["model"])); ok {
-			metrics.ContextLeftPct = codexIntPtr(remainingContextPercent(tokensUsed, contextWindow))
+		metrics := rowMetrics{TokensUsed: intPtr(tokensUsed)}
+		if contextWindow, ok := modelContextWindow(payloadStringValue(message["model"])); ok {
+			metrics.ContextLeftPct = intPtr(remainingContextPercent(tokensUsed, contextWindow))
 		}
 		return metrics, true, nil
 	}
 
-	return codexMetrics{}, false, nil
+	return rowMetrics{}, false, nil
 }
 
 func claudeProjectSlug(projectPath string) string {
@@ -138,10 +138,10 @@ func claudeProjectsDir() string {
 }
 
 func claudeUsageTotal(usage map[string]any) (int, bool) {
-	inputTokens, hasInput := claudeIntValue(usage["input_tokens"])
-	outputTokens, hasOutput := claudeIntValue(usage["output_tokens"])
-	cacheCreate, _ := claudeIntValue(usage["cache_creation_input_tokens"])
-	cacheRead, _ := claudeIntValue(usage["cache_read_input_tokens"])
+	inputTokens, hasInput := payloadIntValue(usage["input_tokens"])
+	outputTokens, hasOutput := payloadIntValue(usage["output_tokens"])
+	cacheCreate, _ := payloadIntValue(usage["cache_creation_input_tokens"])
+	cacheRead, _ := payloadIntValue(usage["cache_read_input_tokens"])
 	if !hasInput && !hasOutput {
 		return 0, false
 	}
@@ -149,7 +149,7 @@ func claudeUsageTotal(usage map[string]any) (int, bool) {
 }
 
 type openCodeMetricsResolver struct {
-	lookupSessionMetrics func(string) (codexMetrics, bool, error)
+	lookupSessionMetrics func(string) (rowMetrics, bool, error)
 }
 
 func newOpenCodeMetricsResolver() *openCodeMetricsResolver {
@@ -158,36 +158,36 @@ func newOpenCodeMetricsResolver() *openCodeMetricsResolver {
 	}
 }
 
-func (r *openCodeMetricsResolver) resolve(_ context.Context, pane tmuxctl.BoardPane) (codexMetrics, bool, error) {
+func (r *openCodeMetricsResolver) resolve(_ context.Context, pane tmuxctl.BoardPane) (rowMetrics, bool, error) {
 	projectPath := strings.TrimSpace(pane.Path)
 	if projectPath == "" {
-		return codexMetrics{}, false, nil
+		return rowMetrics{}, false, nil
 	}
 	return r.lookupSessionMetrics(projectPath)
 }
 
-func lookupOpenCodeSessionMetrics(projectPath string) (codexMetrics, bool, error) {
+func lookupOpenCodeSessionMetrics(projectPath string) (rowMetrics, bool, error) {
 	db, err := sql.Open("sqlite", sqliteReadOnlyDSN(opencodeDBPath()))
 	if err != nil {
-		return codexMetrics{}, false, fmt.Errorf("open opencode db: %w", err)
+		return rowMetrics{}, false, fmt.Errorf("open opencode db: %w", err)
 	}
 	defer db.Close()
 
 	sessionID, err := latestOpenCodeSessionID(db, projectPath)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return codexMetrics{}, false, nil
+			return rowMetrics{}, false, nil
 		}
-		return codexMetrics{}, false, err
+		return rowMetrics{}, false, err
 	}
 
 	messageRecord, hasMessage, err := latestOpenCodeMessageMetrics(db, sessionID)
 	if err != nil {
-		return codexMetrics{}, false, err
+		return rowMetrics{}, false, err
 	}
 	partRecord, hasPart, err := latestOpenCodePartMetrics(db, sessionID)
 	if err != nil {
-		return codexMetrics{}, false, err
+		return rowMetrics{}, false, err
 	}
 
 	switch {
@@ -204,12 +204,12 @@ func lookupOpenCodeSessionMetrics(projectPath string) (codexMetrics, bool, error
 	case hasPart:
 		return partRecord.Metrics, true, nil
 	default:
-		return codexMetrics{}, false, nil
+		return rowMetrics{}, false, nil
 	}
 }
 
 type openCodeMetricRecord struct {
-	Metrics     codexMetrics
+	Metrics     rowMetrics
 	TimeUpdated int64
 }
 
@@ -294,20 +294,20 @@ func decodeOpenCodeMessageMetrics(raw string, updated int64) (openCodeMetricReco
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return openCodeMetricRecord{}, false
 	}
-	if claudeStringValue(payload["role"]) != "assistant" {
+	if payloadStringValue(payload["role"]) != "assistant" {
 		return openCodeMetricRecord{}, false
 	}
-	tokensUsed, ok := claudeIntValue(claudeMapValue(payload["tokens"])["total"])
+	tokensUsed, ok := payloadIntValue(payloadMapValue(payload["tokens"])["total"])
 	if !ok {
 		return openCodeMetricRecord{}, false
 	}
 
 	record := openCodeMetricRecord{
-		Metrics:     codexMetrics{TokensUsed: codexIntPtr(tokensUsed)},
+		Metrics:     rowMetrics{TokensUsed: intPtr(tokensUsed)},
 		TimeUpdated: updated,
 	}
-	if contextWindow, ok := providerContextWindow(claudeStringValue(payload["modelID"])); ok {
-		record.Metrics.ContextLeftPct = codexIntPtr(remainingContextPercent(tokensUsed, contextWindow))
+	if contextWindow, ok := modelContextWindow(payloadStringValue(payload["modelID"])); ok {
+		record.Metrics.ContextLeftPct = intPtr(remainingContextPercent(tokensUsed, contextWindow))
 	}
 	return record, true
 }
@@ -317,13 +317,13 @@ func decodeOpenCodePartMetrics(raw string, updated int64) (openCodeMetricRecord,
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return openCodeMetricRecord{}, false
 	}
-	tokensUsed, ok := claudeIntValue(claudeMapValue(payload["tokens"])["total"])
+	tokensUsed, ok := payloadIntValue(payloadMapValue(payload["tokens"])["total"])
 	if !ok {
 		return openCodeMetricRecord{}, false
 	}
 
 	return openCodeMetricRecord{
-		Metrics:     codexMetrics{TokensUsed: codexIntPtr(tokensUsed)},
+		Metrics:     rowMetrics{TokensUsed: intPtr(tokensUsed)},
 		TimeUpdated: updated,
 	}, true
 }
@@ -336,7 +336,7 @@ func opencodeDBPath() string {
 	return filepath.Join(dataHome, "opencode", "opencode.db")
 }
 
-func providerContextWindow(model string) (int, bool) {
+func modelContextWindow(model string) (int, bool) {
 	model = strings.TrimSpace(strings.ToLower(model))
 	if model == "" {
 		return 0, false
@@ -366,7 +366,7 @@ func userHomeDir() string {
 	return home
 }
 
-func claudeStringValue(v any) string {
+func payloadStringValue(v any) string {
 	value, ok := v.(string)
 	if !ok {
 		return ""
@@ -374,7 +374,7 @@ func claudeStringValue(v any) string {
 	return value
 }
 
-func claudeMapValue(v any) map[string]any {
+func payloadMapValue(v any) map[string]any {
 	value, ok := v.(map[string]any)
 	if !ok {
 		return map[string]any{}
@@ -382,7 +382,7 @@ func claudeMapValue(v any) map[string]any {
 	return value
 }
 
-func claudeIntValue(v any) (int, bool) {
+func payloadIntValue(v any) (int, bool) {
 	switch value := v.(type) {
 	case float64:
 		if value < 0 || math.Trunc(value) != value {

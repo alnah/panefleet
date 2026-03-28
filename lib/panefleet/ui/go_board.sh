@@ -10,7 +10,7 @@ go_board_refresh_interval() {
   printf '%s' "${PANEFLEET_GO_BOARD_REFRESH:-1s}"
 }
 
-go_board_entrypoint_path() {
+go_board_command_path() {
   if [[ -n "${PANEFLEET_GO_BOARD_BIN:-}" ]]; then
     printf '%s' "$PANEFLEET_GO_BOARD_BIN"
     return
@@ -24,14 +24,14 @@ run_go_board() {
   require_runtime_support
 
   local entrypoint
-  entrypoint="$(go_board_entrypoint_path)"
+  entrypoint="$(go_board_command_path)"
   "${entrypoint}" tui --refresh "$(go_board_refresh_interval)"
 }
 
 go_board_popup_command() {
   local entrypoint command
 
-  entrypoint="$(go_board_entrypoint_path)"
+  entrypoint="$(go_board_command_path)"
   printf -v command '%q %q --refresh %q' "$entrypoint" "tui" "$(go_board_refresh_interval)"
   printf '%s' "$command"
 }

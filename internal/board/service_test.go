@@ -771,7 +771,7 @@ func TestRowsFallbackToActiveCodexProcessMetrics(t *testing.T) {
 		},
 		"",
 	)
-	svc.codexMetrics = &codexMetricsResolver{
+	svc.rowMetrics["codex"] = &codexMetricsResolver{
 		listProcesses: func(context.Context) ([]processInfo, error) {
 			return []processInfo{
 				{PPID: 4242, PID: 9001, Command: "codex --dangerously-bypass-approvals-and-sandbox"},
@@ -785,11 +785,11 @@ func TestRowsFallbackToActiveCodexProcessMetrics(t *testing.T) {
 				"/Users/alexis/.codex/sessions/2026/03/27/rollout-2026-03-27T18-22-31-019d312d-6405-7b03-8413-3ec61daa45c7.jsonl",
 			}, nil
 		},
-		lookupThreadData: func(threadID string) (codexMetrics, bool, error) {
+		lookupThreadData: func(threadID string) (rowMetrics, bool, error) {
 			if threadID != "019d312d-6405-7b03-8413-3ec61daa45c7" {
 				t.Fatalf("threadID = %q, want exact rollout thread id", threadID)
 			}
-			return codexMetrics{
+			return rowMetrics{
 				TokensUsed:     intPtr(12345),
 				ContextLeftPct: intPtr(88),
 			}, true, nil
@@ -809,8 +809,4 @@ func TestRowsFallbackToActiveCodexProcessMetrics(t *testing.T) {
 	if rows[0].ContextLeftPct == nil || *rows[0].ContextLeftPct != 88 {
 		t.Fatalf("rows[0].ContextLeftPct = %v, want 88", rows[0].ContextLeftPct)
 	}
-}
-
-func intPtr(v int) *int {
-	return &v
 }

@@ -113,15 +113,7 @@ claude_settings_path() {
   printf '%s/.claude/settings.json' "$HOME"
 }
 
-toml_escape_string() {
-  local value="$1"
-
-  value="${value//\\/\\\\}"
-  value="${value//\"/\\\"}"
-  printf '%s' "$value"
-}
-
-js_escape_string() {
+double_quote_literal_escape() {
   local value="$1"
 
   value="${value//\\/\\\\}"

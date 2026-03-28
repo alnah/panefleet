@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/alnah/panefleet/internal/state"
 )
 
 func TestParsePaneOrSkipWhenUnresolved(t *testing.T) {
@@ -20,7 +22,7 @@ func TestParsePaneOrSkipWhenUnresolved(t *testing.T) {
 }
 
 func TestMappingAndFlagsFallbacks(t *testing.T) {
-	if got := mapOpenCodeToolExecuteAfter("failed", "{}"); got != statusError {
+	if got := mapOpenCodeToolExecuteAfter("failed", "{}"); got != state.StatusError {
 		t.Fatalf("mapOpenCodeToolExecuteAfter failed = %q, want ERROR", got)
 	}
 	if got := mapOpenCodePermissionReply(map[string]any{"type": "permission.replied", "decision": "unknown"}); got != "" {

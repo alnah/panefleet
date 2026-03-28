@@ -13,11 +13,6 @@ import (
 // updates when providers expose machine-readable events.
 
 const (
-	statusRun   = "RUN"
-	statusWait  = "WAIT"
-	statusDone  = "DONE"
-	statusError = "ERROR"
-
 	defaultBridgeTimeout = 2 * time.Second
 	// defaultScannerBufferSize keeps Scanner's small allocation behavior for common
 	// payloads while maxScannerTokenBytes prevents long JSON events from failing.

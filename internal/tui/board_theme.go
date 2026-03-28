@@ -41,7 +41,6 @@ type boardStyles struct {
 	headerCell     lipgloss.Style
 	separator      lipgloss.Style
 	tableRow       lipgloss.Style
-	tableRowAlt    lipgloss.Style
 	selectedRow    lipgloss.Style
 	selectedMarker lipgloss.Style
 	rowMarker      lipgloss.Style
@@ -131,7 +130,6 @@ func newBoardStyles(themeName string) boardStyles {
 		headerCell:     lipgloss.NewStyle().Foreground(lipgloss.Color(palette.muted)).Bold(true),
 		separator:      lipgloss.NewStyle().Foreground(lipgloss.Color(palette.border)),
 		tableRow:       lipgloss.NewStyle().Foreground(lipgloss.Color(palette.fg)),
-		tableRowAlt:    lipgloss.NewStyle().Foreground(lipgloss.Color(palette.fg)).Background(lipgloss.Color(palette.bgAlt)),
 		selectedRow:    lipgloss.NewStyle().Foreground(lipgloss.Color(palette.selectionFG)).Background(lipgloss.Color(palette.selectionBG)).Bold(true),
 		selectedMarker: lipgloss.NewStyle().Foreground(lipgloss.Color(palette.accent)).Bold(true),
 		rowMarker:      lipgloss.NewStyle().Foreground(lipgloss.Color(palette.border)),

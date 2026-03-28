@@ -11,7 +11,7 @@ panefleet_bridge_wrapper_main() {
   local bridge_command="$2"
   local install_target="$3"
   local forward_pane="${4:-0}"
-  local repo_root bridge_bin panefleet_cmd panefleet_go_cmd pane
+  local repo_root bridge_bin panefleet_cli panefleet_ingest_cmd pane
   shift 4
 
   if ! repo_root="$(panefleet_find_repo_root_from "$entrypoint")"; then
@@ -20,14 +20,14 @@ panefleet_bridge_wrapper_main() {
   fi
 
   bridge_bin="${PANEFLEET_AGENT_BRIDGE_BIN:-$(panefleet_default_bridge_bin_path)}"
-  panefleet_cmd="$(command -v panefleet 2>/dev/null || panefleet_panefleet_cmd_fallback_from "$repo_root")"
-  panefleet_go_cmd="${repo_root}/scripts/panefleet-go"
-  export PANEFLEET_INGEST_BIN="${PANEFLEET_INGEST_BIN:-$panefleet_go_cmd}"
+  panefleet_cli="$(command -v panefleet 2>/dev/null || panefleet_panefleet_cmd_fallback_from "$repo_root")"
+  panefleet_ingest_cmd="${repo_root}/scripts/panefleet-go"
+  export PANEFLEET_INGEST_BIN="${PANEFLEET_INGEST_BIN:-$panefleet_ingest_cmd}"
   export PANEFLEET_EVENT_LOG_DIR="${PANEFLEET_EVENT_LOG_DIR:-$(panefleet_default_event_log_dir)}"
 
   if [[ ! -x "$bridge_bin" ]]; then
     printf 'panefleet: missing compiled bridge %s\n' "$bridge_bin" >&2
-    printf 'install it with %s install %s\n' "$panefleet_cmd" "$install_target" >&2
+    printf 'install it with %s install %s\n' "$panefleet_cli" "$install_target" >&2
     exit 1
   fi
 

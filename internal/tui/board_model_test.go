@@ -314,7 +314,7 @@ func TestRenderTableRowSelectedFillsViewportWidth(t *testing.T) {
 		Repo:        "panefleet",
 	}
 
-	rendered := m.renderTableRow(row, true, false, 100)
+	rendered := m.renderTableRow(row, true, 100)
 	if got := ansi.StringWidth(rendered); got != 100 {
 		t.Fatalf("selected row width = %d, want 100", got)
 	}
@@ -485,7 +485,7 @@ func TestBoardModelViewRendersSearchPromptWithQuery(t *testing.T) {
 	}
 }
 
-func TestBoardModelAltBackspaceClearsWholeSearch(t *testing.T) {
+func TestBoardModelAltBackspaceDeletesOneWord(t *testing.T) {
 	runtime := &fakeBoardRuntime{
 		rows: []board.Row{
 			{PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "panefleet", WindowIndex: "1", PaneIndex: "0", WindowName: "tui", Repo: "panefleet"},
@@ -496,9 +496,30 @@ func TestBoardModelAltBackspaceClearsWholeSearch(t *testing.T) {
 	m.rows = runtime.rows
 	m.rowsLoaded = true
 	m.selectedPaneID = "%1"
-	m.searchQuery = "panefleet"
+	m.searchQuery = "panefleet board"
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyBackspace, Alt: true})
+	m = updated.(BoardModel)
+
+	if m.searchQuery != "panefleet" {
+		t.Fatalf("searchQuery = %q, want panefleet", m.searchQuery)
+	}
+}
+
+func TestBoardModelCtrlBackspaceClearsWholeSearch(t *testing.T) {
+	runtime := &fakeBoardRuntime{
+		rows: []board.Row{
+			{PaneID: "%1", Status: state.StatusRun, Tool: "codex", SessionName: "panefleet", WindowIndex: "1", PaneIndex: "0", WindowName: "tui", Repo: "panefleet"},
+			{PaneID: "%2", Status: state.StatusIdle, Tool: "shell", SessionName: "professeur", WindowIndex: "2", PaneIndex: "0", WindowName: "mike", Repo: "fle"},
+		},
+	}
+	m := NewBoard(runtime, time.Second, "dracula")
+	m.rows = runtime.rows
+	m.rowsLoaded = true
+	m.selectedPaneID = "%1"
+	m.searchQuery = "panefleet board"
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlH})
 	m = updated.(BoardModel)
 
 	if m.searchQuery != "" {

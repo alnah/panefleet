@@ -19,7 +19,7 @@ func newService(ctx context.Context) (*panes.Service, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	if shouldPrepareDBDir(dbPath) {
+	if shouldManageDBPath(dbPath) {
 		if err := os.MkdirAll(filepath.Dir(dbPath), 0o700); err != nil {
 			return nil, nil, err
 		}
@@ -33,7 +33,7 @@ func newService(ctx context.Context) (*panes.Service, func(), error) {
 		_ = st.Close()
 		return nil, nil, err
 	}
-	if shouldHardenDBPermissions(dbPath) {
+	if shouldManageDBPath(dbPath) {
 		if err := os.Chmod(dbPath, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
 			_ = st.Close()
 			return nil, nil, fmt.Errorf("secure db file permissions: %w", err)
@@ -66,11 +66,7 @@ func resolveDBPath() (string, error) {
 	return filepath.Join(stateHome, "panefleet", "panefleet.db"), nil
 }
 
-func shouldHardenDBPermissions(dbPath string) bool {
-	return shouldPrepareDBDir(dbPath)
-}
-
-func shouldPrepareDBDir(dbPath string) bool {
+func shouldManageDBPath(dbPath string) bool {
 	if dbPath == "" || dbPath == ":memory:" {
 		return false
 	}
