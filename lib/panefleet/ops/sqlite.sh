@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# SQLite backup/restore helpers for the Go runtime state store.
+# Keep these wrappers narrow so operational scripts can stay explicit and safe.
+
 # shellcheck disable=SC1091
 source "$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/runtime/paths.sh"
 

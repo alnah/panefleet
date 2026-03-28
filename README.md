@@ -1,47 +1,38 @@
 # panefleet
 
-> tmux workboard plugin for agent panes. Provides a popup board, pane preview, theme picker, and state detection for Codex, Claude Code, OpenCode, and shell panes.
+Panefleet is a tmux workboard for parallel agent panes.
+
+It gives you one popup board to:
+
+- see which panes are `RUN`, `WAIT`, `DONE`, `IDLE`, `STALE`, or `ERROR`
+- jump straight to the pane you want
+- preview what is happening without switching windows blindly
+- track Codex, Claude Code, OpenCode, and plain shell panes in one place
 
 ![Panefleet demo](assets/demo.gif)
 
-Panefleet started as a way to reduce context switching across tmux windows and sessions while running Codex, Claude Code, and OpenCode in parallel. The agents can produce strong code, but I still needed to track the the states between ~20 windows -/+ 3-4 sessions. So when you need to deal with different phases of the production like implementation, behavior checks, security, testability, refactors, optimization, portability, and more, across several chat sessions and projects at once, it gets really exhausting!
+## Why
 
-So I wanted easier, and faster navigation. And I needed to see the worker states in one place: `RUN`, `DONE`, `IDLE`, `STALE`, and `WAIT`. When several workers are active, it is easy to forget that one pane is waiting for approval, that another one finished, or that a third one has gone stale. Keeping those states visible reduces the cognitive load of orchestrating the work and makes parallel sessions much easier to manage.
+When you run several agent sessions at once, the hard part is not opening panes.
+The hard part is remembering which pane needs approval, which one finished, and
+which one is just stale noise. Panefleet keeps that state visible so navigation
+and intervention stay cheap.
 
-## Table of contents
+## Install
 
-- [Installation](#installation)
-- [Features](#features)
-- [Usage](#usage)
-- [Configuration](#configuration)
-- [Status model](#status-model)
-- [Observability](#observability)
-- [Troubleshooting](#troubleshooting)
-- [Testing](#testing)
-
-## Installation
-
-Preferred install path (Homebrew):
+### Homebrew
 
 ```bash
 brew tap alnah/tap
 brew install alnah/tap/panefleet
 panefleet install all
 panefleet doctor --install
+panefleet preflight
 ```
 
-Install targets:
+Reload tmux config or restart tmux, then open the board with `prefix + P`.
 
-- `core`: heuristic-only runtime (no bridge)
-- `codex`: core + Codex integration
-- `claude`: core + Claude integration
-- `opencode`: core + OpenCode integration
-- `all`: core + Codex + Claude + OpenCode
-
-`panefleet install` without a target defaults to `core`.
-
-<details>
-<summary>Source install (clone + make)</summary>
+### Source install
 
 ```bash
 git clone https://github.com/alnah/panefleet.git
@@ -50,85 +41,60 @@ make install all
 make doctor
 ```
 
-</details>
+## What You Get
 
-What install does:
+- `prefix + P`: open the board
+- `prefix + T`: open the theme picker
+- automatic pane state detection
+- provider integrations for Codex, Claude Code, and OpenCode
+- provider usage columns when metrics are available: `TOKENS` and `CTX%`
+- a Go-backed board and state runtime, with the shell runtime still available as
+  a stable outer CLI surface
 
-- checks and installs missing runtime dependencies with the detected package manager
-- installs tmux bindings (`prefix + P`, `prefix + T`)
-- for provider targets, downloads a prebuilt Go bridge from GitHub Releases
+Install targets:
 
-Install output contract:
+- `core`: heuristic-only runtime, no provider bridge
+- `codex`: core + Codex integration
+- `claude`: core + Claude integration
+- `opencode`: core + OpenCode integration
+- `all`: core + all provider integrations
 
-- `install core` prints `Core installed` and keeps adapter mode `heuristic-only`
-- provider installs print integration result + `Bridge: ...` + `Adapter mode: auto`
-- re-running `install all` is idempotent and reports `Bridge: already installed`
-- force bridge refresh is available with `PANEFLEET_BRIDGE_INSTALL_MODE=force-build` or `force-download`
+## Daily Use
 
-## Features
+Open the board, type to filter, then use:
 
-- Popup board built on `tmux` and `fzf`
-- Pane states for Codex, Claude Code, OpenCode, and shell panes
-- State inspection with `state-show`, `state-list`, and `doctor --verbose`
-- Theme palettes with truecolor, 256-color, and ANSI fallback
-- Experimental Go runtime (`cmd/panefleet`) with deterministic reducer + SQLite store + Bubble Tea TUI
+- `enter`: jump to the selected pane
+- `ctrl+s`: toggle `STALE` on the selected pane
+- `esc`: quit the board
+- `up` / `down`: move in filtered results
+- `backspace`: delete one character in the search prompt
+- `alt+backspace`: delete one word in the search prompt
+- `ctrl+backspace`: clear the full search prompt
 
-## Usage
+The board refreshes while it stays open. Preview updates follow the selected
+pane.
 
-Board behavior:
+## State Model
 
-- Open the board with `prefix + P`.
-- Open the theme picker with `prefix + T`.
-- The board list is sorted first by state priority, then by recent activity.
-- `enter` jumps to the selected pane.
-- `up` and `down` move the selection in the list.
-- `ctrl-s` toggles a manual `STALE` override on the selected pane (without waiting for auto-stale timing).
-- When the pane becomes active again (`RUN` or `WAIT`), the manual `STALE` override is cleared automatically.
-- The preview pane shows the selected pane metadata plus as many visible trailing lines as fit.
-- Board content refreshes automatically while the popup stays open.
-- `bin/panefleet state-clear --pane <pane_id>` clears manual and adapter overrides for one pane.
-- Board includes `TOKENS` and `CTX%` columns when provider-native usage is available (otherwise `-`).
+| State | Meaning |
+| --- | --- |
+| `RUN` | active work in progress |
+| `WAIT` | approval, chooser, or external input is blocking progress |
+| `DONE` | work appears complete and the pane has returned to a ready prompt |
+| `IDLE` | pane is alive but there is no strong sign of active work |
+| `STALE` | pane has been left open beyond the configured stale threshold |
+| `ERROR` | pane exited with a non-zero status |
 
-## Status model
+Resolution order:
 
-Panefleet displays these states:
-
-| State   | Meaning                                                      |
-| ------- | ------------------------------------------------------------ |
-| `RUN`   | Active work in progress                                      |
-| `WAIT`  | Clear chooser or approval prompt                             |
-| `DONE`  | Work appears finished and the pane is back at a ready prompt |
-| `IDLE`  | No strong sign of active work                                |
-| `STALE` | Left open beyond the configured stale threshold              |
-| `ERROR` | Dead pane with a non-zero exit status                        |
-
-Status resolution order:
-
-1. Manual override
-2. Fresh adapter state when `@panefleet-adapter-mode=auto`
-3. Provider heuristics
-4. Generic shell and dead-process fallback
-
-Provider heuristics are intentionally narrow:
-
-- `Codex`
-  - `WAIT` from visible choosers and approval prompts
-  - `RUN` from process-tree activity and visible work markers
-  - `DONE` from the prompt returning
-- `Claude Code`
-  - `WAIT` from visible chooser or approval prompts
-  - `RUN` from visible active work markers
-  - `DONE` from a ready prompt returning
-- `OpenCode`
-  - `WAIT` from visible chooser or approval prompts
-  - `RUN` from visible activity markers in the active pane area
-  - `DONE` from the ready footer and prompt area
-
-`WAIT` is less reliable than the other states. Expect the most stable results from `RUN`, `DONE`, `IDLE`, and `STALE`.
+1. manual override
+2. fresh provider adapter state in `auto` mode
+3. live provider heuristics
+4. generic shell/dead-pane fallback
 
 ## Configuration
 
-Panefleet uses tmux global options. Use them to tweak your installation. Here are my defaults:
+Panefleet mainly uses tmux global options:
 
 ```tmux
 set -g @panefleet-theme panefleet-dark
@@ -138,170 +104,130 @@ set -g @panefleet-agent-status-max-age-seconds 600
 set -g @panefleet-adapter-mode heuristic-only
 ```
 
-Supported options:
+Main options:
 
-| Option                                    | Default          | Description                                            |
-| ----------------------------------------- | ---------------- | ------------------------------------------------------ |
-| `@panefleet-theme`                        | `panefleet-dark` | Active board theme                                     |
-| `@panefleet-done-recent-minutes`          | `10`             | How long `DONE` stays visible before aging into `IDLE` |
-| `@panefleet-stale-minutes`                | `45`             | When `IDLE` ages into `STALE`                          |
-| `@panefleet-agent-status-max-age-seconds` | `600`            | Freshness window for adapter-provided states           |
-| `@panefleet-adapter-mode`                 | `heuristic-only` | `heuristic-only` or `auto`                             |
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `@panefleet-theme` | `panefleet-dark` | board theme |
+| `@panefleet-done-recent-minutes` | `10` | how long `DONE` stays visible |
+| `@panefleet-stale-minutes` | `45` | when `IDLE` becomes `STALE` |
+| `@panefleet-agent-status-max-age-seconds` | `600` | freshness window for provider states |
+| `@panefleet-adapter-mode` | `heuristic-only` | `heuristic-only` or `auto` |
 
-Color portability:
+Useful environment variables:
 
-- automatic fallback: truecolor > 256 colors > ANSI
-- optional override: `PANEFLEET_COLOR_MODE=truecolor|256|ansi`
-
-## Observability
-
-Useful commands:
-
-```bash
-make doctor
-bin/panefleet doctor --verbose
-```
-
-What they expose:
-
-- final displayed state, raw state, source, and reason
-- adapter freshness and timestamps
-- cached heuristic signature and live signature
-- install status, bindings, and hook counts
-- state counts across all panes
-
-Optional logs:
-
-- `PANEFLEET_RUNTIME_LOG_DIR` for runtime events
-- `PANEFLEET_EVENT_LOG_DIR` for adapter bridge payload and decision logs
-
-Example:
-
-```bash
-export PANEFLEET_RUNTIME_LOG_DIR=~/.local/state/panefleet/runtime
-export PANEFLEET_EVENT_LOG_DIR=~/.local/state/panefleet/events
-bin/panefleet doctor --verbose
-tail -n +1 ~/.local/state/panefleet/runtime/runtime.log
-```
+| Variable | Purpose |
+| --- | --- |
+| `PANEFLEET_DB_PATH` | SQLite path for the Go runtime |
+| `PANEFLEET_EVENT_LOG_DIR` | JSONL bridge payload/decision logs |
+| `PANEFLEET_RUNTIME_LOG_DIR` | shell runtime log directory |
+| `PANEFLEET_OBS_VERBOSE` | verbose Go `run` sync logs |
+| `PANEFLEET_REQUIRE_BRIDGE` | make ops healthcheck fail when bridge is missing |
 
 ## Troubleshooting
 
-Start with:
+Start here:
 
 ```bash
-make doctor
+panefleet doctor
+panefleet doctor --install
+panefleet preflight
+scripts/ops-healthcheck.sh
 ```
+
+Go runtime health:
+
+```bash
+scripts/panefleet-go health --check liveness
+scripts/panefleet-go health --check readiness
+```
+
+Notes:
+
+- `readiness` is expected to fail outside tmux
+- `doctor --install` is the fastest way to inspect integration drift
+- `state-show --pane %123` is the fastest way to understand why one pane is
+  showing the wrong state
 
 Common checks:
 
-- `preflight` fails
-  - verify `tmux`, `fzf`, and `rg` are installed
-  - verify `tmux` supports `display-popup`
-  - verify `fzf` supports `--header-lines-border`
-- `doctor --install` shows `bridge-missing`
-  - run `make install codex`, `make install claude`, `make install opencode`, or `make install all`
-  - if release download is unavailable, install `go` and rerun
-- board does not open
-  - reload `panefleet.tmux`
-  - run `make doctor`
-  - verify `prefix + P` is bound
-- status looks wrong for one pane
+- board does not open:
+  - rerun `panefleet preflight`
+  - rerun `panefleet doctor --install`
+  - confirm tmux bindings were installed
+- one provider integration is missing:
+  - rerun `panefleet install codex|claude|opencode`
+- a pane state looks wrong:
   - run `bin/panefleet state-show --pane %pane`
-  - inspect `final.source` and `final.reason`
-- OpenCode integration is not active
-  - verify `bun` is installed
-  - verify `make doctor` points to the expected `opencode.plugin`
-  - rerun `make install opencode`
+  - inspect `final.status`, `final.source`, and `final.reason`
 
-If you installed panefleet with Homebrew, uninstall it with:
+## Operations
+
+Health:
 
 ```bash
-brew uninstall panefleet
-# optional: remove the tap if you no longer use it
-brew untap alnah/tap
+scripts/ops-healthcheck.sh
+PANEFLEET_REQUIRE_BRIDGE=1 scripts/ops-healthcheck.sh
 ```
 
-Reset the plugin bindings and hooks:
+Backup the Go runtime DB:
 
 ```bash
-make uninstall
+make backup-go-db
 ```
 
-## Testing
+Restore a DB snapshot:
 
-Run the full local regression suite with:
+```bash
+make restore-go-db FILE=/absolute/path/to/panefleet-YYYYMMDDTHHMMSSZ.db
+```
+
+Resync live state from tmux:
+
+```bash
+scripts/panefleet-go sync-tmux --source ops:backfill
+```
+
+## Development
+
+Main local quality gate:
 
 ```bash
 ./scripts/test.sh
-make test
 ```
 
-That runs:
+This runs:
 
 - `go test ./...`
 - `go test -race ./cmd/panefleet-agent-bridge`
-- `shellcheck`
-- the shell regression harness in `tests/test_panefleet.sh`
-- the make-install contract harness in `tests/test_make_install.sh`
+- shell linting
+- shell regression contracts
+- install contract tests
 
-Maintainer release helpers:
+Useful maintainer commands:
 
 ```bash
+make doctor
+make health
 make bridge
 make bridge-download
 make release-check
 ```
 
-## Experimental Go Runtime (WIP)
+## Architecture
 
-The repo now includes a Go-first runtime skeleton in `cmd/panefleet`:
+High-level layout:
 
-```bash
-go run ./cmd/panefleet ingest --pane %1 --kind start
-go run ./cmd/panefleet state-show --pane %1
-go run ./cmd/panefleet state-list
-go run ./cmd/panefleet state-set --pane %1 --status STALE
-go run ./cmd/panefleet state-clear --pane %1
-go run ./cmd/panefleet sync-tmux
-go run ./cmd/panefleet pane-kill --pane %1
-go run ./cmd/panefleet pane-respawn --pane %1
-go run ./cmd/panefleet tui
-go run ./cmd/panefleet run --sync-every 1200ms --control-mode=true
-```
+- `bin/panefleet`: stable shell CLI entrypoint used by users and tmux hooks
+- `lib/panefleet/`: shell runtime, UI, integrations, and ops helpers
+- `cmd/panefleet`: Go runtime for ingestion, sync, health, and Bubble Tea TUI
+- `cmd/panefleet-agent-bridge`: provider event bridge
+- `internal/state`: reducer rules and domain statuses
+- `internal/panes`: state service and subscriptions
+- `internal/store`: SQLite persistence
+- `internal/tmuxctl`: tmux adapter
+- `internal/board`: board read model and metrics assembly
+- `internal/tui`: Bubble Tea UI
 
-Notes:
-
-- this is an implementation path toward strict no-heuristic state handling
-- the legacy shell runtime (`bin/panefleet`) is still present during migration
-- module currently targets `go 1.24.x`
-
-Go-first migration policy:
-
-- `internal/state` is the only source of truth for business state.
-- shell runtime files (`bin/panefleet`, `lib/panefleet/state/engine.sh`) are adapter-only during migration.
-- no new state rules should be added in shell; state changes go through Go reducer/projection paths with tests.
-- shell-side state logic is frozen to bugfix-only updates and removed progressively after parity.
-- guardrails document: `docs/go-first-migration-guardrails.md`
-
-`run` mode behavior:
-
-- runs periodic tmux snapshot sync (`list-panes`) and ingests deterministic events
-- listens to tmux control-mode events as immediate sync triggers
-- opens Bubble Tea UI with live updates from service subscriptions
-- supports actions in TUI:
-  - `j/k` or arrows: selection
-  - `s`: toggle manual `STALE` override
-  - `x`: respawn selected pane
-  - `d`: kill selected pane
-
-Go runtime test coverage:
-
-- reducer/store/service unit tests
-- tmux parser/client tests
-- CLI E2E tests on fake tmux (`cmd/panefleet/e2e_test.go`)
-
-Release readiness checklist (maintainers):
-
-1. Run `./scripts/test.sh`.
-2. Run `make release-check`.
-3. Confirm install contract manually in tmux with one target (`make install all`) then `make doctor`.
+The design rule is simple: state rules live in Go, shell remains an adapter and
+operator surface.

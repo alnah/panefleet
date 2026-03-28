@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+# Minimal fake fzf used by shell contract tests.
+
 if [[ "${1:-}" == "--help" ]]; then
   cat <<'EOF'
 fake fzf

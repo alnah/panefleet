@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+# Minimal fake tmux used by shell and CLI contract tests.
+
 ROOT="${PANEFLEET_FAKE_TMUX_DIR:?PANEFLEET_FAKE_TMUX_DIR is required}"
 CURRENT_PANE="${PANEFLEET_FAKE_TMUX_CURRENT_PANE:-%101}"
 

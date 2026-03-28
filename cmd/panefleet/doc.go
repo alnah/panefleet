@@ -4,6 +4,6 @@ fallback terminal UI.
 
 Usage:
 
-	panefleet <ingest|state-show|state-list|state-set|state-clear|sync-tmux|pane-kill|pane-respawn|tui|run> [flags]
+	panefleet <ingest|state-show|state-list|state-set|state-clear|sync-tmux|health|pane-kill|pane-respawn|tui|run> [flags]
 */
 package main

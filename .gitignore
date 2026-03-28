@@ -54,4 +54,5 @@ out/
 
 .local/
 .state/
+docs/
 docs/nocommit-*

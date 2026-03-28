@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# lint-shell.sh runs shell syntax/style checks over the supported shell surface.
+# Keeping the file list explicit avoids surprising lint churn from temp files.
+
 REPO_ROOT="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:-check}"
 

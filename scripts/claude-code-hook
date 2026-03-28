@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# Thin script entrypoint that preserves the stable Claude hook path while the
+# real integration wrapper lives under integrations/.
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TARGET="${SCRIPT_DIR}/../integrations/claude/claude-code-hook"
 
