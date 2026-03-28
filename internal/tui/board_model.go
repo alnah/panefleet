@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -279,7 +280,7 @@ func (m BoardModel) renderHorizontalContent(leftWidth, rightWidth, height int) [
 	separator := m.styles.separator.Render(" │ ")
 	lines := make([]string, 0, height)
 	leftLines := append([]string{fitLine(m.renderSectionBar("board", ""), leftWidth)}, m.renderTable(leftWidth, max(0, height-1))...)
-	rightLines := append([]string{fitLine(m.renderSectionBar("preview", ""), rightWidth)}, m.renderPreview(rightWidth, max(0, height-1))...)
+	rightLines := append([]string{fitLine(m.renderSectionBar("preview", m.renderPreviewBarMeta()), rightWidth)}, m.renderPreview(rightWidth, max(0, height-1))...)
 
 	for i := 0; i < height; i++ {
 		leftLine := fitLine(leftLines[i], leftWidth)
@@ -305,7 +306,7 @@ func (m BoardModel) renderVerticalContent(width, height int) []string {
 		return lines[:height]
 	}
 
-	lines = append(lines, fitLine(m.renderSectionBar("preview", ""), width))
+	lines = append(lines, fitLine(m.renderSectionBar("preview", m.renderPreviewBarMeta()), width))
 	lines = append(lines, m.renderPreview(width, max(0, height-len(lines)))...)
 	return lines
 }
@@ -568,15 +569,10 @@ func (m BoardModel) renderPreview(width, height int) []string {
 	if m.preview.PaneID == "" || m.preview.PaneID != m.selectedPaneID {
 		return padLines([]string{m.styles.info.Render(fmt.Sprintf("loading preview for %s", m.selectedPaneID))}, height)
 	}
-	lines = appendWrappedLines(lines, wrapStyledLine(m.renderPreviewSummaryLine(), width), height)
-	if meta := m.renderPreviewDetailLine(); meta != "" {
-		lines = appendWrappedLines(lines, wrapStyledLine(meta, width), height)
+	bodyLines := compactPreviewBody(strings.Split(m.preview.Body, "\n"))
+	if len(bodyLines) == 0 {
+		return padLines([]string{m.styles.info.Render("(empty preview)")}, height)
 	}
-	if len(lines) >= height {
-		return padLines(lines, height)
-	}
-	lines = append(lines, fitLine(m.styles.borderMuted.Render(strings.Repeat("─", width)), width))
-	bodyLines := strings.Split(m.preview.Body, "\n")
 	remaining := max(0, height-len(lines))
 	for _, line := range bodyLines {
 		if remaining == 0 {
@@ -717,7 +713,12 @@ func (m BoardModel) renderHeader(width int) []string {
 }
 
 func (m BoardModel) renderSectionBar(title, meta string) string {
-	return m.styles.sectionTitle.Render(strings.ToUpper(title))
+	titleText := m.styles.sectionTitle.Render(strings.ToUpper(title))
+	meta = strings.TrimSpace(meta)
+	if meta == "" {
+		return titleText
+	}
+	return titleText + m.styles.separator.Render("  ") + m.styles.sectionMeta.Render(meta)
 }
 
 func (m BoardModel) renderPill(style lipgloss.Style, text string) string {
@@ -768,6 +769,9 @@ func (m *BoardModel) handleSearchKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		}
 		m.searchQuery = trimLastRune(m.searchQuery)
 	case msg.Type == tea.KeyRunes:
+		if msg.Alt {
+			return false, nil
+		}
 		m.searchQuery += string(msg.Runes)
 	default:
 		return false, nil
@@ -937,7 +941,7 @@ func (m BoardModel) renderPreviewBodyLine(line string) string {
 	gutter := m.styles.previewGutter.Render("│ ")
 	switch {
 	case lower == "":
-		return gutter
+		return ""
 	case strings.HasPrefix(lower, "diff --git"), strings.HasPrefix(lower, "index "):
 		return gutter + m.styles.previewHeading.Render(line)
 	case strings.HasPrefix(lower, "@@ "):
@@ -951,20 +955,87 @@ func (m BoardModel) renderPreviewBodyLine(line string) string {
 	case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "--- "):
 		return gutter + m.styles.diffRemove.Render(line)
 	case strings.HasPrefix(lower, "#"):
-		return gutter + m.styles.previewHeading.Render(line)
+		return m.styles.previewHeading.Render(line)
 	case strings.HasPrefix(lower, ">"):
-		return gutter + m.styles.previewQuote.Render(line)
+		return m.styles.previewQuote.Render(line)
 	case strings.HasPrefix(lower, "- "), strings.HasPrefix(lower, "* "), strings.HasPrefix(lower, "+ "):
-		return gutter + m.styles.previewList.Render(line)
+		return m.styles.previewList.Render(line)
 	case strings.HasPrefix(lower, "• "), strings.HasPrefix(lower, "› "), strings.HasPrefix(lower, "$ "):
 		return gutter + m.styles.previewShell.Render(line)
 	case strings.Contains(lower, "warning"):
-		return gutter + m.styles.previewWarning.Render(line)
+		return m.styles.previewWarning.Render(line)
 	case strings.Contains(lower, "error"):
-		return gutter + m.styles.previewError.Render(line)
+		return m.styles.previewError.Render(line)
 	default:
-		return gutter + m.styles.previewCode.Render(line)
+		return m.styles.previewCode.Render(line)
 	}
+}
+
+func (m BoardModel) renderPreviewBarMeta() string {
+	if m.preview.PaneID == "" || m.preview.PaneID != m.selectedPaneID {
+		return ""
+	}
+	parts := make([]string, 0, 5)
+	if m.preview.Status.Valid() {
+		parts = append(parts, string(m.preview.Status))
+	}
+	if tool := strings.TrimSpace(m.preview.Tool); tool != "" {
+		parts = append(parts, tool)
+	}
+	if target := strings.TrimSpace(fmt.Sprintf("%s:%s.%s", m.preview.SessionName, m.preview.WindowIndex, m.preview.PaneIndex)); target != ":." {
+		parts = append(parts, target)
+	}
+	if repo := previewContextName(m.preview); repo != "" {
+		parts = append(parts, repo)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func previewContextName(preview board.Preview) string {
+	if path := strings.TrimSpace(preview.Path); path != "" {
+		base := strings.TrimSpace(filepath.Base(path))
+		if base != "" && base != "." && base != string(filepath.Separator) {
+			return base
+		}
+	}
+	return strings.TrimSpace(preview.WindowName)
+}
+
+func compactPreviewBody(lines []string) []string {
+	if len(lines) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(lines))
+	previousBlank := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if isPreviewDividerLine(trimmed) {
+			continue
+		}
+		if trimmed == "" {
+			if previousBlank {
+				continue
+			}
+			previousBlank = true
+			out = append(out, "")
+			continue
+		}
+		previousBlank = false
+		out = append(out, line)
+	}
+	return out
+}
+
+func isPreviewDividerLine(line string) bool {
+	if line == "" {
+		return false
+	}
+	for _, r := range line {
+		if r != '─' && r != '-' && r != '━' && r != '═' {
+			return false
+		}
+	}
+	return true
 }
 
 func (m BoardModel) renderPreviewSummaryLine() string {

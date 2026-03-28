@@ -392,6 +392,65 @@ func TestBoardModelViewWrapsPreviewTextInRightPane(t *testing.T) {
 	}
 }
 
+func TestRenderSectionBarShowsMeta(t *testing.T) {
+	m := NewBoard(&fakeBoardRuntime{}, time.Second, "dracula")
+
+	rendered := m.renderSectionBar("preview", "DONE · codex · work:1.0 · panefleet")
+
+	if !strings.Contains(rendered, "PREVIEW") {
+		t.Fatalf("section bar should keep title, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "DONE") {
+		t.Fatalf("section bar should include metadata, got %q", rendered)
+	}
+}
+
+func TestRenderPreviewShowsBodyImmediatelyWithoutSummaryChrome(t *testing.T) {
+	m := NewBoard(&fakeBoardRuntime{}, time.Second, "dracula")
+	m.rowsLoaded = true
+	m.selectedPaneID = "%1"
+	m.preview = board.Preview{
+		PaneID:      "%1",
+		Status:      state.StatusDone,
+		Tool:        "codex",
+		SessionName: "work",
+		WindowIndex: "1",
+		PaneIndex:   "0",
+		WindowName:  "tui",
+		Body:        "Commit créé: 6180379\n\n- internal/tui/board_model.go",
+	}
+
+	lines := m.renderPreview(48, 6)
+	if len(lines) == 0 || !strings.Contains(lines[0], "Commit créé: 6180379") {
+		t.Fatalf("preview should start with body content, got %q", lines)
+	}
+	rendered := strings.Join(lines, "\n")
+	if strings.Contains(rendered, "work:1.0") {
+		t.Fatalf("preview should not repeat summary chrome inside body area, got %q", rendered)
+	}
+}
+
+func TestRenderPreviewBodyLineKeepsProseQuiet(t *testing.T) {
+	m := NewBoard(&fakeBoardRuntime{}, time.Second, "dracula")
+
+	rendered := m.renderPreviewBodyLine("Le commit couvre le split horizontal")
+	if strings.Contains(rendered, "│ ") {
+		t.Fatalf("plain prose should not carry a code gutter, got %q", rendered)
+	}
+}
+
+func TestRenderControlsLineKeepsTUIChromeMinimal(t *testing.T) {
+	m := NewBoard(&fakeBoardRuntime{}, time.Second, "dracula")
+
+	rendered := m.renderControlsLine()
+	if strings.Contains(rendered, "wrap") {
+		t.Fatalf("controls should not advertise wrap, got %q", rendered)
+	}
+	if strings.Contains(rendered, "scroll") {
+		t.Fatalf("controls should not advertise scroll, got %q", rendered)
+	}
+}
+
 func TestRenderTableRowSelectedFillsViewportWidth(t *testing.T) {
 	m := NewBoard(&fakeBoardRuntime{}, time.Second, "dracula")
 	row := board.Row{
